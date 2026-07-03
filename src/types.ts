@@ -1,0 +1,53 @@
+export interface ClientDocument {
+  id: string;
+  name: string;
+  status: "pending" | "uploaded";
+  date: string;
+}
+
+export interface LenderOffer {
+  amount: string;
+  rate: string;
+  years: string;
+}
+
+export interface LenderState {
+  status: "not_sent" | "sent" | "offer_received" | "rejected";
+  pitch?: string;
+  reply?: string;
+  offer?: LenderOffer;
+}
+
+export interface Client {
+  id: string;
+  name: string;
+  idNumber: string;
+  email: string;
+  phone: string;
+  address: string;
+  employmentType: string;
+  seniority: string;
+  income: string;
+  expenses: string;
+  dealType: string;
+  propertyValue: string;
+  requestedAmount: string;
+  financingPercentage: string;
+  notes: string;
+  createdAt: string;
+  status: "draft" | "active" | "sent" | "closed";
+  documents: ClientDocument[];
+  advisorId?: string;
+  lendersState: {
+    [lenderName: string]: LenderState;
+  };
+}
+
+export interface AdvisorProfile {
+  name: string;
+  role: string;
+  email: string;
+  phone: string;
+  company: string;
+  licenseNumber: string;
+}

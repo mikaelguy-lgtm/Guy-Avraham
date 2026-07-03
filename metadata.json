@@ -1,0 +1,6 @@
+{
+  "name": "SynCash",
+  "description": "מערכת חכמה ליועצי משכנתאות המאפשרת הקמת לקוחות, ניהול מסמכים ושידור מהיר של בקשות מימון לחברות חוץ-בנקאיות.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
