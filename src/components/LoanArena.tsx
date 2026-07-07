@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Client, LenderState } from "../types";
+import { api } from "../utils/apiClient";
 import { 
   Building2, 
   Send, 
@@ -82,27 +83,17 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
       setTransmissionStep(3);
     }, 3000);
 
-    // Call real backend Gemini logic to construct actual cover letters and replies!
+    // Call unified api client logic to construct cover letters and replies!
     setTimeout(async () => {
       try {
-        const response = await fetch(`/api/clients/${selectedClientId}/send-to-lenders`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ lenders: selectedLenders })
-        });
-        
-        if (response.ok) {
-          onRefreshClients(true);
-          setTransmissionStep(4);
-          // Set first sent lender as active tab to show response
-          setCurrentLenderTab(selectedLenders[0]);
-        } else {
-          alert("שגיאה בשידור התיק לחברות המימון.");
-          setTransmissionStep(0);
-        }
+        await api.sendToLenders(selectedClientId, selectedLenders);
+        onRefreshClients(true);
+        setTransmissionStep(4);
+        // Set first sent lender as active tab to show response
+        setCurrentLenderTab(selectedLenders[0]);
       } catch (error) {
         console.error("Transmission request failed", error);
-        alert("תקלה בחיבור לשרת השידורים.");
+        alert("שגיאה בשידור התיק לחברות המימון.");
         setTransmissionStep(0);
       }
     }, 4500);

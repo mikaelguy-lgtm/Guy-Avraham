@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Client } from "../types";
+import { api } from "../utils/apiClient";
 import { 
   Users, 
   FileCheck2, 
@@ -45,12 +46,7 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
 
     setAiLoading(true);
     try {
-      const res = await fetch(`/api/clients/${aiSelectedClient}/ask-advisor`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q })
-      });
-      const data = await res.json();
+      const data = await api.askAdvisor(aiSelectedClient, q);
       setAiAnswers(prev => ({
         ...prev,
         [aiSelectedClient]: data.advice

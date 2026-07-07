@@ -16,6 +16,7 @@ import {
   Briefcase
 } from "lucide-react";
 import { Client, AdvisorProfile } from "../types";
+import { api } from "../utils/apiClient";
 
 // Extends AdvisorProfile with backend ID and metadata
 interface SavedAdvisor extends AdvisorProfile {
@@ -42,11 +43,8 @@ export default function AdminDashboard({ clients, onRefreshClients, onBackToApp 
   const fetchAdvisors = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/advisors");
-      if (res.ok) {
-        const data = await res.json();
-        setAdvisors(data);
-      }
+      const data = await api.getAdvisors();
+      setAdvisors(data);
     } catch (error) {
       console.error("Failed to load advisors", error);
     } finally {
@@ -62,19 +60,14 @@ export default function AdminDashboard({ clients, onRefreshClients, onBackToApp 
     if (!window.confirm(`האם אתה בטוח שברצונך למחוק את היועץ ${advisorName}?`)) return;
 
     try {
-      const res = await fetch(`/api/advisors/${advisorId}`, {
-        method: "DELETE"
-      });
-      if (res.ok) {
-        setSuccessMessage(`היועץ ${advisorName} נמחק בהצלחה`);
-        fetchAdvisors();
-        onRefreshClients(); // Some client records might be impacted or need refresh
-        setTimeout(() => setSuccessMessage(null), 3000);
-      } else {
-        alert("שגיאה במחיקת היועץ");
-      }
+      await api.deleteAdvisor(advisorId);
+      setSuccessMessage(`היועץ ${advisorName} נמחק בהצלחה`);
+      fetchAdvisors();
+      onRefreshClients(); // Some client records might be impacted or need refresh
+      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error) {
       console.error("Error deleting advisor:", error);
+      alert("שגיאה במחיקת היועץ");
     }
   };
 

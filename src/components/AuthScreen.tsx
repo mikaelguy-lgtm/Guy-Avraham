@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Sparkles, Key, Mail, User, Shield, Briefcase, Phone, Award, Eye, EyeOff, LogIn, UserPlus } from "lucide-react";
 import { AdvisorProfile } from "../types";
 import SynCashLogo from "./SynCashLogo";
+import { api } from "../utils/apiClient";
 
 interface AuthScreenProps {
   onLoginSuccess: (advisor: AdvisorProfile & { id: string; isAdmin?: boolean }) => void;
@@ -27,28 +28,19 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
     setError(null);
     setLoading(true);
 
-    const url = isLogin ? "/api/advisors/login" : "/api/advisors/register";
-    const body = isLogin 
-      ? { email, password }
-      : { name, role, email, phone, company, licenseNumber, password };
-
     try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        onLoginSuccess(data);
+      if (isLogin) {
+        const advisor = await api.loginAdvisor({ email, password });
+        onLoginSuccess(advisor);
       } else {
-        setError(data.error || "אירעה שגיאה בביצוע הפעולה");
+        const advisor = await api.registerAdvisor({
+          name, role, email, phone, company, licenseNumber, password
+        });
+        onLoginSuccess(advisor);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Auth error:", err);
-      setError("שגיאה בחיבור לשרת. נא לנסות שנית.");
+      setError(err.message || "אירעה שגיאה בביצוע הפעולה");
     } finally {
       setLoading(false);
     }

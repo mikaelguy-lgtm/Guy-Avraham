@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ArrowLeft, ArrowRight, CheckCircle2, Info } from "lucide-react";
+import { api } from "../utils/apiClient";
 
 const ISRAEL_CITIES = [
   "אופקים",
@@ -250,20 +251,12 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
         advisorId: advisorId || "advisor-1"
       };
 
-      const response = await fetch("/api/clients", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(finalPayload)
-      });
-      if (response.ok) {
-        alert("הלקוח נוסף למערכת בהצלחה! כעת תוכל לנהל את מסמכיו ולשדר את התיק.");
-        onClientCreated();
-      } else {
-        alert("שגיאה בשמירת הלקוח במערכת.");
-      }
+      await api.createClient(finalPayload);
+      alert("הלקוח נוסף למערכת בהצלחה! כעת תוכל לנהל את מסמכיו ולשדר את התיק.");
+      onClientCreated();
     } catch (error) {
       console.error("Error creating client", error);
-      alert("שגיאה ברשת. לא ניתן לשמור את הלקוח.");
+      alert("שגיאה בשמירת הלקוח במערכת.");
     }
   };
 

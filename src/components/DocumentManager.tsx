@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import { Client, ClientDocument } from "../types";
+import { api } from "../utils/apiClient";
 import { 
   FileText, 
   UploadCloud, 
@@ -66,17 +67,9 @@ export default function DocumentManager({
     setTimeout(async () => {
       try {
         const displayName = fileName ? `${name || "מסמך"} (${fileName})` : name;
-        const response = await fetch(`/api/clients/${selectedClientId}/upload-doc`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ docId, name: displayName })
-        });
-                if (response.ok) {
-          onRefreshClients(true);
-          setCustomDocName("");
-        } else {
-          console.error("Error uploading document to backend");
-        }
+        await api.uploadDoc(selectedClientId, docId, displayName);
+        onRefreshClients(true);
+        setCustomDocName("");
       } catch (error) {
         console.error("Error uploading document", error);
       } finally {
@@ -90,25 +83,17 @@ export default function DocumentManager({
     if (!selectedClientId) return;
 
     try {
-      const response = await fetch(`/api/clients/${selectedClientId}/delete-doc`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ docId })
-      });
-      if (response.ok) {
-        onRefreshClients(true);
-        if (previewDoc?.id === docId) {
-          setPreviewDoc(null);
-        }
-        // Cleanup local URL dictionary if present to prevent memory leaks
-        if (uploadedFileUrls[docId]) {
-          URL.revokeObjectURL(uploadedFileUrls[docId].url);
-          const updated = { ...uploadedFileUrls };
-          delete updated[docId];
-          setUploadedFileUrls(updated);
-        }
-      } else {
-        console.error("Error deleting document from backend");
+      await api.deleteDoc(selectedClientId, docId);
+      onRefreshClients(true);
+      if (previewDoc?.id === docId) {
+        setPreviewDoc(null);
+      }
+      // Cleanup local URL dictionary if present to prevent memory leaks
+      if (uploadedFileUrls[docId]) {
+        URL.revokeObjectURL(uploadedFileUrls[docId].url);
+        const updated = { ...uploadedFileUrls };
+        delete updated[docId];
+        setUploadedFileUrls(updated);
       }
     } catch (error) {
       console.error("Error deleting document", error);

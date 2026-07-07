@@ -9,6 +9,7 @@ import SettingsView from "./components/SettingsView";
 import AuthScreen from "./components/AuthScreen";
 import AdminDashboard from "./components/AdminDashboard";
 import SynCashLogo from "./components/SynCashLogo";
+import { api } from "./utils/apiClient";
 import { Search, Bell, HelpCircle, Settings as SettingsIcon, Menu } from "lucide-react";
 
 export default function App() {
@@ -32,17 +33,12 @@ export default function App() {
     return null;
   });
 
-  // Fetch clients from our Node.js/Express backend
+  // Fetch clients from our unified API
   const fetchClients = async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const response = await fetch("/api/clients");
-      if (response.ok) {
-        const data = await response.json();
-        setClients(data);
-      } else {
-        console.error("Failed to load clients");
-      }
+      const data = await api.getClients();
+      setClients(data);
     } catch (error) {
       console.error("Error fetching clients:", error);
     } finally {
