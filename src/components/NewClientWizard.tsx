@@ -17,11 +17,22 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
     email: "",
     phone: "",
     address: "",
+    maritalStatus: "",
+    childrenCount: "",
+    childrenAges: "",
     employmentType: "שכיר",
+    employmentTypeOther: "",
     seniority: "",
     income: "",
-    expenses: "",
-    dealType: "רכישת דירה (יד שנייה)",
+    workplace: "",
+    additionalIncomeType: "",
+    additionalIncomeAmount: "",
+    expenses: "0",
+    expensesLoans: "",
+    expensesMortgage: "",
+    expensesMortgageBalance: "",
+    dealType: "רכישה מקבלן",
+    propertyType: "דירה ראשונה",
     propertyValue: "",
     requestedAmount: "",
     financingPercentage: "60",
@@ -39,6 +50,14 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
       setFormData(prev => ({ ...prev, financingPercentage: Math.min(percentage, 100).toString() }));
     }
   }, [formData.propertyValue, formData.requestedAmount]);
+
+  // Auto-calculate total expenses as the sum of loan repayments and mortgage repayments
+  useEffect(() => {
+    const loans = parseFloat(formData.expensesLoans) || 0;
+    const mortgage = parseFloat(formData.expensesMortgage) || 0;
+    const total = loans + mortgage;
+    setFormData(prev => ({ ...prev, expenses: total.toString() }));
+  }, [formData.expensesLoans, formData.expensesMortgage]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -71,11 +90,35 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
         stepErrors.phone = "שדה טלפון נייד הוא חובה";
       }
       if (!formData.address) stepErrors.address = "שדה כתובת מגורים הוא חובה";
+      if (!formData.maritalStatus) stepErrors.maritalStatus = "שדה מצב משפחתי הוא חובה";
+      if (formData.childrenCount === "" || formData.childrenCount === undefined) {
+        stepErrors.childrenCount = "שדה מספר ילדים הוא חובה";
+      }
+      if (!formData.childrenAges) {
+        stepErrors.childrenAges = "שדה גילאי הילדים הוא חובה";
+      }
     } else if (step === 2) {
       if (!formData.seniority) stepErrors.seniority = "אנא הזן ותק במקום העבודה";
       if (!formData.income) stepErrors.income = "אנא הזן הכנסה חודשית נטו";
-      if (!formData.expenses) stepErrors.expenses = "אנא הזן התחייבויות חודשיות";
+      if (!formData.workplace) stepErrors.workplace = "אנא הזן מקום עבודה";
+      if (formData.employmentType === "אחר" && !formData.employmentTypeOther) {
+        stepErrors.employmentTypeOther = "אנא הזן פירוט מצב תעסוקתי";
+      }
+      if (!formData.additionalIncomeType) stepErrors.additionalIncomeType = "אנא הזן סוג הכנסה נוספת";
+      if (formData.additionalIncomeAmount === "" || formData.additionalIncomeAmount === undefined) {
+        stepErrors.additionalIncomeAmount = "אנא הזן סכום הכנסה נוספת";
+      }
+      if (formData.expensesLoans === "" || formData.expensesLoans === undefined) {
+        stepErrors.expensesLoans = "אנא הזן החזר הלוואות חודשי";
+      }
+      if (formData.expensesMortgage === "" || formData.expensesMortgage === undefined) {
+        stepErrors.expensesMortgage = "אנא הזן החזר משכנתא חודשי";
+      }
+      if (formData.expensesMortgageBalance === "" || formData.expensesMortgageBalance === undefined) {
+        stepErrors.expensesMortgageBalance = "אנא הזן יתרת משכנתא";
+      }
     } else if (step === 3) {
+      if (!formData.propertyType) stepErrors.propertyType = "אנא בחר סוג נכס";
       if (!formData.propertyValue) stepErrors.propertyValue = "אנא הזן שווי נכס מוערך";
       if (!formData.requestedAmount) stepErrors.requestedAmount = "אנא הזן סכום הלוואה מבוקש";
     }
@@ -120,10 +163,16 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
     if (!validateStep(3)) return;
 
     try {
+      const finalPayload = {
+        ...formData,
+        employmentType: formData.employmentType === "אחר" ? formData.employmentTypeOther : formData.employmentType,
+        advisorId: advisorId || "advisor-1"
+      };
+
       const response = await fetch("/api/clients", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...formData, advisorId: advisorId || "advisor-1" })
+        body: JSON.stringify(finalPayload)
       });
       if (response.ok) {
         alert("הלקוח נוסף למערכת בהצלחה! כעת תוכל לנהל את מסמכיו ולשדר את התיק.");
@@ -287,6 +336,57 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
                 />
                 {errors.address && <p className="text-xs text-red-400 font-semibold">{errors.address}</p>}
               </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-sm font-bold text-slate-300">מצב משפחתי *</label>
+                <select 
+                  name="maritalStatus"
+                  value={formData.maritalStatus}
+                  onChange={handleChange}
+                  className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 focus:bg-slate-950 text-sm outline-none transition-all ${
+                    errors.maritalStatus ? "border-red-500 focus:ring-1 focus:ring-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
+                  }`}
+                >
+                  <option value="" className="bg-slate-950">בחר מצב משפחתי</option>
+                  <option value="רווק/ה" className="bg-slate-950">רווק/ה</option>
+                  <option value="נשוי/ה" className="bg-slate-950">נשוי/ה</option>
+                  <option value="גרוש/ה" className="bg-slate-950">גרוש/ה</option>
+                  <option value="אלמן/ה" className="bg-slate-950">אלמן/ה</option>
+                  <option value="אחר" className="bg-slate-950">אחר</option>
+                </select>
+                {errors.maritalStatus && <p className="text-xs text-red-400 font-semibold">{errors.maritalStatus}</p>}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-sm font-bold text-slate-300">מספר ילדים *</label>
+                <input 
+                  type="number"
+                  name="childrenCount"
+                  placeholder="לדוגמה: 2 (הזן 0 אם אין)"
+                  value={formData.childrenCount}
+                  onChange={handleChange}
+                  min="0"
+                  className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all ${
+                    errors.childrenCount ? "border-red-500 focus:ring-1 focus:ring-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
+                  }`}
+                />
+                {errors.childrenCount && <p className="text-xs text-red-400 font-semibold">{errors.childrenCount}</p>}
+              </div>
+
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="block text-sm font-bold text-slate-300">גילאי הילדים *</label>
+                <input 
+                  type="text"
+                  name="childrenAges"
+                  placeholder="לדוגמה: 5, 8 (הזן 'אין' או '0' אם אין ילדים)"
+                  value={formData.childrenAges}
+                  onChange={handleChange}
+                  className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all ${
+                    errors.childrenAges ? "border-red-500 focus:ring-1 focus:ring-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
+                  }`}
+                />
+                {errors.childrenAges && <p className="text-xs text-red-400 font-semibold">{errors.childrenAges}</p>}
+              </div>
             </div>
           </div>
         )}
@@ -295,8 +395,9 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
         {currentStep === 2 && (
           <div className="step-transition space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
+              
               <div className="space-y-1.5">
-                <label className="block text-sm font-bold text-slate-300">מצב תעסוקתי</label>
+                <label className="block text-sm font-bold text-slate-300">מצב תעסוקתי *</label>
                 <select 
                   name="employmentType"
                   value={formData.employmentType}
@@ -305,13 +406,31 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
                 >
                   <option value="שכיר" className="bg-slate-950">שכיר</option>
                   <option value="עצמאי" className="bg-slate-950">עצמאי</option>
+                  <option value="שכיר בעל שליטה" className="bg-slate-950">שכיר בעל שליטה</option>
                   <option value="פנסיונר" className="bg-slate-950">פנסיונר</option>
                   <option value="אחר" className="bg-slate-950">אחר</option>
                 </select>
+                
+                {formData.employmentType === "אחר" && (
+                  <div className="mt-2 space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-400">פרט מצב תעסוקתי אחר *</label>
+                    <input 
+                      type="text"
+                      name="employmentTypeOther"
+                      placeholder="הזן מצב תעסוקתי ידני"
+                      value={formData.employmentTypeOther}
+                      onChange={handleChange}
+                      className={`w-full rounded-lg border bg-slate-950/80 py-2.5 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-xs outline-none transition-all ${
+                        errors.employmentTypeOther ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
+                      }`}
+                    />
+                    {errors.employmentTypeOther && <p className="text-[11px] text-red-400 font-semibold">{errors.employmentTypeOther}</p>}
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-sm font-bold text-slate-300">ותק במקום העבודה (שנים)</label>
+                <label className="block text-sm font-bold text-slate-300">ותק במקום העבודה (שנים) *</label>
                 <input 
                   type="number"
                   name="seniority"
@@ -319,14 +438,29 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
                   value={formData.seniority}
                   onChange={handleChange}
                   className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all ${
-                    errors.seniority ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
+                    errors.seniority ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
                   }`}
                 />
                 {errors.seniority && <p className="text-xs text-red-400 font-semibold">{errors.seniority}</p>}
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-sm font-bold text-slate-300">הכנסה חודשית נטו (₪)</label>
+                <label className="block text-sm font-bold text-slate-300">מקום עבודה *</label>
+                <input 
+                  type="text"
+                  name="workplace"
+                  placeholder="לדוגמה: אלתא / עצמאי"
+                  value={formData.workplace}
+                  onChange={handleChange}
+                  className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all ${
+                    errors.workplace ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
+                  }`}
+                />
+                {errors.workplace && <p className="text-xs text-red-400 font-semibold">{errors.workplace}</p>}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-sm font-bold text-slate-300">הכנסה חודשית נטו (₪) *</label>
                 <input 
                   type="number"
                   name="income"
@@ -334,31 +468,91 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
                   value={formData.income}
                   onChange={handleChange}
                   className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all ${
-                    errors.income ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
+                    errors.income ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
                   }`}
                 />
                 {errors.income && <p className="text-xs text-red-400 font-semibold">{errors.income}</p>}
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-sm font-bold text-slate-300">התחייבויות חודשיות (₪)</label>
+                <label className="block text-sm font-bold text-slate-300">סוג הכנסה נוספת *</label>
                 <input 
-                  type="number"
-                  name="expenses"
-                  placeholder="הלוואות אחרות, שכר דירה וכד'"
-                  value={formData.expenses}
+                  type="text"
+                  name="additionalIncomeType"
+                  placeholder="לדוגמה: שכירות / קצבה / אין"
+                  value={formData.additionalIncomeType}
                   onChange={handleChange}
                   className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all ${
-                    errors.expenses ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500"
+                    errors.additionalIncomeType ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
                   }`}
                 />
-                {errors.expenses && <p className="text-xs text-red-400 font-semibold">{errors.expenses}</p>}
+                {errors.additionalIncomeType && <p className="text-xs text-red-400 font-semibold">{errors.additionalIncomeType}</p>}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-sm font-bold text-slate-300">סכום הכנסה נוספת (₪) *</label>
+                <input 
+                  type="number"
+                  name="additionalIncomeAmount"
+                  placeholder="הזן 0 אם אין הכנסה נוספת"
+                  value={formData.additionalIncomeAmount}
+                  onChange={handleChange}
+                  className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all ${
+                    errors.additionalIncomeAmount ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
+                  }`}
+                />
+                {errors.additionalIncomeAmount && <p className="text-xs text-red-400 font-semibold">{errors.additionalIncomeAmount}</p>}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-sm font-bold text-slate-300">החזר הלוואות חודשי (₪) *</label>
+                <input 
+                  type="number"
+                  name="expensesLoans"
+                  placeholder="הזן 0 אם אין"
+                  value={formData.expensesLoans}
+                  onChange={handleChange}
+                  className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all ${
+                    errors.expensesLoans ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
+                  }`}
+                />
+                {errors.expensesLoans && <p className="text-xs text-red-400 font-semibold">{errors.expensesLoans}</p>}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-sm font-bold text-slate-300">החזר משכנתא חודשי (₪) *</label>
+                <input 
+                  type="number"
+                  name="expensesMortgage"
+                  placeholder="הזן 0 אם אין משכנתא פעילה"
+                  value={formData.expensesMortgage}
+                  onChange={handleChange}
+                  className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all ${
+                    errors.expensesMortgage ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
+                  }`}
+                />
+                {errors.expensesMortgage && <p className="text-xs text-red-400 font-semibold">{errors.expensesMortgage}</p>}
+              </div>
+
+              <div className="space-y-1.5 md:col-span-2">
+                <label className="block text-sm font-bold text-slate-300">יתרת משכנתא (₪) *</label>
+                <input 
+                  type="number"
+                  name="expensesMortgageBalance"
+                  placeholder="יתרת משכנתא לסילוק (הזן 0 אם אין)"
+                  value={formData.expensesMortgageBalance}
+                  onChange={handleChange}
+                  className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all ${
+                    errors.expensesMortgageBalance ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
+                  }`}
+                />
+                {errors.expensesMortgageBalance && <p className="text-xs text-red-400 font-semibold">{errors.expensesMortgageBalance}</p>}
               </div>
 
               <div className="md:col-span-2 p-4 bg-slate-950/60 border border-slate-800 rounded-lg">
                 <p className="text-xs font-semibold text-slate-300 flex items-center gap-2">
                   <Info className="h-4 w-4 text-cyan-400" />
-                  שים לב: ניתן יהיה לצרף תלושי שכר ודפי בנק מסודרים בשלב "ניהול מסמכים" לאחר הקמת התיק במערכת.
+                  שים לב: סך ההתחייבויות החודשיות יחושב אוטומטית כסכום החזר ההלוואות והחזר המשכנתא החודשי.
                 </p>
               </div>
             </div>
@@ -370,18 +564,47 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
           <div className="step-transition space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
               <div className="space-y-1.5">
-                <label className="block text-sm font-bold text-slate-300">סוג העסקה</label>
+                <label className="block text-sm font-bold text-slate-300">סוג העסקה *</label>
                 <select 
                   name="dealType"
                   value={formData.dealType}
                   onChange={handleChange}
                   className="w-full rounded-lg border border-slate-800 bg-slate-950/80 py-3 px-4 text-slate-100 focus:bg-slate-950 text-sm outline-none transition-all"
                 >
-                  <option value="רכישת דירה (יד שנייה)" className="bg-slate-950">רכישת דירה (יד שנייה)</option>
-                  <option value="רכישת דירה מקבלן" className="bg-slate-950">רכישת דירה מקבלן</option>
-                  <option value="מיחזור משכנתא" className="bg-slate-950">מיחזור משכנתא</option>
-                  <option value="הלוואה לכל מטרה / שיעבוד נכס קיים" className="bg-slate-950">הלוואה לכל מטרה / שיעבוד נכס קיים</option>
+                  <option value="רכישה מקבלן" className="bg-slate-950">רכישה מקבלן</option>
+                  <option value="מחיר למשתכן" className="bg-slate-950">מחיר למשתכן</option>
+                  <option value="רכישה יד 2" className="bg-slate-950">רכישה יד 2</option>
+                  <option value="שיפוצים" className="bg-slate-950">שיפוצים</option>
+                  <option value="איחוד הלוואות" className="bg-slate-950">איחוד הלוואות</option>
+                  <option value="מטרה עסקית" className="bg-slate-950">מטרה עסקית</option>
+                  <option value="כל מטרה" className="bg-slate-950">כל מטרה</option>
+                  <option value="בניה עצמית" className="bg-slate-950">בניה עצמית</option>
+                  <option value="עסקה בתוך המשפחה" className="bg-slate-950">עסקה בתוך המשפחה</option>
+                  <option value="רכישה/בניה בקיבוץ" className="bg-slate-950">רכישה/בניה בקיבוץ</option>
+                  <option value="רכישה מכונס" className="bg-slate-950">רכישה מכונס</option>
+                  <option value="משכנתא הפוכה" className="bg-slate-950">משכנתא הפוכה</option>
+                  <option value="תמא" className="bg-slate-950">תמא</option>
+                  <option value="מחזור" className="bg-slate-950">מחזור</option>
                 </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-sm font-bold text-slate-300">סוג הנכס *</label>
+                <select 
+                  name="propertyType"
+                  value={formData.propertyType}
+                  onChange={handleChange}
+                  className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 focus:bg-slate-950 text-sm outline-none transition-all ${
+                    errors.propertyType ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
+                  }`}
+                >
+                  <option value="דירה ראשונה" className="bg-slate-950">דירה ראשונה</option>
+                  <option value="נכס יחיד" className="bg-slate-950">נכס יחיד</option>
+                  <option value="נכס חליפי" className="bg-slate-950">נכס חליפי</option>
+                  <option value="נכס להשקעה" className="bg-slate-950">נכס להשקעה</option>
+                  <option value="נכס קיים" className="bg-slate-950">נכס קיים</option>
+                </select>
+                {errors.propertyType && <p className="text-xs text-red-400 font-semibold">{errors.propertyType}</p>}
               </div>
 
               <div className="space-y-1.5">
