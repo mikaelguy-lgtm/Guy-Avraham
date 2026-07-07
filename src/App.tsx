@@ -125,21 +125,20 @@ export default function App() {
       )}
 
       {/* Mobile Sidebar Content */}
-      <div className={`fixed right-0 top-0 h-full w-64 bg-slate-900 z-50 border-l border-slate-800 md:hidden flex flex-col transform transition-transform duration-300 ${
-        mobileMenuOpen ? "translate-x-0" : "translate-x-full"
-      }`}>
-        <Sidebar 
-          activeTab={activeTab} 
-          setActiveTab={(tab) => {
-            setActiveTab(tab);
-            setMobileMenuOpen(false);
-          }} 
-          onNewRequestClick={handleNewRequestClick}
-          advisorName={loggedInAdvisor.name}
-          isAdmin={loggedInAdvisor.isAdmin}
-          onLogout={handleLogout}
-        />
-      </div>
+      <Sidebar 
+        activeTab={activeTab} 
+        setActiveTab={(tab) => {
+          setActiveTab(tab);
+          setMobileMenuOpen(false);
+        }} 
+        onNewRequestClick={handleNewRequestClick}
+        advisorName={loggedInAdvisor.name}
+        isAdmin={loggedInAdvisor.isAdmin}
+        onLogout={handleLogout}
+        className={`fixed right-0 top-0 h-full w-64 bg-slate-950/95 backdrop-blur-md border-l border-slate-800 z-50 flex flex-col transform transition-transform duration-300 md:hidden ${
+          mobileMenuOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+      />
 
       {/* Main Area */}
       <div className="flex-1 md:mr-64 flex flex-col min-h-screen transition-all duration-300">

@@ -252,7 +252,6 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
       };
 
       await api.createClient(finalPayload);
-      alert("הלקוח נוסף למערכת בהצלחה! כעת תוכל לנהל את מסמכיו ולשדר את התיק.");
       onClientCreated();
     } catch (error) {
       console.error("Error creating client", error);

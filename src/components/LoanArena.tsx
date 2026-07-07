@@ -137,18 +137,16 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
 
           {selectedClient && (
             <div className="flex flex-col items-center lg:items-end gap-2.5 w-full lg:w-auto">
-              <div className="grid grid-cols-3 gap-6 text-xs sm:text-sm text-slate-300 font-semibold bg-slate-950/60 py-4 px-6 rounded-xl border border-slate-800/60 w-full lg:w-auto">
-                <div className="text-center px-2">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-6 text-xs sm:text-sm text-slate-300 font-semibold bg-slate-950/60 py-4 px-6 rounded-xl border border-slate-800/60 w-full lg:w-auto divide-y sm:divide-y-0 sm:divide-x sm:divide-x-reverse divide-slate-800/80">
+                <div className="text-center px-2 w-full sm:w-auto">
                   <p className="text-[10px] text-slate-500 font-bold uppercase">שווי נכס מוערך</p>
                   <p className="text-white font-extrabold mt-1 text-sm sm:text-base">₪{Number(selectedClient.propertyValue).toLocaleString()}</p>
                 </div>
-                <div className="border-r border-slate-800/80 h-full self-center"></div>
-                <div className="text-center px-2">
+                <div className="text-center px-2 w-full sm:w-auto pt-4 sm:pt-0 sm:pl-6">
                   <p className="text-[10px] text-slate-500 font-bold uppercase">סכום הלוואה מבוקש</p>
                   <p className="text-white font-extrabold mt-1 text-sm sm:text-base">₪{Number(selectedClient.requestedAmount).toLocaleString()}</p>
                 </div>
-                <div className="border-r border-slate-800/80 h-full self-center"></div>
-                <div className="text-center px-2">
+                <div className="text-center px-2 w-full sm:w-auto pt-4 sm:pt-0 sm:pl-6">
                   <p className="text-[10px] text-slate-500 font-bold uppercase">אחוז מימון מבוקש</p>
                   <p className="text-cyan-400 font-black mt-1 text-sm sm:text-base">{selectedClient.financingPercentage}%</p>
                 </div>

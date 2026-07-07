@@ -134,7 +134,8 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          {/* Desktop Table View */}
+          <div className="hidden md:block overflow-x-auto">
             {filteredClients.length > 0 ? (
               <table className="w-full text-right text-sm">
                 <thead className="bg-slate-950/40 text-slate-400 font-bold border-b border-slate-800/60">
@@ -227,6 +228,101 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
                 <AlertCircle className="h-10 w-10 text-slate-700 mx-auto mb-3" />
                 <p className="font-bold text-slate-400">לא נמצאו לקוחות במערכת</p>
                 <p className="text-xs text-slate-500 mt-1">נסה לשנות את מונח החיפוש או הוסף לקוח חדש.</p>
+              </div>
+            )}
+          </div>
+
+          {/* Mobile Card View */}
+          <div className="block md:hidden">
+            {filteredClients.length > 0 ? (
+              <div className="p-4 space-y-4 divide-y divide-slate-800/40">
+                {filteredClients.map((client, index) => {
+                  const uploadedDocs = client.documents.filter(d => d.status === "uploaded").length;
+                  const totalDocs = client.documents.length;
+                  const isFullyUploaded = uploadedDocs === totalDocs;
+
+                  return (
+                    <div key={client.id} className={`${index > 0 ? "pt-4" : ""} flex flex-col gap-3`}>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h5 className="font-bold text-white text-base">{client.name}</h5>
+                          <p className="text-xs text-slate-400 font-normal mt-0.5">ת.ז: {client.idNumber} | {client.phone}</p>
+                        </div>
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                          client.status === "draft" ? "bg-slate-800 text-slate-400 border border-slate-700/60" :
+                          client.status === "active" ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20" :
+                          client.status === "sent" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
+                          "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                        }`}>
+                          <span className={`h-1 w-1 rounded-full ${
+                            client.status === "draft" ? "bg-slate-400" :
+                            client.status === "active" ? "bg-cyan-400 animate-pulse" :
+                            client.status === "sent" ? "bg-amber-400" :
+                            "bg-emerald-400"
+                          }`}></span>
+                          {client.status === "draft" ? "טיוטה" :
+                           client.status === "active" ? "מוכן לשדור" :
+                           client.status === "sent" ? "שודר" :
+                           "תיק סגור"}
+                        </span>
+                      </div>
+
+                      <div className="bg-slate-950/40 p-3 rounded-lg border border-slate-800/40 text-xs space-y-1.5">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">סוג עסקה:</span>
+                          <span className="font-semibold text-slate-200">{client.dealType}</span>
+                        </div>
+                        {client.propertyCity && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">נכס:</span>
+                            <span className="font-medium text-slate-300">{client.propertyCity}{client.propertyStreet ? `, ${client.propertyStreet}` : ""}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">מימון מבוקש:</span>
+                          <span className="font-bold text-cyan-400">₪{Number(client.requestedAmount).toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">שווי נכס:</span>
+                          <span className="font-semibold text-slate-300">₪{Number(client.propertyValue).toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 mt-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-slate-400">מסמכים:</span>
+                          <div className="w-16 bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full ${isFullyUploaded ? "bg-emerald-500" : "bg-cyan-500"}`}
+                              style={{ width: `${(uploadedDocs / totalDocs) * 100}%` }}
+                            ></div>
+                          </div>
+                          <span className="text-xs text-slate-400 font-bold">{uploadedDocs}/{totalDocs}</span>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => onSelectClient(client, "documents")}
+                            className="px-2.5 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-[11px] font-semibold text-slate-300 transition-colors"
+                          >
+                            מסמכים
+                          </button>
+                          <button 
+                            onClick={() => onSelectClient(client, "arena")}
+                            className="px-2.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-semibold transition-all shadow-[0_4px_12px_rgba(6,182,212,0.25)]"
+                          >
+                            שדור וזירה
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-8 text-center text-slate-500">
+                <AlertCircle className="h-8 w-8 text-slate-700 mx-auto mb-2" />
+                <p className="font-bold text-slate-400 text-sm">לא נמצאו לקוחות במערכת</p>
               </div>
             )}
           </div>

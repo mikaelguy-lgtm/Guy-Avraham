@@ -19,6 +19,7 @@ interface SidebarProps {
   advisorName: string;
   isAdmin?: boolean;
   onLogout: () => void;
+  className?: string;
 }
 
 export default function Sidebar({ 
@@ -27,7 +28,8 @@ export default function Sidebar({
   onNewRequestClick, 
   advisorName, 
   isAdmin, 
-  onLogout 
+  onLogout,
+  className
 }: SidebarProps) {
   const menuItems = [
     { id: "dashboard", label: "לוח בקרה", icon: LayoutDashboard },
@@ -44,7 +46,10 @@ export default function Sidebar({
   }
 
   return (
-    <aside id="sidebar-nav" className="fixed right-0 top-0 h-full w-64 flex flex-col z-40 bg-slate-950/60 backdrop-blur-md border-l border-slate-800 hidden md:flex transition-all">
+    <aside 
+      id="sidebar-nav" 
+      className={className ? className : "fixed right-0 top-0 h-full w-64 flex flex-col z-40 bg-slate-950/60 backdrop-blur-md border-l border-slate-800 transition-all hidden md:flex"}
+    >
       {/* Brand Logo */}
       <div className="p-4 border-b border-slate-800/80 flex flex-col items-center">
         <SynCashLogo size="sm" showSubtitle={true} showText={true} className="my-1 scale-95" />
