@@ -166,7 +166,10 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
                         </td>
                         <td className="px-6 py-4">
                           <div>
-                            <p className="text-xs text-slate-400">{client.dealType}</p>
+                            <p className="text-xs text-slate-400">
+                              {client.dealType}
+                              {client.propertyCity && ` (${client.propertyCity}${client.propertyStreet ? `, ${client.propertyStreet}` : ""})`}
+                            </p>
                             <p className="font-semibold text-slate-200 mt-0.5">
                               {Number(client.requestedAmount).toLocaleString()} ₪ מתוך {Number(client.propertyValue).toLocaleString()} ₪
                             </p>

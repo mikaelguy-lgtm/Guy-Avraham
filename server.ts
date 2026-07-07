@@ -333,6 +333,8 @@ app.post("/api/clients", (req, res) => {
     expensesMortgageBalance: req.body.expensesMortgageBalance || "0",
     dealType: req.body.dealType || "רכישה מקבלן",
     propertyType: req.body.propertyType || "דירה ראשונה",
+    propertyCity: req.body.propertyCity || "",
+    propertyStreet: req.body.propertyStreet || "",
     propertyValue: req.body.propertyValue || "0",
     requestedAmount: req.body.requestedAmount || "0",
     financingPercentage: req.body.financingPercentage || "50",
@@ -488,17 +490,24 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
     income: client.income,
     expenses: client.expenses,
     dealType: client.dealType,
+    propertyCity: client.propertyCity,
+    propertyStreet: client.propertyStreet,
     propertyValue: client.propertyValue,
     requestedAmount: client.requestedAmount,
     financingPercentage: client.financingPercentage,
     notes: client.notes,
   };
 
+  const propertyAddressStr = client.propertyCity 
+    ? `${client.propertyCity}${client.propertyStreet ? `, ${client.propertyStreet}` : ""}`
+    : "לא צוינה";
+
   // 1. Generate the master professional pitch letter in Hebrew using Gemini
   let generatedPitch = `שלום רב,\n\nפנייה זו מיועדת עבור בחינת תיק אשראי חוץ-בנקאי חדש במערכת SynCash.\n\n` +
     `פרטי הלקוח:\n` +
     `- שם הלקוח: ${client.name}\n` +
     `- סוג עסקה: ${client.dealType}\n` +
+    `- כתובת הנכס: ${propertyAddressStr}\n` +
     `- שווי נכס מוערך: ${Number(client.propertyValue).toLocaleString()} ₪\n` +
     `- סכום הלוואה מבוקש: ${Number(client.requestedAmount).toLocaleString()} ₪ (${client.financingPercentage}% מימון)\n` +
     `- הכנסה חודשית נטו: ${Number(client.income).toLocaleString()} ₪ (סטטוס: ${client.employmentType})\n\n` +

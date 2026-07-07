@@ -579,6 +579,15 @@ export default function DocumentManager({
                   <span className="text-slate-400">סוג עסקה:</span>
                   <span className="text-white font-bold">{selectedClient.dealType}</span>
                 </div>
+                {selectedClient.propertyCity && (
+                  <div className="flex justify-between border-b border-slate-800/40 pb-2">
+                    <span className="text-slate-400">כתובת הנכס:</span>
+                    <span className="text-white font-bold">
+                      {selectedClient.propertyCity}
+                      {selectedClient.propertyStreet ? `, ${selectedClient.propertyStreet}` : ""}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between border-b border-slate-800/40 pb-2">
                   <span className="text-slate-400">מצב תעסוקתי:</span>
                   <span className="text-white font-bold">{selectedClient.employmentType}</span>

@@ -40,6 +40,8 @@ export interface Client {
   expensesMortgageBalance?: string;
   dealType: string;
   propertyType?: string;
+  propertyCity?: string;
+  propertyStreet?: string;
   propertyValue: string;
   requestedAmount: string;
   financingPercentage: string;

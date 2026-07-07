@@ -1,6 +1,84 @@
 import React, { useState, useEffect } from "react";
 import { ArrowLeft, ArrowRight, CheckCircle2, Info } from "lucide-react";
 
+const ISRAEL_CITIES = [
+  "אופקים",
+  "אור יהודה",
+  "אור עקיבא",
+  "אילת",
+  "אלעד",
+  "אריאל",
+  "אשדוד",
+  "אשקלון",
+  "באקה אל-גרבייה",
+  "באר שבע",
+  "בית שאן",
+  "בית שמש",
+  "ביתר עילית",
+  "בני ברק",
+  "בת ים",
+  "גבעת שמואל",
+  "גבעתיים",
+  "דימונה",
+  "הוד השרון",
+  "הרצליה",
+  "חדרה",
+  "חולון",
+  "חיפה",
+  "חריש",
+  "טבריה",
+  "טייבה",
+  "טירה",
+  "טירת כרמל",
+  "טמרה",
+  "יבנה",
+  "יהוד-מונוסון",
+  "יקנעם עילית",
+  "ירושלים",
+  "כפר יונה",
+  "כפר סבא",
+  "כרמיאל",
+  "לוד",
+  "מגדל העמק",
+  "מודיעין-מכבים-רעות",
+  "מעלה אדומים",
+  "מעלות-תרשיחא",
+  "נהריה",
+  "נוף הגליל",
+  "נס ציונה",
+  "נצרת",
+  "נשר",
+  "נתיבות",
+  "נתניה",
+  "סח'נין",
+  "עילוט",
+  "עכו",
+  "עפולה",
+  "ערד",
+  "פתח תקווה",
+  "צפת",
+  "קלנסווה",
+  "קצרין",
+  "קרית אונו",
+  "קרית אתא",
+  "קרית ביאליק",
+  "קרית גת",
+  "קרית ים",
+  "קרית מוצקין",
+  "קרית מלאכי",
+  "קרית שמונה",
+  "ראש העין",
+  "ראשון לציון",
+  "רחובות",
+  "רמלה",
+  "רמת גן",
+  "רמת השרון",
+  "רעננה",
+  "שדרות",
+  "שפרעם",
+  "תל אביב-יפו"
+];
+
 interface NewClientWizardProps {
   onClientCreated: () => void;
   advisorId?: string;
@@ -33,6 +111,8 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
     expensesMortgageBalance: "",
     dealType: "רכישה מקבלן",
     propertyType: "דירה ראשונה",
+    propertyCity: "",
+    propertyStreet: "",
     propertyValue: "",
     requestedAmount: "",
     financingPercentage: "60",
@@ -119,6 +199,7 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
       }
     } else if (step === 3) {
       if (!formData.propertyType) stepErrors.propertyType = "אנא בחר סוג נכס";
+      if (!formData.propertyCity) stepErrors.propertyCity = "אנא בחר עיר עבור הנכס";
       if (!formData.propertyValue) stepErrors.propertyValue = "אנא הזן שווי נכס מוערך";
       if (!formData.requestedAmount) stepErrors.requestedAmount = "אנא הזן סכום הלוואה מבוקש";
     }
@@ -605,6 +686,36 @@ export default function NewClientWizard({ onClientCreated, advisorId }: NewClien
                   <option value="נכס קיים" className="bg-slate-950">נכס קיים</option>
                 </select>
                 {errors.propertyType && <p className="text-xs text-red-400 font-semibold">{errors.propertyType}</p>}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-sm font-bold text-slate-300">עיר הנכס *</label>
+                <select 
+                  name="propertyCity"
+                  value={formData.propertyCity}
+                  onChange={handleChange}
+                  className={`w-full rounded-lg border bg-slate-950/80 py-3 px-4 text-slate-100 focus:bg-slate-950 text-sm outline-none transition-all ${
+                    errors.propertyCity ? "border-red-500" : "border-slate-800 focus:ring-1 focus:ring-cyan-500"
+                  }`}
+                >
+                  <option value="" className="bg-slate-950">בחר עיר מתוך הרשימה *</option>
+                  {ISRAEL_CITIES.map(city => (
+                    <option key={city} value={city} className="bg-slate-950">{city}</option>
+                  ))}
+                </select>
+                {errors.propertyCity && <p className="text-xs text-red-400 font-semibold">{errors.propertyCity}</p>}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-sm font-bold text-slate-300">רחוב ומספר בית (הזנה חופשית)</label>
+                <input 
+                  type="text"
+                  name="propertyStreet"
+                  placeholder="לדוגמה: הרצל 12 (לא חובה)"
+                  value={formData.propertyStreet}
+                  onChange={handleChange}
+                  className="w-full rounded-lg border border-slate-800 bg-slate-950/80 py-3 px-4 text-slate-100 placeholder-slate-600 focus:bg-slate-950 text-sm outline-none transition-all focus:ring-1 focus:ring-cyan-500"
+                />
               </div>
 
               <div className="space-y-1.5">

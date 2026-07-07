@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Sparkles, Key, Mail, User, Shield, Briefcase, Phone, Award, Eye, EyeOff, LogIn, UserPlus } from "lucide-react";
 import { AdvisorProfile } from "../types";
+import SynCashLogo from "./SynCashLogo";
 
 interface AuthScreenProps {
   onLoginSuccess: (advisor: AdvisorProfile & { id: string; isAdmin?: boolean }) => void;
@@ -80,17 +81,20 @@ export default function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
       <div className="w-full max-w-lg z-10 transition-all duration-300">
         
         {/* Brand Logo and Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-slate-900/80 border border-slate-800 text-xs font-bold text-cyan-400 mb-4 shadow-sm animate-pulse">
-            <Sparkles className="h-4 w-4 text-amber-400 fill-amber-500/10" />
+        <div className="text-center mb-8 flex flex-col items-center">
+          <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-slate-900/80 border border-slate-800 text-xs font-bold text-amber-400 mb-6 shadow-sm">
+            <Sparkles className="h-4 w-4 text-amber-400 fill-amber-500/10 animate-pulse" />
             <span>שער ההתחברות והרישום ליועצים • SynCash</span>
           </div>
           
-          <h1 className="text-4xl font-extrabold tracking-tight text-white">
-            SynCash
-          </h1>
-          <p className="text-slate-400 font-medium text-sm mt-2 max-w-md mx-auto leading-relaxed">
-            מערכת ניהול תיקי משכנתאות חוץ-בנקאיות חכמה המקשרת אותך ישירות לחברות המימון המובילות בישראל.
+          <SynCashLogo size="lg" showSubtitle={false} showText={true} className="mb-2" />
+          
+          <h2 className="text-lg sm:text-xl font-bold text-slate-100 mt-3 border-y border-amber-500/20 py-2 w-full max-w-sm tracking-wide">
+            "המקום שבו עסקאות טובות מתחילות"
+          </h2>
+          
+          <p className="text-slate-400 font-medium text-xs sm:text-sm mt-3.5 max-w-md mx-auto leading-relaxed">
+            פלטפורמה חדשנית המחברת בין יועצי משכנתאות לבין גופי מימון חוץ בנקאים - בצורה חכמה, מדויקת ורווחית.
           </p>
         </div>
 

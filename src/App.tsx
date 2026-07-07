@@ -8,6 +8,7 @@ import LoanArena from "./components/LoanArena";
 import SettingsView from "./components/SettingsView";
 import AuthScreen from "./components/AuthScreen";
 import AdminDashboard from "./components/AdminDashboard";
+import SynCashLogo from "./components/SynCashLogo";
 import { Search, Bell, HelpCircle, Settings as SettingsIcon, Menu } from "lucide-react";
 
 export default function App() {
@@ -212,9 +213,12 @@ export default function App() {
         {/* Content canvas */}
         <main className="p-6 md:p-8 flex-1 max-w-7xl mx-auto w-full flex flex-col z-10">
           {loading ? (
-            <div className="flex-1 flex flex-col items-center justify-center space-y-3 py-16">
-              <div className="h-8 w-8 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-sm text-slate-400 font-bold animate-pulse">טוען את נתוני המערכת של SynCash...</p>
+            <div className="flex-1 flex flex-col items-center justify-center space-y-6 py-16">
+              <SynCashLogo size="md" showSubtitle={true} showText={true} className="animate-pulse" />
+              <div className="flex items-center gap-2">
+                <div className="h-4 w-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-xs text-slate-400 font-bold tracking-wider">טוען את נתוני המערכת של SynCash...</p>
+              </div>
             </div>
           ) : (
             <div className="flex-1 flex flex-col animate-fade-in">

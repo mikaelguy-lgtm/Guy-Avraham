@@ -10,6 +10,7 @@ import {
   PlusCircle,
   ShieldAlert
 } from "lucide-react";
+import SynCashLogo from "./SynCashLogo";
 
 interface SidebarProps {
   activeTab: string;
@@ -45,11 +46,8 @@ export default function Sidebar({
   return (
     <aside id="sidebar-nav" className="fixed right-0 top-0 h-full w-64 flex flex-col z-40 bg-slate-950/60 backdrop-blur-md border-l border-slate-800 hidden md:flex transition-all">
       {/* Brand Logo */}
-      <div className="p-6 border-b border-slate-800/80">
-        <h1 className="font-bold text-2xl tracking-tight text-white font-sans flex items-center gap-2">
-          <span className="font-black text-white">SynCash</span>
-        </h1>
-        <p className="text-xs text-slate-400 font-medium mt-1">מערכת חכמה ליועצי משכנתאות</p>
+      <div className="p-4 border-b border-slate-800/80 flex flex-col items-center">
+        <SynCashLogo size="sm" showSubtitle={true} showText={true} className="my-1 scale-95" />
       </div>
 
       {/* Nav Menu */}

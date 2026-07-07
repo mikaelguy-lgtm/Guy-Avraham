@@ -145,21 +145,28 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
           </div>
 
           {selectedClient && (
-            <div className="grid grid-cols-3 gap-6 text-xs sm:text-sm text-slate-300 font-semibold bg-slate-950/60 py-4 px-6 rounded-xl border border-slate-800/60 w-full lg:w-auto">
-              <div className="text-center px-2">
-                <p className="text-[10px] text-slate-500 font-bold uppercase">שווי נכס מוערך</p>
-                <p className="text-white font-extrabold mt-1 text-sm sm:text-base">₪{Number(selectedClient.propertyValue).toLocaleString()}</p>
+            <div className="flex flex-col items-center lg:items-end gap-2.5 w-full lg:w-auto">
+              <div className="grid grid-cols-3 gap-6 text-xs sm:text-sm text-slate-300 font-semibold bg-slate-950/60 py-4 px-6 rounded-xl border border-slate-800/60 w-full lg:w-auto">
+                <div className="text-center px-2">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase">שווי נכס מוערך</p>
+                  <p className="text-white font-extrabold mt-1 text-sm sm:text-base">₪{Number(selectedClient.propertyValue).toLocaleString()}</p>
+                </div>
+                <div className="border-r border-slate-800/80 h-full self-center"></div>
+                <div className="text-center px-2">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase">סכום הלוואה מבוקש</p>
+                  <p className="text-white font-extrabold mt-1 text-sm sm:text-base">₪{Number(selectedClient.requestedAmount).toLocaleString()}</p>
+                </div>
+                <div className="border-r border-slate-800/80 h-full self-center"></div>
+                <div className="text-center px-2">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase">אחוז מימון מבוקש</p>
+                  <p className="text-cyan-400 font-black mt-1 text-sm sm:text-base">{selectedClient.financingPercentage}%</p>
+                </div>
               </div>
-              <div className="border-r border-slate-800/80 h-full self-center"></div>
-              <div className="text-center px-2">
-                <p className="text-[10px] text-slate-500 font-bold uppercase">סכום הלוואה מבוקש</p>
-                <p className="text-white font-extrabold mt-1 text-sm sm:text-base">₪{Number(selectedClient.requestedAmount).toLocaleString()}</p>
-              </div>
-              <div className="border-r border-slate-800/80 h-full self-center"></div>
-              <div className="text-center px-2">
-                <p className="text-[10px] text-slate-500 font-bold uppercase">אחוז מימון מבוקש</p>
-                <p className="text-cyan-400 font-black mt-1 text-sm sm:text-base">{selectedClient.financingPercentage}%</p>
-              </div>
+              {selectedClient.propertyCity && (
+                <div className="text-[11px] text-slate-400 bg-slate-950/30 px-3.5 py-1.5 rounded-lg border border-slate-800/50 font-semibold self-center lg:self-end">
+                  כתובת הנכס לשעבוד: <span className="text-slate-200">{selectedClient.propertyCity}{selectedClient.propertyStreet ? `, ${selectedClient.propertyStreet}` : ""}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
