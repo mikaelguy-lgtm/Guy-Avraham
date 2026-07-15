@@ -11,17 +11,29 @@ import {
   ArrowLeft, 
   Search,
   MessageSquare,
-  AlertCircle
+  AlertCircle,
+  Pencil,
+  X
 } from "lucide-react";
 
 interface DashboardViewProps {
   clients: Client[];
   onSelectClient: (client: Client, tab: string) => void;
   advisorName?: string;
+  onRefreshClients?: () => void;
 }
 
-export default function DashboardView({ clients, onSelectClient, advisorName = "דוד" }: DashboardViewProps) {
+export default function DashboardView({ 
+  clients, 
+  onSelectClient, 
+  advisorName = "דוד",
+  onRefreshClients 
+}: DashboardViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [sortBy, setSortBy] = useState<string>("default");
+  const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [editForm, setEditForm] = useState<Partial<Client>>({});
+  const [isSaving, setIsSaving] = useState(false);
   const [aiSelectedClient, setAiSelectedClient] = useState<string>(clients[0]?.id || "");
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiAnswers, setAiAnswers] = useState<{ [clientId: string]: string }>({});
@@ -33,6 +45,81 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
     c.idNumber.includes(searchTerm) ||
     c.phone.includes(searchTerm)
   );
+
+  const statusWeights: Record<string, number> = {
+    draft: 1,
+    active: 2,
+    sent: 3,
+    closed: 4
+  };
+
+  const sortedClients = [...filteredClients].sort((a, b) => {
+    if (sortBy === "status") {
+      return (statusWeights[a.status] || 0) - (statusWeights[b.status] || 0);
+    }
+    if (sortBy === "name") {
+      return a.name.localeCompare(b.name, "he");
+    }
+    if (sortBy === "amount") {
+      return Number(b.requestedAmount) - Number(a.requestedAmount);
+    }
+    return 0; // default (order as received)
+  });
+
+  const handleStartEdit = (client: Client) => {
+    setEditingClient(client);
+    setEditForm({ ...client });
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClient) return;
+
+    if (!editForm.name?.trim()) {
+      alert("נא להזין שם לקוח");
+      return;
+    }
+    if (!editForm.idNumber?.trim()) {
+      alert("נא להזין מספר תעודת זהות");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const val = Number(editForm.propertyValue) || 0;
+      const reqAmt = Number(editForm.requestedAmount) || 0;
+      const pct = val > 0 ? Math.round((reqAmt / val) * 100).toString() : "0";
+      
+      const updatedData: Partial<Client> = {
+        name: editForm.name,
+        idNumber: editForm.idNumber,
+        phone: editForm.phone || "",
+        dealType: editForm.dealType || "רכישה מקבלן",
+        propertyCity: editForm.propertyCity || "",
+        propertyStreet: editForm.propertyStreet || "",
+        propertyValue: editForm.propertyValue || "0",
+        requestedAmount: editForm.requestedAmount || "0",
+        financingPercentage: pct,
+        income: editForm.income || "0",
+        expenses: editForm.expenses || "0",
+        status: editForm.status || "draft",
+        notes: editForm.notes || ""
+      };
+
+      await api.updateClient(editingClient.id, updatedData);
+      
+      if (onRefreshClients) {
+        onRefreshClients();
+      }
+      
+      setEditingClient(null);
+    } catch (error) {
+      console.error("Failed to update client:", error);
+      alert("שגיאה בשמירת נתוני הלקוח");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // Compute KPI metrics
   const totalClients = clients.length;
@@ -117,29 +204,45 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Clients Table */}
         <div className="bg-slate-900/30 backdrop-blur-md border border-slate-800/80 rounded-xl shadow-lg lg:col-span-2 overflow-hidden">
-          <div className="p-6 border-b border-slate-800/80 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="p-6 border-b border-slate-800/80 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
             <div>
               <h4 className="text-lg font-bold text-white">תיקי לקוחות במערכת</h4>
               <p className="text-xs text-slate-400 mt-1">לחץ על לקוח כדי לנהל את מסמכיו או לשדר את תיקו.</p>
             </div>
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute right-3 top-2.5 h-4 w-4 text-slate-400" />
-              <input 
-                type="text" 
-                placeholder="חיפוש לקוח לפי שם, ת.ז..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-3 pr-10 py-2 bg-slate-950/80 border border-slate-800 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
-              />
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full xl:w-auto">
+              <div className="relative flex-1 sm:w-64">
+                <Search className="absolute right-3 top-2.5 h-4 w-4 text-slate-400" />
+                <input 
+                  type="text" 
+                  placeholder="חיפוש לקוח לפי שם, ת.ז..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-3 pr-10 py-2 bg-slate-950/80 border border-slate-800 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-400 whitespace-nowrap">מיון:</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="rounded-lg bg-slate-950/80 border border-slate-800 py-2 px-3 text-xs text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                >
+                  <option value="default">ברירת מחדל (תאריך הוספה)</option>
+                  <option value="status">סטטוס תיק</option>
+                  <option value="name">שם לקוח (א-ת)</option>
+                  <option value="amount">סכום הלוואה (מהגבוה לנמוך)</option>
+                </select>
+              </div>
             </div>
           </div>
 
           {/* Desktop Table View */}
           <div className="hidden md:block overflow-x-auto">
-            {filteredClients.length > 0 ? (
+            {sortedClients.length > 0 ? (
               <table className="w-full text-right text-sm">
                 <thead className="bg-slate-950/40 text-slate-400 font-bold border-b border-slate-800/60">
                   <tr>
+                    <th className="px-4 py-4 text-center w-12">#</th>
                     <th className="px-6 py-4">שם הלקוח</th>
                     <th className="px-6 py-4">פרטי עסקה</th>
                     <th className="px-6 py-4">סטטוס</th>
@@ -148,13 +251,14 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-medium text-slate-300">
-                  {filteredClients.map((client) => {
+                  {sortedClients.map((client, index) => {
                     const uploadedDocs = client.documents.filter(d => d.status === "uploaded").length;
                     const totalDocs = client.documents.length;
                     const isFullyUploaded = uploadedDocs === totalDocs;
 
                     return (
                       <tr key={client.id} className="hover:bg-slate-800/20 transition-colors">
+                        <td className="px-4 py-4 text-center text-slate-500 font-mono text-xs font-bold">{index + 1}</td>
                         <td className="px-6 py-4">
                           <div>
                             <p className="font-bold text-white text-base">{client.name}</p>
@@ -205,6 +309,13 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
                         <td className="px-6 py-4">
                           <div className="flex gap-2">
                             <button 
+                              onClick={() => handleStartEdit(client)}
+                              title="ערוך פרטי לקוח"
+                              className="p-1.5 rounded-lg border border-slate-800 hover:bg-slate-850 bg-slate-900 text-slate-400 hover:text-white transition-colors flex items-center justify-center"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            <button 
                               onClick={() => onSelectClient(client, "documents")}
                               className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-xs font-semibold text-slate-300 hover:text-white transition-colors"
                             >
@@ -234,9 +345,9 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
 
           {/* Mobile Card View */}
           <div className="block md:hidden">
-            {filteredClients.length > 0 ? (
+            {sortedClients.length > 0 ? (
               <div className="p-4 space-y-4 divide-y divide-slate-800/40">
-                {filteredClients.map((client, index) => {
+                {sortedClients.map((client, index) => {
                   const uploadedDocs = client.documents.filter(d => d.status === "uploaded").length;
                   const totalDocs = client.documents.length;
                   const isFullyUploaded = uploadedDocs === totalDocs;
@@ -244,9 +355,14 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
                   return (
                     <div key={client.id} className={`${index > 0 ? "pt-4" : ""} flex flex-col gap-3`}>
                       <div className="flex justify-between items-start">
-                        <div>
-                          <h5 className="font-bold text-white text-base">{client.name}</h5>
-                          <p className="text-xs text-slate-400 font-normal mt-0.5">ת.ז: {client.idNumber} | {client.phone}</p>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center justify-center font-mono text-xs bg-slate-800 border border-slate-700/50 text-slate-400 font-bold h-6 w-6 rounded-md">
+                            {index + 1}
+                          </span>
+                          <div>
+                            <h5 className="font-bold text-white text-base leading-snug">{client.name}</h5>
+                            <p className="text-xs text-slate-400 font-normal mt-0.5">ת.ז: {client.idNumber} | {client.phone}</p>
+                          </div>
                         </div>
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold ${
                           client.status === "draft" ? "bg-slate-800 text-slate-400 border border-slate-700/60" :
@@ -300,7 +416,14 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
                           <span className="text-xs text-slate-400 font-bold">{uploadedDocs}/{totalDocs}</span>
                         </div>
 
-                        <div className="flex gap-2">
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => handleStartEdit(client)}
+                            title="ערוך פרטי לקוח"
+                            className="p-1.5 rounded-lg border border-slate-800 hover:bg-slate-850 bg-slate-900 text-slate-400 hover:text-white transition-colors flex items-center justify-center"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
                           <button 
                             onClick={() => onSelectClient(client, "documents")}
                             className="px-2.5 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-[11px] font-semibold text-slate-300 transition-colors"
@@ -426,6 +549,213 @@ export default function DashboardView({ clients, onSelectClient, advisorName = "
           </div>
         </div>
       </div>
+
+      {/* Edit Client Modal */}
+      {editingClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto animate-fade-in" dir="rtl">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto text-right flex flex-col">
+            
+            {/* Modal Header */}
+            <div className="p-6 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-900 z-10">
+              <h3 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                <Pencil className="h-5 w-5 text-cyan-400" />
+                עריכת פרטי לקוח: {editingClient.name}
+              </h3>
+              <button 
+                type="button"
+                onClick={() => setEditingClient(null)}
+                className="p-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveEdit} className="p-6 space-y-6 flex-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                
+                {/* Name */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">שם מלא של הלווה <span className="text-rose-500">*</span></label>
+                  <input 
+                    type="text"
+                    required
+                    value={editForm.name || ""}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  />
+                </div>
+
+                {/* ID Number */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">מספר תעודת זהות <span className="text-rose-500">*</span></label>
+                  <input 
+                    type="text"
+                    required
+                    value={editForm.idNumber || ""}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, idNumber: e.target.value }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Phone */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">מספר טלפון</label>
+                  <input 
+                    type="text"
+                    value={editForm.phone || ""}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, phone: e.target.value }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Status */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">סטטוס תיק</label>
+                  <select 
+                    value={editForm.status || "draft"}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, status: e.target.value as any }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  >
+                    <option value="draft" className="bg-slate-950">טיוטה</option>
+                    <option value="active" className="bg-slate-950">פעיל - מוכן לשדור</option>
+                    <option value="sent" className="bg-slate-950">שודר - ממתין להצעות</option>
+                    <option value="closed" className="bg-slate-950">תיק סגור</option>
+                  </select>
+                </div>
+
+                {/* Deal Type */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">סוג עסקה</label>
+                  <select 
+                    value={editForm.dealType || "רכישה מקבלן"}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, dealType: e.target.value }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  >
+                    <option value="רכישה מקבלן" className="bg-slate-950">רכישה מקבלן</option>
+                    <option value="רכישת דירה יד שנייה" className="bg-slate-950">רכישת דירה יד שנייה</option>
+                    <option value="בנייה עצמית / שיפוץ" className="bg-slate-950">בנייה עצמית / שיפוץ</option>
+                    <option value="מיחזור משכנתא" className="bg-slate-950">מיחזור משכנתא</option>
+                    <option value="הלוואה לכל מטרה" className="bg-slate-950">הלוואה לכל מטרה</option>
+                  </select>
+                </div>
+
+                {/* Income */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">הכנסה חודשית נטו (₪)</label>
+                  <input 
+                    type="number"
+                    value={editForm.income || ""}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, income: e.target.value }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Property Value */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">שווי הנכס המוערך (₪)</label>
+                  <input 
+                    type="number"
+                    value={editForm.propertyValue || ""}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, propertyValue: e.target.value }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Requested Amount */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">סכום ההלוואה המבוקש (₪)</label>
+                  <input 
+                    type="number"
+                    value={editForm.requestedAmount || ""}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, requestedAmount: e.target.value }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Property City */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">עיר הנכס</label>
+                  <input 
+                    type="text"
+                    value={editForm.propertyCity || ""}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, propertyCity: e.target.value }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Property Street */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">רחוב ומספר בית</label>
+                  <input 
+                    type="text"
+                    value={editForm.propertyStreet || ""}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, propertyStreet: e.target.value }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Expenses */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-300">הוצאות חודשיות קבועות (₪)</label>
+                  <input 
+                    type="number"
+                    value={editForm.expenses || ""}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, expenses: e.target.value }))}
+                    className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Calculated financing percentage */}
+                <div className="space-y-1.5 flex flex-col justify-end">
+                  <div className="bg-slate-950/60 border border-slate-800/80 rounded-lg p-3 text-center">
+                    <p className="text-[10px] text-slate-500 font-bold uppercase">אחוז מימון מחושב</p>
+                    <p className="text-cyan-400 font-black mt-1 text-base">
+                      {Number(editForm.propertyValue) > 0 
+                        ? Math.round((Number(editForm.requestedAmount) / Number(editForm.propertyValue)) * 100)
+                        : 0}%
+                    </p>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-300">הערות ורקע מיוחד</label>
+                <textarea 
+                  rows={3}
+                  value={editForm.notes || ""}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, notes: e.target.value }))}
+                  className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all resize-none"
+                />
+              </div>
+
+              {/* Actions Footer */}
+              <div className="flex gap-3 justify-end pt-4 border-t border-slate-800">
+                <button 
+                  type="button"
+                  disabled={isSaving}
+                  onClick={() => setEditingClient(null)}
+                  className="px-4 py-2.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-sm font-semibold transition-colors disabled:opacity-50"
+                >
+                  ביטול
+                </button>
+                <button 
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-5 py-2.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold shadow-lg shadow-cyan-950/40 transition-colors disabled:bg-slate-800 disabled:text-slate-600 flex items-center gap-2"
+                >
+                  {isSaving && <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
+                  {isSaving ? "שומר..." : "שמור שינויים"}
+                </button>
+              </div>
+
+            </form>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -222,6 +222,7 @@ export default function App() {
                   clients={visibleClients} 
                   onSelectClient={handleSelectClientFromDashboard}
                   advisorName={loggedInAdvisor.name}
+                  onRefreshClients={fetchClients}
                 />
               )}
 
