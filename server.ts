@@ -4,6 +4,7 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import nodemailer from "nodemailer";
 
 dotenv.config();
 
@@ -220,6 +221,10 @@ const INITIAL_LENDERS = [
 const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 const DEFAULT_SETTINGS = {
   systemSenderEmail: "requests@syncash-mail.co.il",
+  smtpPassword: "",
+  smtpHost: "smtp.gmail.com",
+  smtpPort: 465,
+  smtpSecure: true,
   lenders: INITIAL_LENDERS,
   lenderEmails: {
     "BTB": "credit@btb.co.il",
@@ -531,6 +536,46 @@ app.post("/api/clients/:id/delete-doc", (req, res) => {
   }
 });
 
+// Helper to send real emails via Nodemailer
+async function sendRealEmail(to: string, replyTo: string, subject: string, text: string) {
+  const settings = loadSettings();
+  
+  const senderEmail = settings.systemSenderEmail || "requests@syncash-mail.co.il";
+  const smtpPass = settings.smtpPassword || process.env.SMTP_PASSWORD || "";
+  
+  if (!smtpPass) {
+    console.warn("SMTP password not set, skipping real email send.");
+    return { success: false, reason: "SMTP App Password (סיסמת אפליקציה של גוגל) אינה מוגדרת. אנא הגדר אותה בטאב שידור תחת הגדרות דואר מנהל." };
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: settings.smtpHost || "smtp.gmail.com",
+      port: parseInt(settings.smtpPort || "465", 10),
+      secure: settings.smtpSecure !== undefined ? settings.smtpSecure : true,
+      auth: {
+        user: senderEmail,
+        pass: smtpPass
+      }
+    });
+
+    const mailOptions = {
+      from: `"מערכת SynCash" <${senderEmail}>`,
+      to,
+      replyTo,
+      subject,
+      text
+    };
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log("Email sent successfully:", info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error: any) {
+    console.error("Nodemailer failed to send email:", error);
+    return { success: false, reason: `שגיאת התחברות לשרת הדואר: ${error.message}` };
+  }
+}
+
 // POST /api/clients/:id/send-to-lenders (Generate anonymous cover pitch & set lenders status to sent_anonymous)
 app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
   const { lenders, selectedLenders } = req.body; // Array of lender names e.g. ["BTB", "Tarya"]
@@ -661,15 +706,43 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
     `מכתב פנייה זה נוצר ונשלח באופן מאובטח מכתובת שרת SynCash הראשי: ${settings.systemSenderEmail}\n` +
     `להגשת הצעת מימון או בקשת הבהרה, השב ישירות למייל זה או השתמש במערכת SynCash.`;
 
-  // 3. Setup anonymous state for each selected lender (awaiting reply)
+  const advisors = loadAdvisors();
+  const advisor = advisors.find(a => a.id === (client.advisorId || "advisor-1")) || advisors[0];
+  const advisorEmail = advisor ? advisor.email : "";
+
+  // 3. Setup anonymous state for each selected lender (awaiting reply) & send real email
   for (const lender of targetLenders) {
     const lenderObj = settings.lenders ? settings.lenders.find((l: any) => l.id === lender) : null;
     const lenderEmail = lenderObj ? lenderObj.email : (settings.lenderEmails ? settings.lenderEmails[lender] : "credit@lender.co.il");
     
+    // We will append a direct link for the lender to reply in SynCash!
+    const directReplyUrl = `${baseUrl}/?refId=SYNCASH-CL-${client.id}-LD-${lender}`;
+
+    const pitchWithLink = fixedTemplate + 
+      `\n\n` +
+      `==================================================\n` +
+      `   מענה ישיר והגשת הצעת מימון מקוונת בזירה:\n` +
+      `==================================================\n` +
+      `למענה מהיר, עדכון סטטוס תיק או הגשת ריביות/אישור רשמי ליועץ:\n` +
+      `🔗 לחץ כאן למענה מיידי מקוון: ${directReplyUrl}\n\n` +
+      `הודעתכם וריביתכם יעודכנו בזמן אמת בלוח הבקרה של היועץ ${advisor.name}.\n` +
+      `==================================================\n`;
+
+    // Attempt to send real email
+    const subject = `[SynCash] פניית אשראי חוץ-בנקאית חדשה - סימוכין SYNCASH-CL-${client.id.substring(0, 8)}`;
+    const mailResult = await sendRealEmail(lenderEmail, advisorEmail || settings.systemSenderEmail, subject, pitchWithLink);
+
+    let statusMsg = "";
+    if (mailResult.success) {
+      statusMsg = `הבקשה נשלחה אנונימית בהצלחה לכתובת ${lenderEmail}.\nהמערכת ממתינה לתשובת עניין מהחברה (מעוניין/לא מעוניין).\n\nניתן להשתמש בקישור הבא למענה ישיר:\n${directReplyUrl}`;
+    } else {
+      statusMsg = `המערכת ניסתה לשלוח מייל אמת אל ${lenderEmail}, אך השליחה נכשלה מהסיבה הבאה:\n❌ ${mailResult.reason}\n\nסירקולציה חלופית: המערכת עברה למצב סימולטור. תוכל לדמות מענה ישיר לתיק זה בטאב "שידור" בדשבורד מנהל המערכת, או להשתמש בקישור המענה הישיר הבא:\n🔗 ${directReplyUrl}`;
+    }
+
     client.lendersState[lender] = {
       status: "sent_anonymous",
-      pitch: fixedTemplate,
-      reply: `הבקשה נשלחה אנונימית מכתובת ${settings.systemSenderEmail} אל ${lenderEmail}.\nהמערכת ממתינה לתשובת עניין מהחברה (מעוניין/לא מעוניין).`
+      pitch: pitchWithLink,
+      reply: statusMsg
     };
   }
 
@@ -814,11 +887,23 @@ app.get("/api/admin/settings", (req, res) => {
 
 // POST /api/admin/settings (Update email and broadcaster configuration)
 app.post("/api/admin/settings", (req, res) => {
-  const { systemSenderEmail, lenderEmails } = req.body;
+  const { systemSenderEmail, smtpPassword, smtpHost, smtpPort, smtpSecure, lenderEmails } = req.body;
   const currentSettings = loadSettings();
   
   if (systemSenderEmail !== undefined) {
     currentSettings.systemSenderEmail = systemSenderEmail;
+  }
+  if (smtpPassword !== undefined) {
+    currentSettings.smtpPassword = smtpPassword;
+  }
+  if (smtpHost !== undefined) {
+    currentSettings.smtpHost = smtpHost;
+  }
+  if (smtpPort !== undefined) {
+    currentSettings.smtpPort = parseInt(smtpPort, 10) || 465;
+  }
+  if (smtpSecure !== undefined) {
+    currentSettings.smtpSecure = smtpSecure === true;
   }
   if (lenderEmails !== undefined && typeof lenderEmails === "object") {
     currentSettings.lenderEmails = {
@@ -831,9 +916,70 @@ app.post("/api/admin/settings", (req, res) => {
   res.json(currentSettings);
 });
 
+// GET /api/lenders/case-details (Public endpoint to fetch anonymized deal profile for a lender link)
+app.get("/api/lenders/case-details", (req, res) => {
+  const { refId } = req.query;
+  if (!refId || typeof refId !== "string") {
+    return res.status(400).json({ error: "Missing refId query parameter" });
+  }
+
+  const match = refId.match(/^SYNCASH-CL-(.+)-LD-(.+)$/);
+  if (!match) {
+    return res.status(400).json({ error: "Invalid refId format" });
+  }
+
+  const clientId = match[1];
+  const lenderId = match[2];
+
+  const clients = loadClients();
+  const client = clients.find(c => c.id === clientId);
+  if (!client) {
+    return res.status(404).json({ error: "התיק המבוקש לא נמצא במערכת" });
+  }
+
+  // Find lender details from settings to show a nice welcome message to the lender
+  const settings = loadSettings();
+  const lenderObj = settings.lenders ? settings.lenders.find((l: any) => l.id === lenderId) : null;
+  const lenderName = lenderObj ? lenderObj.name : lenderId;
+
+  // Render strictly anonymous profile
+  const anonymizedName = client.name ? `${client.name.substring(0, 1)}***` : "לקוח אנונימי";
+  const anonymizedId = client.idNumber ? `${client.idNumber.substring(0, 3)}******` : "לא צוין";
+
+  const caseProfile = {
+    refId,
+    clientId: client.id,
+    lenderId,
+    lenderName,
+    anonymizedName,
+    anonymizedId,
+    dealType: client.dealType || "רכישת דירה",
+    propertyType: client.propertyType || "דירת מגורים",
+    propertyCity: client.propertyCity || "לא צוין",
+    propertyStreet: client.propertyStreet || "",
+    propertyValue: client.propertyValue || "0",
+    requestedAmount: client.requestedAmount || "0",
+    financingPercentage: client.financingPercentage || "0",
+    employmentType: client.employmentType || "שכיר",
+    workplace: client.workplace || "לא צוין",
+    seniority: client.seniority || "0",
+    income: client.income || "0",
+    expenses: client.expenses || "0",
+    notes: client.notes || "",
+    documents: client.documents.map((d: any) => ({
+      id: d.id,
+      name: d.name,
+      status: d.status
+    })),
+    currentState: client.lendersState ? client.lendersState[lenderId] : null
+  };
+
+  res.json(caseProfile);
+});
+
 // POST /api/lenders/simulated-reply (Endpoint simulating receiving a reply email from a lender)
 app.post("/api/lenders/simulated-reply", (req, res) => {
-  const { clientRefId, decision, replyText } = req.body;
+  const { clientRefId, decision, replyText, offerAmount, offerRate, offerYears } = req.body;
   
   if (!clientRefId || !decision) {
     return res.status(400).json({ error: "Missing clientRefId or decision" });
@@ -858,7 +1004,15 @@ app.post("/api/lenders/simulated-reply", (req, res) => {
   client.lendersState = client.lendersState || {};
   client.lendersState[lenderId] = client.lendersState[lenderId] || {};
 
-  if (decision === "interested") {
+  if (decision === "offer") {
+    client.lendersState[lenderId].status = "offer_received";
+    client.lendersState[lenderId].offer = {
+      amount: offerAmount || client.requestedAmount,
+      rate: offerRate || "6.5",
+      years: offerYears || "20"
+    };
+    client.lendersState[lenderId].reply = replyText || `שלום רב,\n\nאנו שמחים להגיש הצעה פיננסית עבור תיק זה:\n- סכום הצעה מאושר: ₪${Number(offerAmount || client.requestedAmount).toLocaleString()}\n- שיעור ריבית: ${offerRate}%\n- תקופת החזר: ${offerYears} שנים.\n\nבברכה,\nמחלקת אשראי וחיתום חוץ-בנקאי, ${lenderId}`;
+  } else if (decision === "interested") {
     client.lendersState[lenderId].status = "interested";
     client.lendersState[lenderId].reply = replyText || `שלום רב,\n\nהבקשה האנונימית נבחנה על ידינו בקרן ${lenderId}.\nהנתונים המוצגים מתאימים לפעילותנו. אנו מביעים עניין רב בהגשת הצעה פיננסית תחרותית לתיק זה.\nנשמח אם תחשפו בפנינו את פרטי הקשר והמסמכים המלאים של היועץ והלווה על מנת שנוכל להפיק עבורכם אישור עקרוני וריביות מדויקות.\n\nבברכה,\nמחלקת אשראי וחיתום חוץ-בנקאי, ${lenderId}`;
   } else {

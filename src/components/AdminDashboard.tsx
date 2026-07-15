@@ -76,9 +76,17 @@ export default function AdminDashboard({ clients, onRefreshClients, onBackToApp 
 
   const [settings, setSettings] = useState<{
     systemSenderEmail: string;
+    smtpPassword?: string;
+    smtpHost?: string;
+    smtpPort?: string | number;
+    smtpSecure?: boolean;
     lenderEmails: Record<string, string>;
   }>({
     systemSenderEmail: "requests@syncash-mail.co.il",
+    smtpPassword: "",
+    smtpHost: "smtp.gmail.com",
+    smtpPort: 465,
+    smtpSecure: true,
     lenderEmails: {
       "BTB": "credit@btb.co.il",
       "Tarya": "underwriting@tarya.co.il",
@@ -923,6 +931,54 @@ export default function AdminDashboard({ clients, onRefreshClients, onBackToApp 
                     />
                   </div>
                   <p className="text-[10px] text-slate-500">כלל יועצי המשכנתאות ישדרו מאחורי הקלעים באמצעות כתובת אנונימית זו.</p>
+                </div>
+
+                <div className="space-y-2 col-span-1">
+                  <label className="block text-xs font-bold text-slate-300">סיסמת אפליקציה לשליחת מייל (Gmail App Password / SMTP Pass)</label>
+                  <input
+                    type="password"
+                    value={settings.smtpPassword || ""}
+                    onChange={(e) => setSettings({ ...settings, smtpPassword: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-slate-950/80 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-red-500 text-right font-mono"
+                    placeholder="הזן סיסמת אפליקציה של גוגל"
+                  />
+                  <p className="text-[10px] text-slate-500">לשליחה מחשבון ה-Gmail האישי שלך (כמו kiss.my.twins@gmail.com), עליך לייצר בגוגל 'סיסמת אפליקציה' (App Password) בת 16 תווים ללא רווחים ולהזין אותה כאן.</p>
+                </div>
+
+                <div className="space-y-2 col-span-1">
+                  <label className="block text-xs font-bold text-slate-300">שרת יוצא (SMTP Host)</label>
+                  <input
+                    type="text"
+                    value={settings.smtpHost || "smtp.gmail.com"}
+                    onChange={(e) => setSettings({ ...settings, smtpHost: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-slate-950/80 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-red-500 text-left font-mono"
+                    placeholder="smtp.gmail.com"
+                  />
+                  <p className="text-[10px] text-slate-500">ברירת המחדל היא smtp.gmail.com עבור Gmail.</p>
+                </div>
+
+                <div className="space-y-2 col-span-1">
+                  <label className="block text-xs font-bold text-slate-300">פורט שרת יוצא (SMTP Port)</label>
+                  <input
+                    type="number"
+                    value={settings.smtpPort || 465}
+                    onChange={(e) => setSettings({ ...settings, smtpPort: parseInt(e.target.value, 10) || 465 })}
+                    className="w-full px-3 py-2.5 bg-slate-950/80 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-red-500 text-left font-mono"
+                    placeholder="465"
+                  />
+                  <p className="text-[10px] text-slate-500">מומלץ 465 עבור חיבור מאובטח (SSL) או 587 (TLS).</p>
+                </div>
+
+                <div className="space-y-2 col-span-1 flex items-center pt-6">
+                  <label className="flex items-center gap-2 text-xs font-bold text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.smtpSecure !== false}
+                      onChange={(e) => setSettings({ ...settings, smtpSecure: e.target.checked })}
+                      className="rounded border-slate-800 text-red-500 focus:ring-red-500 h-4 w-4 bg-slate-950"
+                    />
+                    חיבור מאובטח (SSL / TLS)
+                  </label>
                 </div>
 
                 <div className="col-span-1 md:col-span-2 border-t border-slate-800/80 my-2 pt-4">

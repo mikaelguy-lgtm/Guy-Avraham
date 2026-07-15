@@ -9,6 +9,7 @@ import SettingsView from "./components/SettingsView";
 import AuthScreen from "./components/AuthScreen";
 import AdminDashboard from "./components/AdminDashboard";
 import SynCashLogo from "./components/SynCashLogo";
+import LenderPortal from "./components/LenderPortal";
 import { api } from "./utils/apiClient";
 import { Search, Bell, HelpCircle, Settings as SettingsIcon, Menu } from "lucide-react";
 
@@ -19,6 +20,12 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [uploadedFileUrls, setUploadedFileUrls] = useState<Record<string, { url: string; type: string; name: string }>>({});
+
+  // Check if there is a query parameter for lender decision in the URL
+  const [lenderRefId, setLenderRefId] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("refId") || params.get("lenderRefId");
+  });
 
   // Loaded logged-in advisor session from localStorage
   const [loggedInAdvisor, setLoggedInAdvisor] = useState<(AdvisorProfile & { id: string; isAdmin?: boolean }) | null>(() => {
@@ -79,6 +86,23 @@ export default function App() {
     localStorage.removeItem("advisor_session");
     setActiveTab("dashboard");
   };
+
+  // If a lender reference code is present in URL, render the secure public Lender Portal directly!
+  if (lenderRefId) {
+    return (
+      <LenderPortal 
+        refId={lenderRefId} 
+        onClose={() => {
+          // Clean up URL query parameters
+          const url = new URL(window.location.href);
+          url.searchParams.delete("refId");
+          url.searchParams.delete("lenderRefId");
+          window.history.replaceState({}, document.title, url.toString());
+          setLenderRefId(null);
+        }} 
+      />
+    );
+  }
 
   // If no advisor is logged in, intercept with the clean registration/login view
   if (!loggedInAdvisor) {
