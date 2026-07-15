@@ -208,6 +208,67 @@ function saveClients(clients: any[]) {
   }
 }
 
+const INITIAL_LENDERS = [
+  { id: "BTB", name: "BTB (בנקינג טו ביזנס)", email: "credit@btb.co.il", description: "קרן חברתית להלוואות, מצוינת לעסקים, עצמאיים ורכישות מורכבות.", specialty: "עצמאיים ויזמות", status: "active" },
+  { id: "Tarya", name: "טריא (Tarya)", email: "underwriting@tarya.co.il", description: "פלטפורמת המימון ההמוני הגדולה בישראל. מעולה לגישורים וקבוצות רכישה.", specialty: "גישורים וקבוצות רכישה", status: "active" },
+  { id: "Peninsula", name: "פנינסולה (Peninsula)", email: "deals@peninsula.co.il", description: "חברת אשראי ציבורית גדולה, מתמחה במימון נדל\"ן וקבוצות רוכשים.", specialty: "מימון יזמי וקבוצות", status: "active" },
+  { id: "Gamma", name: "גמא (Gamma)", email: "mortgage@gamma.co.il", description: "מקבוצת הפניקס, פתרונות מימון ומשכנתאות לנכסים מסחריים ויוקרה.", specialty: "מסחרי ונכסי יוקרה", status: "active" },
+  { id: "Clal", name: "כלל מימון (Clal)", email: "clalfinance@clal.co.il", description: "זרוע המימון החוץ-בנקאית של כלל ביטוח, אשראי רחב היקף.", specialty: "אחוזי מימון גבוהים", status: "active" },
+  { id: "Harel", name: "הראל אשראי (Harel)", email: "harelfinance@harel.co.il", description: "קרן חוב ומימון מבית הראל, מתמחה בפרויקטים ובטוחות מורכבות.", specialty: "תיקים מורכבים במיוחד", status: "active" }
+];
+
+const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
+const DEFAULT_SETTINGS = {
+  systemSenderEmail: "requests@syncash-mail.co.il",
+  lenders: INITIAL_LENDERS,
+  lenderEmails: {
+    "BTB": "credit@btb.co.il",
+    "Tarya": "underwriting@tarya.co.il",
+    "Peninsula": "deals@peninsula.co.il",
+    "Gamma": "mortgage@gamma.co.il",
+    "Clal": "clalfinance@clal.co.il",
+    "Harel": "harelfinance@harel.co.il"
+  }
+};
+
+function loadSettings() {
+  try {
+    let settings;
+    if (fs.existsSync(SETTINGS_FILE)) {
+      const data = fs.readFileSync(SETTINGS_FILE, "utf-8");
+      settings = JSON.parse(data);
+    } else {
+      settings = DEFAULT_SETTINGS;
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
+    }
+
+    // Auto-migration to ensure settings has the lenders array
+    if (!settings.lenders) {
+      settings.lenders = INITIAL_LENDERS;
+      if (settings.lenderEmails) {
+        settings.lenders = settings.lenders.map((l: any) => ({
+          ...l,
+          email: settings.lenderEmails[l.id] || l.email
+        }));
+      }
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
+    }
+
+    return settings;
+  } catch (error) {
+    console.error("Error reading settings file, fallback to default", error);
+    return DEFAULT_SETTINGS;
+  }
+}
+
+function saveSettings(settings: any) {
+  try {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
+  } catch (error) {
+    console.error("Error writing settings file", error);
+  }
+}
+
 // REST API Endpoints
 
 // GET /api/advisors
@@ -347,14 +408,20 @@ app.post("/api/clients", (req, res) => {
       { id: "doc-salary-" + Date.now(), name: "3 תלושי שכר אחרונים", status: "pending", date: "" },
       { id: "doc-prop-" + Date.now(), name: "נסח טאבו או אישור זכויות נכס", status: "pending", date: "" }
     ],
-    lendersState: {
-      "BTB": { status: "not_sent" },
-      "Tarya": { status: "not_sent" },
-      "Peninsula": { status: "not_sent" },
-      "Gamma": { status: "not_sent" },
-      "Clal": { status: "not_sent" },
-      "Harel": { status: "not_sent" }
-    }
+    lendersState: (() => {
+      const settings = loadSettings();
+      const state: any = {};
+      if (settings.lenders && Array.isArray(settings.lenders)) {
+        settings.lenders.forEach((l: any) => {
+          state[l.id] = { status: "not_sent" };
+        });
+      } else {
+        ["BTB", "Tarya", "Peninsula", "Gamma", "Clal", "Harel"].forEach((id) => {
+          state[id] = { status: "not_sent" };
+        });
+      }
+      return state;
+    })()
   };
 
   clients.unshift(newClient);
@@ -464,10 +531,11 @@ app.post("/api/clients/:id/delete-doc", (req, res) => {
   }
 });
 
-// POST /api/clients/:id/send-to-lenders (Generate cover pitch & simulate lender offers via Gemini)
+// POST /api/clients/:id/send-to-lenders (Generate anonymous cover pitch & set lenders status to sent_anonymous)
 app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
-  const { lenders } = req.body; // Array of lender names e.g. ["BTB", "Tarya"]
-  if (!lenders || !Array.isArray(lenders) || lenders.length === 0) {
+  const { lenders, selectedLenders } = req.body; // Array of lender names e.g. ["BTB", "Tarya"]
+  const targetLenders = lenders || selectedLenders;
+  if (!targetLenders || !Array.isArray(targetLenders) || targetLenders.length === 0) {
     return res.status(400).json({ error: "Please select at least one out-of-bank lender." });
   }
 
@@ -478,8 +546,9 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
   }
 
   const client = clients[clientIndex];
+  const settings = loadSettings();
   
-  // Mark status as 'sent'
+  // Mark overall client status as 'sent'
   client.status = "sent";
 
   // Prepare client details for Gemini
@@ -502,30 +571,21 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
     ? `${client.propertyCity}${client.propertyStreet ? `, ${client.propertyStreet}` : ""}`
     : "לא צוינה";
 
-  // 1. Generate the master professional pitch letter in Hebrew using Gemini
-  let generatedPitch = `שלום רב,\n\nפנייה זו מיועדת עבור בחינת תיק אשראי חוץ-בנקאי חדש במערכת SynCash.\n\n` +
-    `פרטי הלקוח:\n` +
-    `- שם הלקוח: ${client.name}\n` +
-    `- סוג עסקה: ${client.dealType}\n` +
-    `- כתובת הנכס: ${propertyAddressStr}\n` +
-    `- שווי נכס מוערך: ${Number(client.propertyValue).toLocaleString()} ₪\n` +
-    `- סכום הלוואה מבוקש: ${Number(client.requestedAmount).toLocaleString()} ₪ (${client.financingPercentage}% מימון)\n` +
-    `- הכנסה חודשית נטו: ${Number(client.income).toLocaleString()} ₪ (סטטוס: ${client.employmentType})\n\n` +
-    `הערות וניתוח תיק:\n${client.notes || "תיק משכנתא חוץ-בנקאי סטנדרטי למטרת מימון מיוחד."}\n\n` +
-    `נשמח לקבלת הצעתכם המימונית הראשונית.\nבברכה,\nדוד כהן - יועץ משכנתאות בכיר`;
-
+  // 1. Generate the anonymous pitch letter in Hebrew (AI dynamic part)
+  let aiGeneratedPart = "פניית אשראי חוץ-בנקאית מפורטת למשכנתא.";
   if (ai) {
     try {
       const systemInstruction = 
         "You are an expert Israeli mortgage advisor. Generate an incredibly professional, detailed, persuasive, and custom cover letter/pitch " +
         "in Hebrew, sent to non-bank lenders (חברות מימון חוץ-בנקאיות) like BTB, Tarya, Peninsula etc. The goal is to highlight the strengths of the borrower, " +
         "explain the reason for needing out-of-bank financing (e.g. self-employed, bank bureaucracy, high-leverage), address risks, and pitch why " +
-        "this is an excellent collateral/borrower profile. Include clear Hebrew financial terminology (יחס החזר, אחוז מימון, בטוחות, נכס, כושר החזר). " +
-        "Keep the tone strictly respectful, corporate, and highly convincing.";
+        "this is an excellent collateral/borrower profile. Include clear Hebrew financial terminology (יחס החזר, אחוז מימון, בטוחות, נכס, כושר החזר).\n" +
+        "CRITICAL RULE: The pitch MUST BE COMPLETELY ANONYMOUS regarding the mortgage advisor. Do NOT write any advisor name, company name, license number, phone, email, or direct contact details. " +
+        "Use placeholder words or generic terms like 'יועץ פיננסי מוסמך' or 'מערכת SynCash'.";
 
       const response = await ai.models.generateContent({
         model: "gemini-3.5-flash",
-        contents: `אנא צור מכתב פנייה מקצועי, משכנע ומותאם אישית לחברות המימון עבור התיק הבא:\n${JSON.stringify(promptData, null, 2)}`,
+        contents: `אנא צור מכתב פנייה מקצועי, אנונימי ומשכנע עבור התיק הבא:\n${JSON.stringify(promptData, null, 2)}`,
         config: {
           systemInstruction: systemInstruction,
           temperature: 0.7,
@@ -533,82 +593,353 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
       });
 
       if (response.text) {
-        generatedPitch = response.text;
+        aiGeneratedPart = response.text;
       }
     } catch (err) {
-      console.error("Gemini failed to generate pitch, using template.", err);
+      console.error("Gemini failed to generate anonymous pitch part, using default.", err);
     }
   }
 
-  // 2. Generate simulated replies for each lender
-  for (const lender of lenders) {
-    client.lendersState[lender] = client.lendersState[lender] || {};
-    client.lendersState[lender].status = "sent";
-    client.lendersState[lender].pitch = generatedPitch;
-    client.lendersState[lender].reply = "הבקשה נשלחה ונמצאת בבחינה ראשונית...";
+  // 2. Build the fixed structured template (טמפלט קבוע)
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.get('host');
+  const baseUrl = `${protocol}://${host}`;
 
-    // We can simulate an automated realistic reply from Gemini!
-    if (ai) {
-      try {
-        const lenderInstruction = 
-          `You are the senior credit underwriting manager (מנהל חיתום ראשי) at '${lender}', a leading non-bank financial institution in Israel. ` +
-          `Analyze the following borrower profile and the mortgage pitch. Produce a highly realistic, professional Hebrew email response. ` +
-          `The response should be either:\n` +
-          `1) An approval-in-principle (אישור עקרונית) with specific loan parameters: an offered amount (often close to requested, but maybe slightly lower if risky), ` +
-          `   a realistic interest rate (typically between 6.5% and 9.5% for non-bank in Israel in 2026, depending on profile), and term in years (usually 15-25 years). ` +
-          `2) OR a request for more information/documents (דרישה להשלמת מסמכים) e.g. 'We need to see 6 months bank statements instead of 3 due to the self-employed status'.\n` +
-          `Give a short professional reasoning in Hebrew that sounds exactly like an underwriting team. Return ONLY the email reply text. Be polite and professional.`;
+  const uploadedDocs = client.documents.filter((d: any) => d.status === "uploaded");
+  const docLinksText = uploadedDocs.length > 0
+    ? uploadedDocs.map((d: any) => `  * 📄 ${d.name} (${d.date || "הועלה"})\n    🔗 קישור מאובטח להורדה בלחיצה אחת: ${baseUrl}/api/documents/download?clientId=${client.id}&docId=${d.id}`).join("\n\n")
+    : "  [טרם הועלו או אומתו מסמכים בתיק זה]";
 
-        const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: `התיק המועבר:\n${JSON.stringify(promptData, null, 2)}\n\nמכתב היועץ:\n${generatedPitch}`,
-          config: {
-            systemInstruction: lenderInstruction,
-            temperature: 0.8,
-          }
-        });
+  const anonymizedName = client.name ? `${client.name.substring(0, 1)}***` : "לקוח אנונימי";
+  const anonymizedId = client.idNumber ? `${client.idNumber.substring(0, 3)}******` : "לא צוין";
 
-        if (response.text) {
-          const replyText = response.text;
-          client.lendersState[lender].reply = replyText;
-          
-          // Parse out numeric offers if we can find them, or generate structured mock offers based on the text
-          // Let's create a structured offer to let the UI render beautiful comparison cards
-          const rateMatch = replyText.match(/(\d+(\.\d+)?)\%/);
-          const amountMatch = replyText.match(/(\d+(\.\d+)?)\s*(מיליון|אלף|ש"ח|₪)/);
-          
-          let offeredAmount = client.requestedAmount;
-          let offeredRate = (6.5 + Math.random() * 2.5).toFixed(1);
-          let offeredYears = "20";
+  const fixedTemplate = 
+    `==================================================\n` +
+    `       בקשת מימון חוץ-בנקאית רשמית ומאובטחת\n` +
+    `       נשלח באמצעות פלטפורמת SynCash המרכזית\n` +
+    `==================================================\n` +
+    `מספר סימוכין אנונימי: SYNCASH-CL-${client.id}\n` +
+    `תאריך ושעת שידור: ${new Date().toLocaleDateString('he-IL')} (UTC)\n\n` +
+    
+    `📋 1. פרטי העסקה והנכס המשועבד (Collateral & Deal Profile):\n` +
+    `------------------------------------------------------------\n` +
+    `- שם הלווה (אנונימי): ${anonymizedName}\n` +
+    `- תעודת זהות (אנונימי): ${anonymizedId}\n` +
+    `- סוג העסקה: ${client.dealType || "לא צוין"}\n` +
+    `- סוג נכס/מטרה: ${client.propertyType || "לא צוין"}\n` +
+    `- כתובת הנכס לשעבוד: ${propertyAddressStr}\n` +
+    `- שווי נכס מוערך (עפ"י יועץ/שמאי): ₪${Number(client.propertyValue || 0).toLocaleString()}\n` +
+    `- סכום הלוואה מבוקש: ₪${Number(client.requestedAmount || 0).toLocaleString()}\n` +
+    `- אחוז המימון המבוקש מהנכס: ${client.financingPercentage}%\n\n` +
+    
+    `💼 2. פרופיל פיננסי ויכולת החזר (Financial Profile):\n` +
+    `------------------------------------------------------------\n` +
+    `- סוג העסקה/מצב תעסוקתי: ${client.employmentType || "שכיר"}\n` +
+    `- מקום עבודה / שם העסק הפעיל: ${client.workplace || "לא צוין"}\n` +
+    `- ותק בשנים: ${client.seniority || 0} שנים\n` +
+    `- הכנסה חודשית נטו מוכחת: ₪${Number(client.income || 0).toLocaleString()}\n` +
+    `- הכנסות חודשיות נוספות: ₪${Number(client.additionalIncomeAmount || 0).toLocaleString()} (${client.additionalIncomeType || "אין"})\n` +
+    `- הוצאות משפחתיות שוטפות: ₪${Number(client.expenses || 0).toLocaleString()}\n` +
+    `- החזרי הלוואות חודשיים מחוץ למשכנתא: ₪${Number(client.expensesLoans || 0).toLocaleString()}\n` +
+    `- החזר משכנתא נוכחית: ₪${Number(client.expensesMortgage || 0).toLocaleString()} (יתרה לסילוק: ₪${Number(client.expensesMortgageBalance || 0).toLocaleString()})\n\n` +
+    
+    `📂 3. מסמכי התיק המלאים להורדה ישירה (Attached Documents):\n` +
+    `------------------------------------------------------------\n` +
+    `מערכת SynCash אימתה את המסמכים הבאים עבור התיק הנוכחי.\n` +
+    `תוכל להוריד אותם ישירות בלחיצה אחת ללא צורך בהזדהות נוספת:\n\n` +
+    `${docLinksText}\n\n` +
+    
+    `✍ 4. הערות ודגשים מיועץ המשכנתאות (Advisor Insight):\n` +
+    `------------------------------------------------------------\n` +
+    `${client.notes || "אין הערות מיוחדות שהוזנו בתיק."}\n\n` +
+    
+    `💡 5. ניתוח תיק חכם וייעוץ מבוסס AI (Smart Case Analysis):\n` +
+    `------------------------------------------------------------\n` +
+    `${aiGeneratedPart}\n\n` +
+    
+    `------------------------------------------------------------\n` +
+    `מכתב פנייה זה נוצר ונשלח באופן מאובטח מכתובת שרת SynCash הראשי: ${settings.systemSenderEmail}\n` +
+    `להגשת הצעת מימון או בקשת הבהרה, השב ישירות למייל זה או השתמש במערכת SynCash.`;
 
-          client.lendersState[lender].status = "offer_received";
-          client.lendersState[lender].offer = {
-            amount: offeredAmount,
-            rate: offeredRate,
-            years: offeredYears
-          };
-        }
-      } catch (err) {
-        console.error(`Failed to generate Gemini reply for ${lender}, using default fallback.`, err);
-        // Fallback realistic responses
-        setTimeout(() => {
-          // Just in case, the client can use standard fallback
-        }, 50);
-      }
-    }
+  // 3. Setup anonymous state for each selected lender (awaiting reply)
+  for (const lender of targetLenders) {
+    const lenderObj = settings.lenders ? settings.lenders.find((l: any) => l.id === lender) : null;
+    const lenderEmail = lenderObj ? lenderObj.email : (settings.lenderEmails ? settings.lenderEmails[lender] : "credit@lender.co.il");
+    
+    client.lendersState[lender] = {
+      status: "sent_anonymous",
+      pitch: fixedTemplate,
+      reply: `הבקשה נשלחה אנונימית מכתובת ${settings.systemSenderEmail} אל ${lenderEmail}.\nהמערכת ממתינה לתשובת עניין מהחברה (מעוניין/לא מעוניין).`
+    };
+  }
 
-    // In case of no Gemini API or fallback, ensure we have a structured realistic offer anyway
-    if (!client.lendersState[lender].offer) {
-      const randomRate = (7.0 + Math.random() * 2.5).toFixed(1);
-      client.lendersState[lender].status = "offer_received";
-      client.lendersState[lender].reply = `שלום רב,\nשמחנו לקבל את פנייתך עבור הלקוח ${client.name}.\n\nלאחר בדיקה ראשונית של נתוני ההכנסה והנכס, אנו שמחים לאשר את הבקשה עקרונית בתנאים הבאים:\n- סכום מאושר: ${Number(client.requestedAmount).toLocaleString()} ₪\n- שיעור ריבית מוערכת: ${randomRate}%\n- תקופת ההלוואה: 20 שנים\n- פריסת החזרים נוחה.\n\nההצעה כפופה להזמנת שמאי מוסכם מטעמנו ובדיקה מלאה של המסמכים המשפטיים.\n\nבברכה,\nמחלקת חיתום ואשראי, ${lender}`;
-      client.lendersState[lender].offer = {
-        amount: client.requestedAmount,
-        rate: randomRate,
-        years: "20"
+  saveClients(clients);
+  res.json(client);
+});
+
+// GET /api/documents/download (Safe document download simulation)
+app.get("/api/documents/download", (req, res) => {
+  const { clientId, docId } = req.query;
+  if (!clientId || !docId) {
+    return res.status(400).send("מזהה לקוח או מסמך חסרים");
+  }
+  const clients = loadClients();
+  const client = clients.find(c => c.id === clientId);
+  if (!client) {
+    return res.status(404).send("הלקוח לא נמצא");
+  }
+  const doc = client.documents.find((d: any) => d.id === docId);
+  if (!doc) {
+    return res.status(404).send("המסמך לא נמצא");
+  }
+
+  // Generate a beautiful text-based report that simulates downloading the requested secure document
+  res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(doc.name)}.txt"`);
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+
+  const borderLine = "========================================================================\n";
+  const content = 
+    borderLine +
+    `  מערכת SynCash - הורדת קובץ מאובטח (סימולציית שרת אמת)\n` +
+    borderLine +
+    `שם הלווה: ${client.name}\n` +
+    `מספר ת.ז: ${client.idNumber || "לא צוין"}\n` +
+    `שם המסמך: ${doc.name}\n` +
+    `תאריך העלאת מסמך: ${doc.date || "לא צוין"}\n` +
+    `מזהה ייחודי: ${doc.id}\n` +
+    `מצב אימות: מאומת ומאושר (VERIFIED)\n\n` +
+    `פרטי עסקת משכנתא מבוקשת:\n` +
+    `---------------------------\n` +
+    `- סוג עסקה: ${client.dealType}\n` +
+    `- שווי נכס: ₪${Number(client.propertyValue || 0).toLocaleString()}\n` +
+    `- סכום מבוקש: ₪${Number(client.requestedAmount || 0).toLocaleString()} (${client.financingPercentage}% מימון)\n\n` +
+    `------------------------------------------------------------------------\n` +
+    `זהו קובץ סימולציה מאובטח הנוצר בזמן אמת על ידי פלטפורמת SynCash.\n` +
+    `בסביבת פרודקשן (אמת), לחיצה על קישור זה תתחיל הורדה ישירה של הקובץ המקורי\n` +
+    `שהועלה על ידי יועץ המשכנתאות (בפורמט PDF, JPG או PNG).\n` +
+    `------------------------------------------------------------------------\n\n` +
+    `הופק על ידי SynCash - פלטפורמת שידור וזירת הלוואות מבוססת AI.`;
+
+  res.send(content);
+});
+
+// GET /api/admin/lenders (Get list of all financing companies for admin panel)
+app.get("/api/admin/lenders", (req, res) => {
+  const settings = loadSettings();
+  res.json(settings.lenders || []);
+});
+
+// POST /api/admin/lenders (Add new financing company)
+app.post("/api/admin/lenders", (req, res) => {
+  const settings = loadSettings();
+  const { id, name, email, description, specialty } = req.body;
+
+  if (!id || !name || !email) {
+    return res.status(400).json({ error: "נא למלא מזהה, שם ואימייל חברה" });
+  }
+
+  const cleanId = id.trim().toUpperCase();
+  if (settings.lenders.some((l: any) => l.id === cleanId)) {
+    return res.status(400).json({ error: "מזהה חברה זה כבר קיים במערכת" });
+  }
+
+  const newLender = {
+    id: cleanId,
+    name: name.trim(),
+    email: email.trim(),
+    description: description || "",
+    specialty: specialty || "כללי",
+    status: "active"
+  };
+
+  settings.lenders.push(newLender);
+  
+  // Backwards compatibility sync
+  settings.lenderEmails = settings.lenderEmails || {};
+  settings.lenderEmails[cleanId] = email.trim();
+
+  saveSettings(settings);
+  res.status(201).json(newLender);
+});
+
+// PUT /api/admin/lenders/:id (Update or pause/suspend/activate financing company)
+app.put("/api/admin/lenders/:id", (req, res) => {
+  const settings = loadSettings();
+  const { id } = req.params;
+  const { name, email, description, specialty, status } = req.body;
+
+  const idx = settings.lenders.findIndex((l: any) => l.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "חברת המימון לא נמצאה" });
+  }
+
+  const current = settings.lenders[idx];
+  if (name !== undefined) current.name = name.trim();
+  if (email !== undefined) {
+    current.email = email.trim();
+    settings.lenderEmails = settings.lenderEmails || {};
+    settings.lenderEmails[id] = email.trim();
+  }
+  if (description !== undefined) current.description = description;
+  if (specialty !== undefined) current.specialty = specialty;
+  if (status !== undefined) current.status = status;
+
+  saveSettings(settings);
+  res.json(current);
+});
+
+// DELETE /api/admin/lenders/:id (Delete/remove financing company)
+app.delete("/api/admin/lenders/:id", (req, res) => {
+  const settings = loadSettings();
+  const { id } = req.params;
+
+  const idx = settings.lenders.findIndex((l: any) => l.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "חברת המימון לא נמצאה" });
+  }
+
+  settings.lenders.splice(idx, 1);
+  if (settings.lenderEmails) {
+    delete settings.lenderEmails[id];
+  }
+
+  saveSettings(settings);
+  res.json({ success: true });
+});
+
+// GET /api/admin/settings (Get email and broadcaster configuration)
+app.get("/api/admin/settings", (req, res) => {
+  res.json(loadSettings());
+});
+
+// POST /api/admin/settings (Update email and broadcaster configuration)
+app.post("/api/admin/settings", (req, res) => {
+  const { systemSenderEmail, lenderEmails } = req.body;
+  const currentSettings = loadSettings();
+  
+  if (systemSenderEmail !== undefined) {
+    currentSettings.systemSenderEmail = systemSenderEmail;
+  }
+  if (lenderEmails !== undefined && typeof lenderEmails === "object") {
+    currentSettings.lenderEmails = {
+      ...currentSettings.lenderEmails,
+      ...lenderEmails
+    };
+  }
+  
+  saveSettings(currentSettings);
+  res.json(currentSettings);
+});
+
+// POST /api/lenders/simulated-reply (Endpoint simulating receiving a reply email from a lender)
+app.post("/api/lenders/simulated-reply", (req, res) => {
+  const { clientRefId, decision, replyText } = req.body;
+  
+  if (!clientRefId || !decision) {
+    return res.status(400).json({ error: "Missing clientRefId or decision" });
+  }
+
+  // Parse SYNCASH-CL-{clientId}-LD-{lenderId}
+  const match = clientRefId.match(/^SYNCASH-CL-(.+)-LD-(.+)$/);
+  if (!match) {
+    return res.status(400).json({ error: "Invalid clientRefId format." });
+  }
+
+  const clientId = match[1];
+  const lenderId = match[2];
+
+  const clients = loadClients();
+  const clientIndex = clients.findIndex(c => c.id === clientId);
+  if (clientIndex === -1) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+
+  const client = clients[clientIndex];
+  client.lendersState = client.lendersState || {};
+  client.lendersState[lenderId] = client.lendersState[lenderId] || {};
+
+  if (decision === "interested") {
+    client.lendersState[lenderId].status = "interested";
+    client.lendersState[lenderId].reply = replyText || `שלום רב,\n\nהבקשה האנונימית נבחנה על ידינו בקרן ${lenderId}.\nהנתונים המוצגים מתאימים לפעילותנו. אנו מביעים עניין רב בהגשת הצעה פיננסית תחרותית לתיק זה.\nנשמח אם תחשפו בפנינו את פרטי הקשר והמסמכים המלאים של היועץ והלווה על מנת שנוכל להפיק עבורכם אישור עקרוני וריביות מדויקות.\n\nבברכה,\nמחלקת אשראי וחיתום חוץ-בנקאי, ${lenderId}`;
+  } else {
+    client.lendersState[lenderId].status = "not_interested";
+    client.lendersState[lenderId].reply = replyText || `שלום רב,\n\nתודה על פנייתכם עבור בקשה [${clientRefId}].\nלאחר בחינת נתוני האשראי שהועברו אלינו, לצערנו התיק אינו מתאים למדיניות האשראי הנוכחית של קרן ${lenderId} בשלב זה.\n\nנשמח לעמוד לרשותכם בהגשת תיקים נוספים בהמשך.\n\nבברכה,\nצוות החיתום, ${lenderId}`;
+  }
+
+  saveClients(clients);
+  res.json({ success: true, client });
+});
+
+// POST /api/clients/:id/reveal-lender/:lenderId (Advisor approves contact reveal, generates terms/offer)
+app.post("/api/clients/:id/reveal-lender/:lenderId", async (req, res) => {
+  const { id, lenderId } = req.params;
+
+  const clients = loadClients();
+  const clientIndex = clients.findIndex(c => c.id === id);
+  if (clientIndex === -1) {
+    return res.status(404).json({ error: "Client not found" });
+  }
+
+  const client = clients[clientIndex];
+  if (!client.lendersState || !client.lendersState[lenderId]) {
+    return res.status(400).json({ error: "Lender state not initialized" });
+  }
+
+  const advisors = loadAdvisors();
+  const advisor = advisors.find(a => a.id === (client.advisorId || "advisor-1")) || advisors[0];
+
+  // Set to contact revealed first
+  client.lendersState[lenderId].status = "contact_revealed";
+
+  const randomRate = (6.4 + Math.random() * 2.8).toFixed(1);
+  const offeredAmount = client.requestedAmount;
+  let simulatedOfferLetter = `שלום רב, ${advisor.name || "יועץ המשכנתאות"},\n\n` +
+    `תודה על חשיפת הפרטים בתיק אנונימי (${client.id}) עבור הלקוח ${client.name}.\n\n` +
+    `לאחר בדיקת הנתונים המלאים של היועץ ומסמכי הלווה שהועברו, אנו שמחים להפיק לכם הצעה רשמית ותחרותית ביותר מבית ${lenderId}:\n` +
+    `- סכום מאושר: ${Number(offeredAmount).toLocaleString()} ₪\n` +
+    `- שיעור ריבית שנתית קבועה: ${randomRate}%\n` +
+    `- תקופת החזר: 20 שנים\n\n` +
+    `אנו מודים לך על שיתוף הפעולה במערכת SynCash. נשמח לקדם את העסקה במהירות לחתימה.\n\n` +
+    `בברכה,\nצוות החיתום הבכיר, ${lenderId}`;
+
+  if (ai) {
+    try {
+      const promptData = {
+        clientName: client.name,
+        dealType: client.dealType,
+        requestedAmount: client.requestedAmount,
+        propertyValue: client.propertyValue,
+        income: client.income,
+        advisorName: advisor.name,
+        advisorCompany: advisor.company,
+        advisorPhone: advisor.phone,
+        advisorEmail: advisor.email
       };
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: `לקוח ויעוץ שנחשפו:\n${JSON.stringify(promptData, null, 2)}\n\nאנא נסח אישור עקרוני וריביות מפורט, מקצועי ואיכותי מאוד בעברית מהקרן ${lenderId} אל היועץ ${advisor.name}.`,
+        config: {
+          systemInstruction: `You are the chief underwriting officer at non-bank lender '${lenderId}' in Israel. Produce an official, high-quality Hebrew response email to the mortgage advisor. Propose an offered amount of ₪${offeredAmount} with annual interest rate of ${randomRate}% for 20 years. Make it extremely realistic and professional.`,
+          temperature: 0.8
+        }
+      });
+
+      if (response.text) {
+        simulatedOfferLetter = response.text;
+      }
+    } catch (err) {
+      console.error("Gemini failed to generate official offer letter:", err);
     }
   }
+
+  client.lendersState[lenderId].status = "offer_received";
+  client.lendersState[lenderId].reply = simulatedOfferLetter;
+  client.lendersState[lenderId].offer = {
+    amount: offeredAmount,
+    rate: randomRate,
+    years: "20"
+  };
 
   saveClients(clients);
   res.json(client);

@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Client, LenderState } from "../types";
+import React, { useState, useEffect } from "react";
+import { Client, LenderState, Lender } from "../types";
 import { api } from "../utils/apiClient";
 import { 
   Building2, 
@@ -24,16 +24,6 @@ interface LoanArenaProps {
   onRefreshClients: (silent?: boolean) => void;
 }
 
-// Full list of premium non-bank financing lenders in Israel
-const ALL_LENDERS = [
-  { id: "BTB", name: "BTB (בנקינג טו ביזנס)", description: "קרן חברתית להלוואות, מצוינת לעסקים, עצמאיים ורכישות מורכבות.", specialty: "עצמאיים ויזמות" },
-  { id: "Tarya", name: "טריא (Tarya)", description: "פלטפורמת המימון ההמוני הגדולה בישראל. מעולה לגישורים וקבוצות רכישה.", specialty: "גישורים וקבוצות רכישה" },
-  { id: "Peninsula", name: "פנינסולה (Peninsula)", description: "חברת אשראי ציבורית גדולה, מתמחה במימון נדל\"ן וקבוצות רוכשים.", specialty: "מימון יזמי וקבוצות" },
-  { id: "Gamma", name: "גמא (Gamma)", description: "מקבוצת הפניקס, פתרונות מימון ומשכנתאות לנכסים מסחריים ויוקרה.", specialty: "מסחרי ונכסי יוקרה" },
-  { id: "Clal", name: "כלל מימון (Clal)", description: "זרוע המימון החוץ-בנקאית של כלל ביטוח, אשראי רחב היקף.", specialty: "אחוזי מימון גבוהים" },
-  { id: "Harel", name: "הראל אשראי (Harel)", description: "קרן חוב ומימון מבית הראל, מתמחה בפרויקטים ובטוחות מורכבות.", specialty: "תיקים מורכבים במיוחד" }
-];
-
 // Simple PMT mortgage calculator helper
 // P = Principal (loan amount)
 // r = Annual interest rate in percent
@@ -49,9 +39,34 @@ function calculateMonthlyPayment(P: number, r: number, n: number): number {
 
 export default function LoanArena({ clients, initialSelectedClientId, onRefreshClients }: LoanArenaProps) {
   const [selectedClientId, setSelectedClientId] = useState<string>(initialSelectedClientId || clients[0]?.id || "");
-  const [selectedLenders, setSelectedLenders] = useState<string[]>(["BTB", "Tarya"]);
+  const [lenders, setLenders] = useState<Lender[]>([]);
+  const [loadingLenders, setLoadingLenders] = useState<boolean>(true);
+  const [selectedLenders, setSelectedLenders] = useState<string[]>([]);
   const [transmissionStep, setTransmissionStep] = useState<number>(0); // 0=idle, 1=analyzing, 2=drafting, 3=transmitting, 4=done
   const [currentLenderTab, setCurrentLenderTab] = useState<string>("");
+
+  useEffect(() => {
+    const fetchLenders = async () => {
+      try {
+        setLoadingLenders(true);
+        const data = await api.getAdminLenders();
+        // filter for active lenders
+        const activeLenders = data.filter((l: any) => l.status === "active");
+        setLenders(activeLenders);
+        
+        // set default selected lenders
+        if (activeLenders.length > 0 && selectedLenders.length === 0) {
+          const defaultSelected = activeLenders.slice(0, 2).map((l: any) => l.id);
+          setSelectedLenders(defaultSelected);
+        }
+      } catch (err) {
+        console.error("Failed to load active lenders for Loan Arena", err);
+      } finally {
+        setLoadingLenders(false);
+      }
+    };
+    fetchLenders();
+  }, [clients]);
 
   const selectedClient = clients.find(c => c.id === selectedClientId);
 
@@ -97,6 +112,17 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
         setTransmissionStep(0);
       }
     }, 4500);
+  };
+
+  const handleRevealLender = async (lenderId: string) => {
+    if (!selectedClientId) return;
+    try {
+      await api.revealLenderIdentity(selectedClientId, lenderId);
+      onRefreshClients(true);
+    } catch (err) {
+      console.error(err);
+      alert("שגיאה בחשיפת פרטי היועץ.");
+    }
   };
 
   const isTransmitting = transmissionStep > 0 && transmissionStep < 4;
@@ -193,44 +219,57 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
             <div className="space-y-3">
               <label className="block text-xs font-bold text-slate-300">בחר חברות מימון לשידור ({selectedLenders.length})</label>
               <div className="space-y-2.5 max-h-[320px] overflow-y-auto pr-1">
-                {ALL_LENDERS.map(lender => {
-                  const isChecked = selectedLenders.includes(lender.id);
-                  const isSent = selectedClient.lendersState[lender.id]?.status !== "not_sent" && selectedClient.lendersState[lender.id] !== undefined;
+                {loadingLenders ? (
+                  <div className="p-8 text-center text-slate-500 text-xs">
+                    <div className="h-4 w-4 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-1"></div>
+                    טוען חברות פעילות...
+                  </div>
+                ) : lenders.length > 0 ? (
+                  lenders.map(lender => {
+                    const isChecked = selectedLenders.includes(lender.id);
+                    const isSent = selectedClient.lendersState && selectedClient.lendersState[lender.id]?.status !== "not_sent" && selectedClient.lendersState[lender.id] !== undefined;
 
-                  return (
-                    <div 
-                      key={lender.id}
-                      onClick={() => toggleLender(lender.id)}
-                      className={`p-3.5 rounded-xl border text-right cursor-pointer transition-all ${
-                        isChecked 
-                          ? "bg-cyan-950/20 border-cyan-500/80 ring-1 ring-cyan-500/30" 
-                          : "border-slate-800/80 hover:border-slate-700 bg-slate-950/30"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <input 
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => {}} // handled by div click
-                            className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500 h-4 w-4 cursor-pointer bg-slate-950"
-                          />
-                          <span className="font-bold text-xs sm:text-sm text-white">{lender.name}</span>
+                    return (
+                      <div 
+                        key={lender.id}
+                        onClick={() => toggleLender(lender.id)}
+                        className={`p-3.5 rounded-xl border text-right cursor-pointer transition-all ${
+                          isChecked 
+                            ? "bg-cyan-950/20 border-cyan-500/80 ring-1 ring-cyan-500/30" 
+                            : "border-slate-800/80 hover:border-slate-700 bg-slate-950/30"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2.5">
+                            <input 
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {}} // handled by div click
+                              className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500 h-4 w-4 cursor-pointer bg-slate-950"
+                            />
+                            <span className="font-bold text-xs sm:text-sm text-white">{lender.name}</span>
+                          </div>
+                          {lender.specialty && (
+                            <span className="text-[9px] bg-slate-800 text-cyan-300 font-bold px-2 py-0.5 rounded-full border border-slate-700/60">
+                              {lender.specialty}
+                            </span>
+                          )}
                         </div>
-                        <span className="text-[9px] bg-slate-800 text-cyan-300 font-bold px-2 py-0.5 rounded-full border border-slate-700/60">
-                          {lender.specialty}
-                        </span>
+                        <p className="text-[11px] text-slate-400 mt-1.5 mr-6 leading-relaxed font-medium">{lender.description || "אין תיאור חברה זמין."}</p>
+                        {isSent && (
+                          <div className="mr-6 mt-1.5 text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 fill-emerald-500/10" />
+                            <span>תיק משודר לחברה זו</span>
+                          </div>
+                        )}
                       </div>
-                      <p className="text-[11px] text-slate-400 mt-1.5 mr-6 leading-relaxed font-medium">{lender.description}</p>
-                      {isSent && (
-                        <div className="mr-6 mt-1.5 text-[10px] text-emerald-400 font-bold flex items-center gap-1">
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 fill-emerald-500/10" />
-                          <span>תיק משודר לחברה זו</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                ) : (
+                  <div className="p-8 text-center text-slate-500 text-xs">
+                    אין חברות מימון פעילות בזירה.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -279,7 +318,7 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
                   </h4>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    {ALL_LENDERS.filter(l => selectedClient.lendersState[l.id]?.status === "offer_received").map(lender => {
+                    {lenders.filter(l => selectedClient.lendersState && selectedClient.lendersState[l.id]?.status === "offer_received").map(lender => {
                       const state = selectedClient.lendersState[lender.id];
                       const monthlyPayment = calculateMonthlyPayment(
                         parseFloat(state.offer?.amount || "0"),
@@ -356,7 +395,7 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
                     >
                       ✉ מכתב הפנייה (Cover Pitch)
                     </button>
-                    {ALL_LENDERS.filter(l => selectedClient.lendersState[l.id]?.status !== "not_sent" && selectedClient.lendersState[l.id] !== undefined).map(lender => {
+                    {lenders.filter(l => selectedClient.lendersState && selectedClient.lendersState[l.id]?.status !== "not_sent" && selectedClient.lendersState[l.id] !== undefined).map(lender => {
                       const state = selectedClient.lendersState[lender.id];
                       return (
                         <button
@@ -389,46 +428,122 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
                         </div>
                         {/* Render the generated pitch text beautifully */}
                         <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-5 text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line font-medium max-h-[350px] overflow-y-auto">
-                          {selectedClient.lendersState[Object.keys(selectedClient.lendersState)[0]]?.pitch || "פניית אשראי חוץ-בנקאית מפורטת למשכנתא."}
+                          {(selectedClient.lendersState && Object.keys(selectedClient.lendersState).length > 0)
+                            ? (selectedClient.lendersState[Object.keys(selectedClient.lendersState)[0]]?.pitch || "פניית אשראי חוץ-בנקאית מפורטת למשכנתא.")
+                            : "פניית אשראי חוץ-בנקאית מפורטת למשכנתא."
+                          }
                         </div>
                       </div>
-                    ) : (
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center border-b border-slate-800/60 pb-3">
-                          <div>
-                            <h5 className="font-bold text-white text-sm sm:text-base">
-                              תשובת חברת המימון: {ALL_LENDERS.find(l => l.id === currentLenderTab)?.name}
-                            </h5>
-                            <p className="text-xs text-slate-500 mt-0.5">
-                              התקבל במייל חוזר מאובטח דרך שרת SynCash.
-                            </p>
-                          </div>
-                          
-                          <span className={`text-[10px] font-bold px-3 py-1 rounded-full ${
-                            selectedClient.lendersState[currentLenderTab]?.status === "offer_received" 
-                              ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20" 
-                              : "bg-amber-500/10 text-amber-300 border border-amber-500/20"
-                          }`}>
-                            {selectedClient.lendersState[currentLenderTab]?.status === "offer_received" ? "התקבלה הצעה רשמית" : "בבחינת חתם"}
-                          </span>
-                        </div>
+                    ) : (() => {
+                      const lenderState = selectedClient.lendersState[currentLenderTab];
+                      const status = lenderState?.status || "not_sent";
 
-                        <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-5 text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line font-medium">
-                          {selectedClient.lendersState[currentLenderTab]?.reply}
-                        </div>
-
-                        {selectedClient.lendersState[currentLenderTab]?.offer && (
-                          <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-xl">
-                            <h6 className="font-bold text-emerald-400 text-xs sm:text-sm mb-2.5">סיכום מסחרי של ההצעה:</h6>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs font-semibold text-slate-300">
-                              <p className="flex items-center gap-1.5"><span className="text-slate-500">סכום מאושר:</span> <span className="font-bold text-white">₪{Number(selectedClient.lendersState[currentLenderTab].offer?.amount).toLocaleString()}</span></p>
-                              <p className="flex items-center gap-1.5"><span className="text-slate-500">ריבית שנתית:</span> <span className="font-bold text-emerald-400">{selectedClient.lendersState[currentLenderTab].offer?.rate}%</span></p>
-                              <p className="flex items-center gap-1.5"><span className="text-slate-500">תקופת הלוואה:</span> <span className="font-bold text-white">{selectedClient.lendersState[currentLenderTab].offer?.years} שנים</span></p>
+                      return (
+                        <div className="space-y-4">
+                          <div className="flex justify-between items-center border-b border-slate-800/60 pb-3">
+                            <div>
+                              <h5 className="font-bold text-white text-sm sm:text-base">
+                                תשובת חברת המימון: {lenders.find(l => l.id === currentLenderTab)?.name || currentLenderTab}
+                              </h5>
+                              <p className="text-xs text-slate-500 mt-0.5">
+                                סטטוס הבקשה מול הגוף המממן
+                              </p>
                             </div>
+                            
+                            <span className={`text-[10px] font-bold px-3 py-1 rounded-full ${
+                              status === "offer_received" ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20" :
+                              status === "interested" ? "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 animate-pulse" :
+                              status === "not_interested" ? "bg-rose-500/10 text-rose-300 border border-rose-500/20" :
+                              status === "sent_anonymous" ? "bg-amber-500/10 text-amber-300 border border-amber-500/20" :
+                              "bg-slate-800 text-slate-400 border border-slate-700/60"
+                            }`}>
+                              {status === "offer_received" ? "התקבלה הצעה רשמית" :
+                               status === "interested" ? "מעוניין - ממתין לחשיפת פרטים" :
+                               status === "not_interested" ? "לא מעוניין / נדחה" :
+                               status === "sent_anonymous" ? "ממתין לתשובת עניין (אנונימי)" :
+                               "לא נשלח"}
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    )}
+
+                          {/* Render based on status */}
+                          {status === "sent_anonymous" && (
+                            <div className="space-y-4">
+                              <div className="p-4 bg-amber-500/5 border border-amber-500/10 rounded-xl text-amber-400 text-xs font-bold leading-relaxed">
+                                ✉ הבקשה שודרה לחברה באופן אנונימי לחלוטין. מכתב הפנייה נשלח ישירות לתיבת המייל של החתמים, ואינו מכיל את פרטי הקשר שלך או של הלווה.
+                              </div>
+                              <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-5 text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line font-medium">
+                                <p className="text-xs text-slate-400 mb-2 font-bold uppercase">תוכן המייל האנונימי ששודר:</p>
+                                {lenderState?.pitch}
+                              </div>
+                              <div className="p-3 bg-slate-950/40 border border-slate-800 rounded-lg text-slate-500 text-[11px] leading-relaxed">
+                                💡 <span className="font-bold text-slate-400">טיפ לסימולציה:</span> תוכל לדמות קבלת מענה ("מעוניין" או "לא מעוניין") מקרן זו באמצעות מעבר למסך האדמין {`->`} לשונית "הגדרות שידור וסימולטור מייל"!
+                              </div>
+                            </div>
+                          )}
+
+                          {status === "interested" && (
+                            <div className="space-y-4">
+                              <div className="p-4.5 bg-cyan-500/10 border border-cyan-500/20 rounded-xl space-y-2 text-right">
+                                <div className="flex items-center gap-2 text-cyan-400 font-extrabold text-sm">
+                                  <CheckCircle2 className="h-5 w-5 text-cyan-400" />
+                                  <span>חברת המימון מביעה עניין רב בתיק!</span>
+                                </div>
+                                <p className="text-xs text-slate-300 leading-relaxed">
+                                  מחתם הקרן בחן את הנתונים ומעוניין להתקדם להצעה מסחרית. כעת עליך לחשוף בפניהם את פרטי הקשר והמסמכים המלאים שלך ושל הלווה.
+                                </p>
+                              </div>
+
+                              <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-5 text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line font-medium">
+                                <p className="text-xs text-slate-400 mb-2 font-bold uppercase">הודעת החתם במייל החוזר:</p>
+                                {lenderState?.reply}
+                              </div>
+
+                              <div className="flex justify-start">
+                                <button
+                                  onClick={() => handleRevealLender(currentLenderTab)}
+                                  className="px-5 py-3 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white font-extrabold text-xs sm:text-sm rounded-xl flex items-center gap-2 cursor-pointer shadow-lg transition-all"
+                                >
+                                  <Sparkles className="h-4 w-4" />
+                                  חשוף פרטי קשר ומסמכי תיק מלאים (Reveal Contact)
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {status === "not_interested" && (
+                            <div className="space-y-4">
+                              <div className="p-4 bg-rose-500/5 border border-rose-500/10 rounded-xl text-rose-400 text-xs font-bold leading-relaxed">
+                                ✕ חברת המימון השיבה שהתיק אינו מתאים למגבלות החיתום הנוכחיות שלהם.
+                              </div>
+                              <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-5 text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line font-medium">
+                                <p className="text-xs text-slate-400 mb-2 font-bold uppercase">הודעת החתם במייל החוזר:</p>
+                                {lenderState?.reply}
+                              </div>
+                            </div>
+                          )}
+
+                          {(status === "offer_received" || status === "contact_revealed") && (
+                            <div className="space-y-4">
+                              <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-5 text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line font-medium">
+                                <p className="text-xs text-slate-400 mb-2 font-bold uppercase">הצעת המימון ומסמכי האישור העקרוני:</p>
+                                {lenderState?.reply}
+                              </div>
+
+                              {lenderState?.offer && (
+                                <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-xl">
+                                  <h6 className="font-bold text-emerald-400 text-xs sm:text-sm mb-2.5">סיכום מסחרי של ההצעה:</h6>
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs font-semibold text-slate-300">
+                                    <p className="flex items-center gap-1.5"><span className="text-slate-500">סכום מאושר:</span> <span className="font-bold text-white">₪{Number(lenderState.offer?.amount).toLocaleString()}</span></p>
+                                    <p className="flex items-center gap-1.5"><span className="text-slate-500">ריבית שנתית:</span> <span className="font-bold text-emerald-400">{lenderState.offer?.rate}%</span></p>
+                                    <p className="flex items-center gap-1.5"><span className="text-slate-500">תקופת הלוואה:</span> <span className="font-bold text-white">{lenderState.offer?.years} שנים</span></p>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 

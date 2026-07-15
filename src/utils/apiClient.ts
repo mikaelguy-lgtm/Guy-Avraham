@@ -511,5 +511,201 @@ export const api = {
     });
     if (!res.ok) throw new Error();
     return await res.json();
+  },
+
+  // EMAIL & SENDER CONFIGURATION SETTINGS
+  async getAdminSettings() {
+    if (isStaticOrOffline()) {
+      const stored = localStorage.getItem("syncash_settings");
+      if (stored) return JSON.parse(stored);
+      const def = {
+        systemSenderEmail: "requests@syncash-mail.co.il",
+        lenderEmails: {
+          "BTB": "credit@btb.co.il",
+          "Tarya": "underwriting@tarya.co.il",
+          "Peninsula": "deals@peninsula.co.il",
+          "Gamma": "mortgage@gamma.co.il",
+          "Clal": "clalfinance@clal.co.il",
+          "Harel": "harelfinance@harel.co.il"
+        }
+      };
+      localStorage.setItem("syncash_settings", JSON.stringify(def));
+      return def;
+    }
+
+    const res = await fetch("/api/admin/settings");
+    if (!res.ok) throw new Error();
+    return await res.json();
+  },
+
+  async saveAdminSettings(settings: { systemSenderEmail?: string; lenderEmails?: Record<string, string> }) {
+    if (isStaticOrOffline()) {
+      const current = await this.getAdminSettings();
+      const updated = {
+        systemSenderEmail: settings.systemSenderEmail ?? current.systemSenderEmail,
+        lenderEmails: {
+          ...current.lenderEmails,
+          ...settings.lenderEmails
+        }
+      };
+      localStorage.setItem("syncash_settings", JSON.stringify(updated));
+      return updated;
+    }
+
+    const res = await fetch("/api/admin/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings)
+    });
+    if (!res.ok) throw new Error();
+    return await res.json();
+  },
+
+  // REVEAL LENDER IDENTITY (Transition from interested to offer)
+  async revealLenderIdentity(clientId: string, lenderId: string) {
+    if (isStaticOrOffline()) {
+      const clients = getLocalClients();
+      const client = clients.find(c => c.id === clientId);
+      if (!client) throw new Error("Client not found");
+
+      client.lendersState = client.lendersState || {};
+      const randomRate = (6.4 + Math.random() * 2.8).toFixed(1);
+      client.lendersState[lenderId] = {
+        status: "offer_received",
+        pitch: client.lendersState[lenderId]?.pitch || "מכתב אנונימי",
+        reply: `שלום רב,\n\nשמחנו לקבל את פרטי הקשר עבור התיק הלא-אנונימי של ${client.name}.\nאנו שמחים לאשר עקרונית את בקשת המימון.\n\nסכום מאושר: ₪${Number(client.requestedAmount).toLocaleString()}\nריבית שנתית קבועה: ${randomRate}%\nתקופה: 20 שנים.\n\nנשמח להתקדם במהירות.`,
+        offer: {
+          amount: client.requestedAmount,
+          rate: randomRate,
+          years: "20"
+        }
+      };
+      saveLocalClients(clients);
+      return client;
+    }
+
+    const res = await fetch(`/api/clients/${clientId}/reveal-lender/${lenderId}`, {
+      method: "POST"
+    });
+    if (!res.ok) throw new Error();
+    return await res.json();
+  },
+
+  // SIMULATE LENDER REPLY (INBOUND EMAIL SIMULATOR Webhook)
+  async simulateLenderReply(clientRefId: string, decision: "interested" | "not_interested", replyText?: string) {
+    if (isStaticOrOffline()) {
+      const match = clientRefId.match(/^SYNCASH-CL-(.+)-LD-(.+)$/);
+      if (!match) throw new Error("Invalid ref format");
+      const clientId = match[1];
+      const lenderId = match[2];
+
+      const clients = getLocalClients();
+      const client = clients.find(c => c.id === clientId);
+      if (!client) throw new Error("Client not found");
+
+      client.lendersState = client.lendersState || {};
+      client.lendersState[lenderId] = client.lendersState[lenderId] || { status: "not_sent" };
+
+      if (decision === "interested") {
+        client.lendersState[lenderId].status = "interested";
+        client.lendersState[lenderId].reply = replyText || `שלום רב,\n\nהבקשה האנונימית נבחנה על ידינו בקרן ${lenderId}.\nאנו מביעים עניין רב ומבקשים לחשוף פרטי קשר.`;
+      } else {
+        client.lendersState[lenderId].status = "not_interested";
+        client.lendersState[lenderId].reply = replyText || `שלום רב,\n\nהבקשה [${clientRefId}] נדחתה עקב אי עמידה במדיניות הנוכחית של קרן ${lenderId}.`;
+      }
+
+      saveLocalClients(clients);
+      return { success: true, client };
+    }
+
+    const res = await fetch("/api/lenders/simulated-reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientRefId, decision, replyText })
+    });
+    if (!res.ok) throw new Error();
+    return await res.json();
+  },
+
+  // Lenders Admin CRUD
+  async getAdminLenders() {
+    if (isStaticOrOffline()) {
+      const stored = localStorage.getItem("syncash_lenders");
+      if (stored) return JSON.parse(stored);
+      // Fallback default list
+      const defaults = [
+        { id: "BTB", name: "BTB (בנקינג טו ביזנס)", email: "credit@btb.co.il", description: "קרן חברתית להלוואות, מצוינת לעסקים, עצמאיים ורכישות מורכבות.", specialty: "עצמאיים ויזמות", status: "active" },
+        { id: "Tarya", name: "טריא (Tarya)", email: "underwriting@tarya.co.il", description: "פלטפורמת המימון ההמוני הגדולה בישראל. מעולה לגישורים וקבוצות רכישה.", specialty: "גישורים וקבוצות רכישה", status: "active" },
+        { id: "Peninsula", name: "פנינסולה (Peninsula)", email: "deals@peninsula.co.il", description: "חברת אשראי ציבורית גדולה, מתמחה במימון נדל\"ן וקבוצות רוכשים.", specialty: "מימון יזמי וקבוצות", status: "active" },
+        { id: "Gamma", name: "גמא (Gamma)", email: "mortgage@gamma.co.il", description: "מקבוצת הפניקס, פתרונות מימון ומשכנתאות לנכסים מסחריים ויוקרה.", specialty: "מסחרי ונכסי יוקרה", status: "active" },
+        { id: "Clal", name: "כלל מימון (Clal)", email: "clalfinance@clal.co.il", description: "זרוע המימון החוץ-בנקאית של כלל ביטוח, אשראי רחב היקף.", specialty: "אחוזי מימון גבוהים", status: "active" },
+        { id: "Harel", name: "הראל אשראי (Harel)", email: "harelfinance@harel.co.il", description: "קרן חוב ומימון מבית הראל, מתמחה בפרויקטים ובטוחות מורכבות.", specialty: "תיקים מורכבים במיוחד", status: "active" }
+      ];
+      localStorage.setItem("syncash_lenders", JSON.stringify(defaults));
+      return defaults;
+    }
+    const res = await fetch("/api/admin/lenders");
+    if (!res.ok) throw new Error();
+    return await res.json();
+  },
+
+  async addAdminLender(data: any) {
+    if (isStaticOrOffline()) {
+      const lenders = await this.getAdminLenders();
+      if (lenders.some((l: any) => l.id.toLowerCase() === data.id.toLowerCase())) {
+        throw new Error("מזהה חברה זה כבר קיים במערכת");
+      }
+      const newL = {
+        id: data.id.toUpperCase(),
+        name: data.name,
+        email: data.email,
+        description: data.description || "",
+        specialty: data.specialty || "כללי",
+        status: "active" as const
+      };
+      lenders.push(newL);
+      localStorage.setItem("syncash_lenders", JSON.stringify(lenders));
+      return newL;
+    }
+    const res = await fetch("/api/admin/lenders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "שגיאה בהוספת חברת מימון");
+    }
+    return await res.json();
+  },
+
+  async updateAdminLender(id: string, data: any) {
+    if (isStaticOrOffline()) {
+      const lenders = await this.getAdminLenders();
+      const idx = lenders.findIndex((l: any) => l.id === id);
+      if (idx === -1) throw new Error("חברת מימון לא נמצאה");
+      lenders[idx] = { ...lenders[idx], ...data };
+      localStorage.setItem("syncash_lenders", JSON.stringify(lenders));
+      return lenders[idx];
+    }
+    const res = await fetch(`/api/admin/lenders/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) throw new Error();
+    return await res.json();
+  },
+
+  async deleteAdminLender(id: string) {
+    if (isStaticOrOffline()) {
+      let lenders = await this.getAdminLenders();
+      lenders = lenders.filter((l: any) => l.id !== id);
+      localStorage.setItem("syncash_lenders", JSON.stringify(lenders));
+      return { success: true };
+    }
+    const res = await fetch(`/api/admin/lenders/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error();
+    return await res.json();
   }
 };

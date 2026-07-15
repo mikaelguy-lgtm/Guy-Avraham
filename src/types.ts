@@ -12,7 +12,7 @@ export interface LenderOffer {
 }
 
 export interface LenderState {
-  status: "not_sent" | "sent" | "offer_received" | "rejected";
+  status: "not_sent" | "sent" | "offer_received" | "rejected" | "sent_anonymous" | "interested" | "not_interested" | "contact_revealed";
   pitch?: string;
   reply?: string;
   offer?: LenderOffer;
@@ -53,6 +53,15 @@ export interface Client {
   lendersState: {
     [lenderName: string]: LenderState;
   };
+}
+
+export interface Lender {
+  id: string;
+  name: string;
+  email: string;
+  description: string;
+  specialty: string;
+  status: "active" | "suspended";
 }
 
 export interface AdvisorProfile {

@@ -135,8 +135,8 @@ export default function App() {
         advisorName={loggedInAdvisor.name}
         isAdmin={loggedInAdvisor.isAdmin}
         onLogout={handleLogout}
-        className={`fixed right-0 top-0 h-full w-64 bg-slate-950/95 backdrop-blur-md border-l border-slate-800 z-50 flex flex-col transform transition-transform duration-300 md:hidden ${
-          mobileMenuOpen ? "translate-x-0" : "translate-x-full"
+        className={`fixed right-0 top-0 h-full w-64 bg-slate-950/95 backdrop-blur-md border-l border-slate-800 z-50 flex-col transform transition-all duration-300 md:hidden ${
+          mobileMenuOpen ? "translate-x-0 opacity-100 flex" : "translate-x-full opacity-0 pointer-events-none hidden"
         }`}
       />
 
