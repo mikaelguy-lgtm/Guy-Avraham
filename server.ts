@@ -136,7 +136,7 @@ function toRTL(text: string): string {
 }
 
 // Generate the beautiful client profile PDF
-async function generateClientPdf(client: any, aiGeneratedPart: string, baseUrl: string): Promise<Buffer> {
+async function generateClientPdf(client: any, baseUrl: string): Promise<Buffer> {
   await ensureFontsExist();
   
   return new Promise<Buffer>((resolve, reject) => {
@@ -253,78 +253,6 @@ async function generateClientPdf(client: any, aiGeneratedPart: string, baseUrl: 
       doc.font(getFont(false)).fontSize(9).fillColor("#334155");
       doc.text(toRTL(client.notes || "אין הערות מיוחדות שהוזנו בתיק."), 50, doc.y, { align: "right", width: 495, lineGap: 2 });
       doc.moveDown(0.4);
-
-      // --- SECTION 5: ניתוח חכם ---
-      addSectionTitle("5. ניתוח תיק חכם וייעוץ מבוסס AI (Smart Analysis)");
-      
-      const lines = aiGeneratedPart.split("\n");
-      for (const line of lines) {
-        let cleanLine = line.trim();
-        if (!cleanLine) {
-          doc.moveDown(0.2);
-          continue;
-        }
-
-        if (cleanLine === "---" || cleanLine === "---" || cleanLine.startsWith("===")) {
-          doc.moveDown(0.4);
-          doc.strokeColor("#cbd5e1").lineWidth(1).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-          doc.moveDown(0.4);
-          continue;
-        }
-
-        let fontSize = 9;
-        let isBold = false;
-        let indent = 0;
-
-        if (cleanLine.startsWith("###")) {
-          fontSize = 10;
-          isBold = true;
-          cleanLine = cleanLine.replace(/^###\s*/, "");
-          doc.moveDown(0.3);
-        } else if (cleanLine.startsWith("##")) {
-          fontSize = 11;
-          isBold = true;
-          cleanLine = cleanLine.replace(/^##\s*/, "");
-          doc.moveDown(0.3);
-        } else if (cleanLine.startsWith("#")) {
-          fontSize = 12;
-          isBold = true;
-          cleanLine = cleanLine.replace(/^#\s*/, "");
-          doc.moveDown(0.3);
-        } else if (cleanLine.startsWith("*") || cleanLine.startsWith("-")) {
-          indent = 15;
-          cleanLine = cleanLine.replace(/^[*+-]\s*/, "");
-        }
-
-        let fontName = getFont(isBold);
-        if (cleanLine.includes("**")) {
-          cleanLine = cleanLine.replace(/\*\*/g, "");
-          fontName = getFont(true);
-        }
-
-        doc.font(fontName).fontSize(fontSize).fillColor("#1e293b");
-
-        const rtlText = toRTL(cleanLine);
-
-        if (indent > 0) {
-          doc.text(rtlText, 50, doc.y, {
-            align: "right",
-            width: 475,
-            lineGap: 2
-          });
-          doc.circle(538, doc.y - doc.currentLineHeight() / 2, 2.5).fill("#06b6d4");
-        } else {
-          doc.text(rtlText, 50, doc.y, {
-            align: "right",
-            width: 495,
-            lineGap: 2
-          });
-        }
-
-        if (doc.y > 750) {
-          doc.addPage();
-        }
-      }
 
       // Finalize PDF
       doc.end();
@@ -650,6 +578,25 @@ app.delete("/api/advisors/:id", (req, res) => {
   }
 });
 
+// PUT /api/advisors/:id
+app.put("/api/advisors/:id", (req, res) => {
+  let advisors = loadAdvisors();
+  const idx = advisors.findIndex(a => a.id === req.params.id);
+  if (idx !== -1) {
+    const updatedAdvisor = {
+      ...advisors[idx],
+      ...req.body,
+      id: req.params.id // Prevent ID from being modified
+    };
+    advisors[idx] = updatedAdvisor;
+    saveAdvisors(advisors);
+    const { password: _, ...advisorWithoutPassword } = updatedAdvisor;
+    res.json(advisorWithoutPassword);
+  } else {
+    res.status(404).json({ error: "Advisor not found" });
+  }
+});
+
 // GET /api/clients
 app.get("/api/clients", (req, res) => {
   const clients = loadClients();
@@ -820,22 +767,38 @@ app.post("/api/clients/:id/delete-doc", (req, res) => {
 });
 
 // Helper to send real emails via Nodemailer with optional attachments
-async function sendRealEmail(to: string, replyTo: string, subject: string, text: string, attachments?: Array<{ filename: string; content: Buffer }>) {
+async function sendRealEmail(to: string, replyTo: string, subject: string, text: string, attachments?: Array<{ filename: string; content: Buffer }>, advisorId?: string) {
   const settings = loadSettings();
+  const advisors = loadAdvisors();
+  const advisor = advisorId ? advisors.find(a => a.id === advisorId) : null;
   
-  const senderEmail = settings.systemSenderEmail || "requests@syncash-mail.co.il";
-  const smtpPass = settings.smtpPassword || process.env.SMTP_PASSWORD || "";
+  let smtpHost = settings.smtpHost || "smtp.gmail.com";
+  let smtpPort = parseInt(settings.smtpPort || "465", 10);
+  let smtpSecure = settings.smtpSecure !== undefined ? settings.smtpSecure : true;
+  let senderEmail = settings.systemSenderEmail || "requests@syncash-mail.co.il";
+  let smtpPass = settings.smtpPassword || process.env.SMTP_PASSWORD || "";
+  let senderDisplayName = "מערכת SynCash";
+
+  if (advisor && advisor.smtpPassword) {
+    smtpHost = advisor.smtpHost || "smtp.gmail.com";
+    smtpPort = parseInt(advisor.smtpPort || "465", 10);
+    smtpSecure = advisor.smtpSecure !== undefined ? advisor.smtpSecure : true;
+    senderEmail = advisor.email;
+    smtpPass = advisor.smtpPassword;
+    senderDisplayName = advisor.name;
+    console.log(`Using advisor personal SMTP: ${senderEmail} via ${smtpHost}`);
+  }
   
   if (!smtpPass) {
     console.warn("SMTP password not set, skipping real email send.");
-    return { success: false, reason: "SMTP App Password (סיסמת אפליקציה של גוגל) אינה מוגדרת. אנא הגדר אותה בטאב שידור תחת הגדרות דואר מנהל." };
+    return { success: false, reason: "סיסמת שרת הדואר (SMTP App Password) אינה מוגדרת. אנא הגדר אותה בדף הגדרות הפרופיל האישי שלך או בהגדרות המנהל הכלליות." };
   }
 
   try {
     const transporter = nodemailer.createTransport({
-      host: settings.smtpHost || "smtp.gmail.com",
-      port: parseInt(settings.smtpPort || "465", 10),
-      secure: settings.smtpSecure !== undefined ? settings.smtpSecure : true,
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure,
       auth: {
         user: senderEmail,
         pass: smtpPass
@@ -843,9 +806,9 @@ async function sendRealEmail(to: string, replyTo: string, subject: string, text:
     });
 
     const mailOptions: any = {
-      from: `"מערכת SynCash" <${senderEmail}>`,
+      from: `"${senderDisplayName}" <${senderEmail}>`,
       to,
-      replyTo,
+      replyTo: replyTo || senderEmail,
       subject,
       text
     };
@@ -883,56 +846,7 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
   // Mark overall client status as 'sent'
   client.status = "sent";
 
-  // Prepare client details for Gemini
-  const promptData = {
-    name: client.name,
-    employmentType: client.employmentType,
-    seniority: client.seniority,
-    income: client.income,
-    expenses: client.expenses,
-    dealType: client.dealType,
-    propertyCity: client.propertyCity,
-    propertyStreet: client.propertyStreet,
-    propertyValue: client.propertyValue,
-    requestedAmount: client.requestedAmount,
-    financingPercentage: client.financingPercentage,
-    notes: client.notes,
-  };
-
-  const propertyAddressStr = client.propertyCity 
-    ? `${client.propertyCity}${client.propertyStreet ? `, ${client.propertyStreet}` : ""}`
-    : "לא צוינה";
-
-  // 1. Generate the anonymous pitch letter in Hebrew (AI dynamic part)
-  let aiGeneratedPart = "פניית אשראי חוץ-בנקאית מפורטת למשכנתא.";
-  if (ai) {
-    try {
-      const systemInstruction = 
-        "You are an expert Israeli mortgage advisor. Generate an incredibly professional, detailed, persuasive, and custom cover letter/pitch " +
-        "in Hebrew, sent to non-bank lenders (חברות מימון חוץ-בנקאיות) like BTB, Tarya, Peninsula etc. The goal is to highlight the strengths of the borrower, " +
-        "explain the reason for needing out-of-bank financing (e.g. self-employed, bank bureaucracy, high-leverage), address risks, and pitch why " +
-        "this is an excellent collateral/borrower profile. Include clear Hebrew financial terminology (יחס החזר, אחוז מימון, בטוחות, נכס, כושר החזר).\n" +
-        "CRITICAL RULE: The pitch MUST BE COMPLETELY ANONYMOUS regarding the mortgage advisor. Do NOT write any advisor name, company name, license number, phone, email, or direct contact details. " +
-        "Use placeholder words or generic terms like 'יועץ פיננסי מוסמך' or 'מערכת SynCash'.";
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `אנא צור מכתב פנייה מקצועי, אנונימי ומשכנע עבור התיק הבא:\n${JSON.stringify(promptData, null, 2)}`,
-        config: {
-          systemInstruction: systemInstruction,
-          temperature: 0.7,
-        }
-      });
-
-      if (response.text) {
-        aiGeneratedPart = response.text;
-      }
-    } catch (err) {
-      console.error("Gemini failed to generate anonymous pitch part, using default.", err);
-    }
-  }
-
-  // 2. Resolve the Base URL for links
+  // 1. Resolve the Base URL for links
   let baseUrl = "";
   if (req.body.origin) {
     baseUrl = req.body.origin;
@@ -951,10 +865,10 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
     baseUrl = `${protocol}://${host}`;
   }
 
-  // 3. Generate PDF Buffer containing full details and AI pitch analysis
+  // 2. Generate PDF Buffer containing full structured details
   let pdfBuffer: Buffer | null = null;
   try {
-    pdfBuffer = await generateClientPdf(client, aiGeneratedPart, baseUrl);
+    pdfBuffer = await generateClientPdf(client, baseUrl);
     console.log(`PDF successfully generated for client SYNCASH-CL-${client.id}`);
   } catch (pdfErr) {
     console.error("Failed to generate client profile PDF:", pdfErr);
@@ -964,7 +878,7 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
   const advisor = advisors.find(a => a.id === (client.advisorId || "advisor-1")) || advisors[0];
   const advisorEmail = advisor ? advisor.email : "";
 
-  // 4. Setup anonymous state for each selected lender (awaiting reply) & send real email
+  // 3. Setup anonymous state for each selected lender (awaiting reply) & send real email
   client.lendersState = client.lendersState || {};
   
   for (const lender of targetLenders) {
@@ -982,7 +896,7 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
       `==================================================\n\n` +
       `שלום רב,\n\n` +
       `מצורפת בזאת פניית אשראי חוץ-בנקאית חדשה ומאובטחת עבור לקוח אנונימי (קוד פנייה: SYNCASH-CL-${client.id}).\n\n` +
-      `כלל פרטי העסקה, הנתונים הפיננסיים המלאים וניתוח התיק החכם מצורפים בקובץ ה-PDF המאובטח המצורף למייל זה.\n\n` +
+      `כלל פרטי העסקה והנתונים הפיננסיים המלאים והמאומתים מצורפים בקובץ ה-PDF המאובטח המצורף למייל זה.\n\n` +
       `--------------------------------------------------\n` +
       `   מענה ישיר והגשת הצעת מימון מקוונת בזירה:\n` +
       `--------------------------------------------------\n` +
@@ -1004,7 +918,7 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
 
     // Attempt to send real email
     const subject = `[SynCash] פניית אשראי חוץ-בנקאית חדשה - סימוכין SYNCASH-CL-${client.id.substring(0, 8)}`;
-    const mailResult = await sendRealEmail(lenderEmail, advisorEmail || settings.systemSenderEmail, subject, emailBodyText, attachments);
+    const mailResult = await sendRealEmail(lenderEmail, advisorEmail || settings.systemSenderEmail, subject, emailBodyText, attachments, advisor.id);
 
     let statusMsg = "";
     if (mailResult.success) {

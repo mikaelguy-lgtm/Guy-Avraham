@@ -149,6 +149,67 @@ export default function SettingsView({ profile, onUpdateProfile }: SettingsViewP
               </div>
             </div>
 
+            {/* SMTP Mail Outbound Settings Section */}
+            <div className="pt-5 mt-5 border-t border-slate-800/60 space-y-4">
+              <h5 className="text-sm font-bold text-cyan-400 flex items-center gap-2">
+                <Mail className="h-4.5 w-4.5 text-cyan-400" />
+                הגדרות שרת דואר יוצא (SMTP) לשידור מחשבונך האישי
+              </h5>
+              <p className="text-[11px] text-slate-400 leading-relaxed font-semibold">
+                על מנת שהמערכת תוכל לשדר את הבקשות האנונימיות וחבילות ה-PDF לכתובות המייל של חברות המימון ישירות בשמך, אנא הזן את פרטי ה-SMTP של חשבונך.
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-400">שרת יוצא (SMTP Host)</label>
+                  <input 
+                    type="text" 
+                    value={profileForm.smtpHost || ""}
+                    onChange={(e) => setProfileForm({ ...profileForm, smtpHost: e.target.value })}
+                    className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-2.5 px-3.5 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:ring-1 focus:ring-cyan-500 outline-none text-left font-mono"
+                    placeholder="smtp.gmail.com"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-400">פורט שרת יוצא (SMTP Port)</label>
+                  <input 
+                    type="text" 
+                    value={profileForm.smtpPort || ""}
+                    onChange={(e) => setProfileForm({ ...profileForm, smtpPort: e.target.value })}
+                    className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-2.5 px-3.5 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:ring-1 focus:ring-cyan-500 outline-none text-left font-mono"
+                    placeholder="465"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-400">סיסמת אפליקציה לשליחת מייל (Gmail App Password)</label>
+                  <input 
+                    type="password" 
+                    value={profileForm.smtpPassword || ""}
+                    onChange={(e) => setProfileForm({ ...profileForm, smtpPassword: e.target.value })}
+                    className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-2.5 px-3.5 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:ring-1 focus:ring-cyan-500 outline-none text-right font-mono"
+                    placeholder="הזן סיסמת אפליקציה בת 16 תווים"
+                  />
+                  <p className="text-[10px] text-slate-500 leading-normal">
+                    אם תיבת המייל המקצועית שלך היא ב-Gmail, עליך לייצר 'סיסמת אפליקציה' (App Password) ייעודית של 16 תווים בהגדרות חשבון גוגל שלך ולהזינה כאן.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5 flex items-center pt-5">
+                  <label className="flex items-center gap-2 text-xs font-bold text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={profileForm.smtpSecure !== false}
+                      onChange={(e) => setProfileForm({ ...profileForm, smtpSecure: e.target.checked })}
+                      className="rounded border-slate-800 text-cyan-500 focus:ring-cyan-500 h-4 w-4 bg-slate-950"
+                    />
+                    חיבור מאובטח (SSL / TLS)
+                  </label>
+                </div>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between pt-4 border-t border-slate-800/60">
               <button 
                 type="submit"

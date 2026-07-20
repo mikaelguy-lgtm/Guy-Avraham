@@ -73,11 +73,20 @@ export default function App() {
     setActiveTab("new-client");
   };
 
-  const handleUpdateProfile = (updated: AdvisorProfile) => {
+  const handleUpdateProfile = async (updated: AdvisorProfile) => {
     if (loggedInAdvisor) {
-      const newProfile = { ...loggedInAdvisor, ...updated };
-      setLoggedInAdvisor(newProfile);
-      localStorage.setItem("advisor_session", JSON.stringify(newProfile));
+      try {
+        const savedProfile = await api.updateAdvisor(loggedInAdvisor.id, updated);
+        const newProfile = { ...loggedInAdvisor, ...savedProfile };
+        setLoggedInAdvisor(newProfile);
+        localStorage.setItem("advisor_session", JSON.stringify(newProfile));
+      } catch (err) {
+        console.error("Failed to update profile on backend:", err);
+        // Fallback to local storage if API call fails
+        const newProfile = { ...loggedInAdvisor, ...updated };
+        setLoggedInAdvisor(newProfile);
+        localStorage.setItem("advisor_session", JSON.stringify(newProfile));
+      }
     }
   };
 

@@ -243,6 +243,30 @@ export const api = {
     return await res.json();
   },
 
+  async updateAdvisor(id: string, data: any) {
+    if (isStaticOrOffline()) {
+      const advisors = getLocalAdvisors();
+      const idx = advisors.findIndex((a: any) => a.id === id);
+      if (idx !== -1) {
+        advisors[idx] = { ...advisors[idx], ...data };
+        saveLocalAdvisors(advisors);
+        const { password, ...rest } = advisors[idx];
+        return rest;
+      }
+      throw new Error("Advisor not found");
+    }
+    const res = await fetch(`/api/advisors/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "שגיאה בעדכון פרטי יועץ");
+    }
+    return await res.json();
+  },
+
   // CLIENTS
   async getClients() {
     if (isStaticOrOffline()) {
