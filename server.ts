@@ -5,6 +5,8 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
+import PDFDocument from "pdfkit";
+import https from "https";
 
 dotenv.config();
 
@@ -50,6 +52,287 @@ app.use(express.json());
 const DATA_DIR = path.join(process.cwd(), "data");
 const CLIENTS_FILE = path.join(DATA_DIR, "clients.json");
 const ADVISORS_FILE = path.join(DATA_DIR, "advisors.json");
+
+// Font paths for PDF generation (Hebrew support)
+const FONT_PATH = path.join(DATA_DIR, "Heebo-Regular.ttf");
+const FONT_BOLD_PATH = path.join(DATA_DIR, "Heebo-Bold.ttf");
+
+// Recursive download helper to download font files following redirects
+function downloadFile(url: string, dest: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        if (res.headers.location) {
+          downloadFile(res.headers.location, dest).then(resolve).catch(reject);
+        } else {
+          reject(new Error("Redirect status code but no location header"));
+        }
+        return;
+      }
+      if (res.statusCode !== 200) {
+        reject(new Error(`Server returned status code ${res.statusCode}`));
+        return;
+      }
+      const file = fs.createWriteStream(dest);
+      res.pipe(file);
+      file.on("finish", () => {
+        file.close();
+        resolve();
+      });
+      file.on("error", (err) => {
+        fs.unlink(dest, () => {});
+        reject(err);
+      });
+    }).on("error", (err) => {
+      reject(err);
+    });
+  });
+}
+
+// Function to ensure Hebrew fonts exist in the data folder
+async function ensureFontsExist(): Promise<void> {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+
+  const fonts = [
+    {
+      path: FONT_PATH,
+      url: "https://github.com/google/fonts/raw/main/ofl/heebo/Heebo-Regular.ttf"
+    },
+    {
+      path: FONT_BOLD_PATH,
+      url: "https://github.com/google/fonts/raw/main/ofl/heebo/Heebo-Bold.ttf"
+    }
+  ];
+
+  for (const font of fonts) {
+    if (!fs.existsSync(font.path)) {
+      console.log(`Downloading font ${path.basename(font.path)}...`);
+      try {
+        await downloadFile(font.url, font.path);
+        console.log(`Font ${path.basename(font.path)} downloaded successfully.`);
+      } catch (err) {
+        console.error(`Failed to download font ${path.basename(font.path)}:`, err);
+      }
+    }
+  }
+}
+
+// Helper to reverse Hebrew words for PDFKit right-to-left layout
+function toRTL(text: string): string {
+  if (!text) return "";
+  if (!/[\u0590-\u05FF]/.test(text)) {
+    return text;
+  }
+  const words = text.split(" ");
+  const reversedWords = words.map(word => {
+    if (/[\u0590-\u05FF]/.test(word)) {
+      return word.split("").reverse().join("");
+    }
+    return word;
+  });
+  return reversedWords.reverse().join(" ");
+}
+
+// Generate the beautiful client profile PDF
+async function generateClientPdf(client: any, aiGeneratedPart: string, baseUrl: string): Promise<Buffer> {
+  await ensureFontsExist();
+  
+  return new Promise<Buffer>((resolve, reject) => {
+    try {
+      const buffers: Buffer[] = [];
+      const doc = new PDFDocument({ margin: 50, size: "A4" });
+      doc.on("data", (chunk) => buffers.push(chunk));
+      doc.on("end", () => resolve(Buffer.concat(buffers)));
+      doc.on("error", (err) => reject(err));
+
+      // Register Hebrew Fonts
+      const hasFonts = fs.existsSync(FONT_PATH) && fs.existsSync(FONT_BOLD_PATH);
+      if (hasFonts) {
+        doc.registerFont("Heebo", FONT_PATH);
+        doc.registerFont("Heebo-Bold", FONT_BOLD_PATH);
+      }
+
+      const getFont = (bold: boolean) => hasFonts ? (bold ? "Heebo-Bold" : "Heebo") : (bold ? "Helvetica-Bold" : "Helvetica");
+
+      // --- PDF Header ---
+      // Top bar
+      doc.rect(0, 0, 595, 20).fill("#0f172a");
+      doc.rect(0, 20, 595, 60).fill("#1e293b");
+
+      // Header Text
+      doc.font(getFont(true)).fontSize(18).fillColor("#ffffff");
+      doc.text(toRTL("SynCash - פרופיל עסקת אשראי"), 50, 30, { align: "right" });
+      
+      doc.font(getFont(false)).fontSize(10).fillColor("#38bdf8");
+      doc.text(toRTL("בקשת מימון חוץ-בנקאית אנונימית ומאובטחת"), 50, 52, { align: "right" });
+
+      // Metadata under header
+      doc.font(getFont(false)).fontSize(9).fillColor("#64748b");
+      const refStr = `מספר סימוכין: SYNCASH-CL-${client.id}`;
+      const dateStr = `תאריך שידור: ${new Date().toLocaleDateString('he-IL')} (UTC)`;
+      doc.text(toRTL(refStr), 50, 95, { align: "right" });
+      doc.text(toRTL(dateStr), 50, 110, { align: "right" });
+
+      doc.moveDown(1.5);
+      doc.strokeColor("#cbd5e1").lineWidth(1).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+      doc.moveDown(1);
+
+      // Helper for sections
+      const addSectionTitle = (title: string) => {
+        doc.moveDown(1.2);
+        doc.font(getFont(true)).fontSize(12).fillColor("#0284c7");
+        doc.text(toRTL(title), 50, doc.y, { align: "right" });
+        doc.moveDown(0.3);
+        doc.strokeColor("#e2e8f0").lineWidth(1.5).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+        doc.moveDown(0.5);
+      };
+
+      const addDetailLine = (label: string, value: string) => {
+        doc.font(getFont(true)).fontSize(9).fillColor("#334155");
+        const fullText = `- ${label}: ${value}`;
+        doc.text(toRTL(fullText), 50, doc.y, { align: "right" });
+        doc.moveDown(0.3);
+      };
+
+      // --- SECTION 1: פרטי העסקה והבטוחה ---
+      addSectionTitle("1. פרטי העסקה והנכס המשועבד (Deal & Collateral)");
+      
+      const anonymizedName = client.name ? `${client.name.substring(0, 1)}***` : "לקוח אנונימי";
+      const anonymizedId = client.idNumber ? `${client.idNumber.substring(0, 3)}******` : "לא צוין";
+      
+      let propertyAddressStr = "לא צוינה";
+      if (client.propertyCity) {
+        propertyAddressStr = client.propertyCity + (client.propertyStreet ? ` ${client.propertyStreet}` : "");
+      }
+
+      addDetailLine("שם הלווה (אנונימי)", anonymizedName);
+      addDetailLine("תעודת זהות (אנונימי)", anonymizedId);
+      addDetailLine("סוג העסקה", client.dealType || "לא צוין");
+      addDetailLine("סוג נכס/מטרה", client.propertyType || "לא צוין");
+      addDetailLine("כתובת הנכס לשעבוד", propertyAddressStr);
+      addDetailLine("שווי נכס מוערך (עפ\"י יועץ/שמאי)", `₪${Number(client.propertyValue || 0).toLocaleString()}`);
+      addDetailLine("סכום הלוואה מבוקש", `₪${Number(client.requestedAmount || 0).toLocaleString()}`);
+      addDetailLine("אחוז המימון המבוקש מהנכס", `${client.financingPercentage}%`);
+
+      // --- SECTION 2: פרופיל פיננסי ---
+      addSectionTitle("2. פרופיל פיננסי ויכולת החזר (Financial Profile)");
+      
+      addDetailLine("מצב תעסוקתי", client.employmentType || "שכיר");
+      addDetailLine("מקום עבודה / שם העסק הפעיל", client.workplace || "לא צוין");
+      addDetailLine("ותק בשנים", `${client.seniority || 0} שנים`);
+      addDetailLine("הכנסה חודשית נטו מוכחת", `₪${Number(client.income || 0).toLocaleString()}`);
+      addDetailLine("הכנסות חודשיות נוספות", `₪${Number(client.additionalIncomeAmount || 0).toLocaleString()} (${client.additionalIncomeType || "אין"})`);
+      addDetailLine("הוצאות משפחתיות שוטפות", `₪${Number(client.expenses || 0).toLocaleString()}`);
+      addDetailLine("החזרי הלוואות חודשיים מחוץ למשכנתא", `₪${Number(client.expensesLoans || 0).toLocaleString()}`);
+      addDetailLine("החזר משכנתא נוכחית", `₪${Number(client.expensesMortgage || 0).toLocaleString()} (יתרה לסילוק: ₪${Number(client.expensesMortgageBalance || 0).toLocaleString()})`);
+
+      // --- SECTION 3: מסמכים ---
+      addSectionTitle("3. מסמכי התיק המאומתים (Verified Documents)");
+      const uploadedDocs = client.documents.filter((d: any) => d.status === "uploaded");
+      if (uploadedDocs.length > 0) {
+        uploadedDocs.forEach((d: any) => {
+          doc.font(getFont(false)).fontSize(9).fillColor("#059669");
+          doc.text(toRTL(`[מסמך מאומת] - ${d.name} (${d.date || "הועלה"})`), 50, doc.y, { align: "right" });
+          doc.moveDown(0.2);
+          
+          const docLink = `${baseUrl}/api/documents/download?clientId=${client.id}&docId=${d.id}`;
+          doc.font(getFont(false)).fontSize(8).fillColor("#0284c7");
+          doc.text(toRTL(`להורדה ישירה לחץ כאן`), 50, doc.y, { align: "right", link: docLink });
+          doc.moveDown(0.4);
+        });
+      } else {
+        doc.font(getFont(false)).fontSize(9).fillColor("#64748b");
+        doc.text(toRTL("טרם הועלו או אומתו מסמכים בתיק זה"), 50, doc.y, { align: "right" });
+        doc.moveDown(0.4);
+      }
+
+      // --- SECTION 4: הערות יועץ ---
+      addSectionTitle("4. הערות ודגשים מיועץ המשכנתאות (Advisor Insight)");
+      doc.font(getFont(false)).fontSize(9).fillColor("#334155");
+      doc.text(toRTL(client.notes || "אין הערות מיוחדות שהוזנו בתיק."), 50, doc.y, { align: "right", width: 495, lineGap: 2 });
+      doc.moveDown(0.4);
+
+      // --- SECTION 5: ניתוח חכם ---
+      addSectionTitle("5. ניתוח תיק חכם וייעוץ מבוסס AI (Smart Analysis)");
+      
+      const lines = aiGeneratedPart.split("\n");
+      for (const line of lines) {
+        let cleanLine = line.trim();
+        if (!cleanLine) {
+          doc.moveDown(0.2);
+          continue;
+        }
+
+        if (cleanLine === "---" || cleanLine === "---" || cleanLine.startsWith("===")) {
+          doc.moveDown(0.4);
+          doc.strokeColor("#cbd5e1").lineWidth(1).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+          doc.moveDown(0.4);
+          continue;
+        }
+
+        let fontSize = 9;
+        let isBold = false;
+        let indent = 0;
+
+        if (cleanLine.startsWith("###")) {
+          fontSize = 10;
+          isBold = true;
+          cleanLine = cleanLine.replace(/^###\s*/, "");
+          doc.moveDown(0.3);
+        } else if (cleanLine.startsWith("##")) {
+          fontSize = 11;
+          isBold = true;
+          cleanLine = cleanLine.replace(/^##\s*/, "");
+          doc.moveDown(0.3);
+        } else if (cleanLine.startsWith("#")) {
+          fontSize = 12;
+          isBold = true;
+          cleanLine = cleanLine.replace(/^#\s*/, "");
+          doc.moveDown(0.3);
+        } else if (cleanLine.startsWith("*") || cleanLine.startsWith("-")) {
+          indent = 15;
+          cleanLine = cleanLine.replace(/^[*+-]\s*/, "");
+        }
+
+        let fontName = getFont(isBold);
+        if (cleanLine.includes("**")) {
+          cleanLine = cleanLine.replace(/\*\*/g, "");
+          fontName = getFont(true);
+        }
+
+        doc.font(fontName).fontSize(fontSize).fillColor("#1e293b");
+
+        const rtlText = toRTL(cleanLine);
+
+        if (indent > 0) {
+          doc.text(rtlText, 50, doc.y, {
+            align: "right",
+            width: 475,
+            lineGap: 2
+          });
+          doc.circle(538, doc.y - doc.currentLineHeight() / 2, 2.5).fill("#06b6d4");
+        } else {
+          doc.text(rtlText, 50, doc.y, {
+            align: "right",
+            width: 495,
+            lineGap: 2
+          });
+        }
+
+        if (doc.y > 750) {
+          doc.addPage();
+        }
+      }
+
+      // Finalize PDF
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
 
 // Ensure data folder exists
 if (!fs.existsSync(DATA_DIR)) {
@@ -536,8 +819,8 @@ app.post("/api/clients/:id/delete-doc", (req, res) => {
   }
 });
 
-// Helper to send real emails via Nodemailer
-async function sendRealEmail(to: string, replyTo: string, subject: string, text: string) {
+// Helper to send real emails via Nodemailer with optional attachments
+async function sendRealEmail(to: string, replyTo: string, subject: string, text: string, attachments?: Array<{ filename: string; content: Buffer }>) {
   const settings = loadSettings();
   
   const senderEmail = settings.systemSenderEmail || "requests@syncash-mail.co.il";
@@ -559,13 +842,17 @@ async function sendRealEmail(to: string, replyTo: string, subject: string, text:
       }
     });
 
-    const mailOptions = {
+    const mailOptions: any = {
       from: `"מערכת SynCash" <${senderEmail}>`,
       to,
       replyTo,
       subject,
       text
     };
+
+    if (attachments && attachments.length > 0) {
+      mailOptions.attachments = attachments;
+    }
 
     const info = await transporter.sendMail(mailOptions);
     console.log("Email sent successfully:", info.messageId);
@@ -645,72 +932,41 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
     }
   }
 
-  // 2. Build the fixed structured template (טמפלט קבוע)
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-  const host = req.get('host');
-  const baseUrl = `${protocol}://${host}`;
+  // 2. Resolve the Base URL for links
+  let baseUrl = "";
+  if (req.body.origin) {
+    baseUrl = req.body.origin;
+  } else if (req.headers.referer) {
+    try {
+      const refUrl = new URL(req.headers.referer);
+      baseUrl = refUrl.origin;
+    } catch (e) {
+      // ignore
+    }
+  }
 
-  const uploadedDocs = client.documents.filter((d: any) => d.status === "uploaded");
-  const docLinksText = uploadedDocs.length > 0
-    ? uploadedDocs.map((d: any) => `  * 📄 ${d.name} (${d.date || "הועלה"})\n    🔗 קישור מאובטח להורדה בלחיצה אחת: ${baseUrl}/api/documents/download?clientId=${client.id}&docId=${d.id}`).join("\n\n")
-    : "  [טרם הועלו או אומתו מסמכים בתיק זה]";
+  if (!baseUrl) {
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    baseUrl = `${protocol}://${host}`;
+  }
 
-  const anonymizedName = client.name ? `${client.name.substring(0, 1)}***` : "לקוח אנונימי";
-  const anonymizedId = client.idNumber ? `${client.idNumber.substring(0, 3)}******` : "לא צוין";
-
-  const fixedTemplate = 
-    `==================================================\n` +
-    `       בקשת מימון חוץ-בנקאית רשמית ומאובטחת\n` +
-    `       נשלח באמצעות פלטפורמת SynCash המרכזית\n` +
-    `==================================================\n` +
-    `מספר סימוכין אנונימי: SYNCASH-CL-${client.id}\n` +
-    `תאריך ושעת שידור: ${new Date().toLocaleDateString('he-IL')} (UTC)\n\n` +
-    
-    `📋 1. פרטי העסקה והנכס המשועבד (Collateral & Deal Profile):\n` +
-    `------------------------------------------------------------\n` +
-    `- שם הלווה (אנונימי): ${anonymizedName}\n` +
-    `- תעודת זהות (אנונימי): ${anonymizedId}\n` +
-    `- סוג העסקה: ${client.dealType || "לא צוין"}\n` +
-    `- סוג נכס/מטרה: ${client.propertyType || "לא צוין"}\n` +
-    `- כתובת הנכס לשעבוד: ${propertyAddressStr}\n` +
-    `- שווי נכס מוערך (עפ"י יועץ/שמאי): ₪${Number(client.propertyValue || 0).toLocaleString()}\n` +
-    `- סכום הלוואה מבוקש: ₪${Number(client.requestedAmount || 0).toLocaleString()}\n` +
-    `- אחוז המימון המבוקש מהנכס: ${client.financingPercentage}%\n\n` +
-    
-    `💼 2. פרופיל פיננסי ויכולת החזר (Financial Profile):\n` +
-    `------------------------------------------------------------\n` +
-    `- סוג העסקה/מצב תעסוקתי: ${client.employmentType || "שכיר"}\n` +
-    `- מקום עבודה / שם העסק הפעיל: ${client.workplace || "לא צוין"}\n` +
-    `- ותק בשנים: ${client.seniority || 0} שנים\n` +
-    `- הכנסה חודשית נטו מוכחת: ₪${Number(client.income || 0).toLocaleString()}\n` +
-    `- הכנסות חודשיות נוספות: ₪${Number(client.additionalIncomeAmount || 0).toLocaleString()} (${client.additionalIncomeType || "אין"})\n` +
-    `- הוצאות משפחתיות שוטפות: ₪${Number(client.expenses || 0).toLocaleString()}\n` +
-    `- החזרי הלוואות חודשיים מחוץ למשכנתא: ₪${Number(client.expensesLoans || 0).toLocaleString()}\n` +
-    `- החזר משכנתא נוכחית: ₪${Number(client.expensesMortgage || 0).toLocaleString()} (יתרה לסילוק: ₪${Number(client.expensesMortgageBalance || 0).toLocaleString()})\n\n` +
-    
-    `📂 3. מסמכי התיק המלאים להורדה ישירה (Attached Documents):\n` +
-    `------------------------------------------------------------\n` +
-    `מערכת SynCash אימתה את המסמכים הבאים עבור התיק הנוכחי.\n` +
-    `תוכל להוריד אותם ישירות בלחיצה אחת ללא צורך בהזדהות נוספת:\n\n` +
-    `${docLinksText}\n\n` +
-    
-    `✍ 4. הערות ודגשים מיועץ המשכנתאות (Advisor Insight):\n` +
-    `------------------------------------------------------------\n` +
-    `${client.notes || "אין הערות מיוחדות שהוזנו בתיק."}\n\n` +
-    
-    `💡 5. ניתוח תיק חכם וייעוץ מבוסס AI (Smart Case Analysis):\n` +
-    `------------------------------------------------------------\n` +
-    `${aiGeneratedPart}\n\n` +
-    
-    `------------------------------------------------------------\n` +
-    `מכתב פנייה זה נוצר ונשלח באופן מאובטח מכתובת שרת SynCash הראשי: ${settings.systemSenderEmail}\n` +
-    `להגשת הצעת מימון או בקשת הבהרה, השב ישירות למייל זה או השתמש במערכת SynCash.`;
+  // 3. Generate PDF Buffer containing full details and AI pitch analysis
+  let pdfBuffer: Buffer | null = null;
+  try {
+    pdfBuffer = await generateClientPdf(client, aiGeneratedPart, baseUrl);
+    console.log(`PDF successfully generated for client SYNCASH-CL-${client.id}`);
+  } catch (pdfErr) {
+    console.error("Failed to generate client profile PDF:", pdfErr);
+  }
 
   const advisors = loadAdvisors();
   const advisor = advisors.find(a => a.id === (client.advisorId || "advisor-1")) || advisors[0];
   const advisorEmail = advisor ? advisor.email : "";
 
-  // 3. Setup anonymous state for each selected lender (awaiting reply) & send real email
+  // 4. Setup anonymous state for each selected lender (awaiting reply) & send real email
+  client.lendersState = client.lendersState || {};
+  
   for (const lender of targetLenders) {
     const lenderObj = settings.lenders ? settings.lenders.find((l: any) => l.id === lender) : null;
     const lenderEmail = lenderObj ? lenderObj.email : (settings.lenderEmails ? settings.lenderEmails[lender] : "credit@lender.co.il");
@@ -718,30 +974,48 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
     // We will append a direct link for the lender to reply in SynCash!
     const directReplyUrl = `${baseUrl}/?refId=SYNCASH-CL-${client.id}-LD-${lender}`;
 
-    const pitchWithLink = fixedTemplate + 
-      `\n\n` +
+    // Build the short, neat fixed email body with only the response link
+    const emailBodyText = 
       `==================================================\n` +
+      `       בקשת מימון חוץ-בנקאית רשמית ומאובטחת\n` +
+      `       נשלח באמצעות פלטפורמת SynCash המרכזית\n` +
+      `==================================================\n\n` +
+      `שלום רב,\n\n` +
+      `מצורפת בזאת פניית אשראי חוץ-בנקאית חדשה ומאובטחת עבור לקוח אנונימי (קוד פנייה: SYNCASH-CL-${client.id}).\n\n` +
+      `כלל פרטי העסקה, הנתונים הפיננסיים המלאים וניתוח התיק החכם מצורפים בקובץ ה-PDF המאובטח המצורף למייל זה.\n\n` +
+      `--------------------------------------------------\n` +
       `   מענה ישיר והגשת הצעת מימון מקוונת בזירה:\n` +
-      `==================================================\n` +
-      `למענה מהיר, עדכון סטטוס תיק או הגשת ריביות/אישור רשמי ליועץ:\n` +
-      `🔗 לחץ כאן למענה מיידי מקוון: ${directReplyUrl}\n\n` +
+      `--------------------------------------------------\n` +
+      `למענה מהיר, עדכון סטטוס תיק או הגשת ריביות/אישור רשמי ישירות ליועץ:\n` +
+      `🔗 לחץ כאן למענה מיידי מקוון:\n` +
+      `${directReplyUrl}\n\n` +
       `הודעתכם וריביתכם יעודכנו בזמן אמת בלוח הבקרה של היועץ ${advisor.name}.\n` +
-      `==================================================\n`;
+      `--------------------------------------------------\n\n` +
+      `בברכה,\n` +
+      `מערכת SynCash`;
+
+    // Setup attachment option
+    const attachments = pdfBuffer ? [
+      {
+        filename: `SynCash_Profile_SYNCASH-CL-${client.id.substring(0, 8)}.pdf`,
+        content: pdfBuffer
+      }
+    ] : undefined;
 
     // Attempt to send real email
     const subject = `[SynCash] פניית אשראי חוץ-בנקאית חדשה - סימוכין SYNCASH-CL-${client.id.substring(0, 8)}`;
-    const mailResult = await sendRealEmail(lenderEmail, advisorEmail || settings.systemSenderEmail, subject, pitchWithLink);
+    const mailResult = await sendRealEmail(lenderEmail, advisorEmail || settings.systemSenderEmail, subject, emailBodyText, attachments);
 
     let statusMsg = "";
     if (mailResult.success) {
-      statusMsg = `הבקשה נשלחה אנונימית בהצלחה לכתובת ${lenderEmail}.\nהמערכת ממתינה לתשובת עניין מהחברה (מעוניין/לא מעוניין).\n\nניתן להשתמש בקישור הבא למענה ישיר:\n${directReplyUrl}`;
+      statusMsg = `הבקשה נשלחה אנונימית בהצלחה לכתובת ${lenderEmail} עם קובץ פרופיל PDF מצורף.\nהמערכת ממתינה לתשובת עניין מהחברה (מעוניין/לא מעוניין).\n\nניתן להשתמש בקישור הבא למענה ישיר:\n${directReplyUrl}`;
     } else {
       statusMsg = `המערכת ניסתה לשלוח מייל אמת אל ${lenderEmail}, אך השליחה נכשלה מהסיבה הבאה:\n❌ ${mailResult.reason}\n\nסירקולציה חלופית: המערכת עברה למצב סימולטור. תוכל לדמות מענה ישיר לתיק זה בטאב "שידור" בדשבורד מנהל המערכת, או להשתמש בקישור המענה הישיר הבא:\n🔗 ${directReplyUrl}`;
     }
 
     client.lendersState[lender] = {
       status: "sent_anonymous",
-      pitch: pitchWithLink,
+      pitch: emailBodyText,
       reply: statusMsg
     };
   }

@@ -468,7 +468,7 @@ export const api = {
     const res = await fetch(`/api/clients/${clientId}/send-to-lenders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selectedLenders })
+      body: JSON.stringify({ selectedLenders, origin: window.location.origin })
     });
     if (!res.ok) throw new Error();
     return await res.json();
