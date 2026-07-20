@@ -984,20 +984,24 @@ export default function AdminDashboard({ clients, onRefreshClients, onBackToApp 
                 <div className="col-span-1 md:col-span-2 border-t border-slate-800/80 my-2 pt-4">
                   <h5 className="text-xs font-bold text-slate-300 mb-3">כתובות דואר ייעודיות לחברות המימון החוץ-בנקאיות</h5>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {Object.keys(settings.lenderEmails).map((lenderId) => (
-                      <div key={lenderId} className="space-y-1">
-                        <label className="text-[11px] font-bold text-slate-400">{lenderId}</label>
-                        <input
-                          type="email"
-                          value={settings.lenderEmails[lenderId]}
-                          onChange={(e) => {
-                            const updatedEmails = { ...settings.lenderEmails, [lenderId]: e.target.value };
-                            setSettings({ ...settings, lenderEmails: updatedEmails });
-                          }}
-                          className="w-full px-3 py-2 bg-slate-950/80 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-red-500 text-right"
-                        />
-                      </div>
-                    ))}
+                    {Object.keys(settings.lenderEmails).map((lenderId) => {
+                      const lenderObj = lenders.find((l) => l.id === lenderId);
+                      const displayName = lenderObj ? `${lenderObj.name} (${lenderId})` : lenderId;
+                      return (
+                        <div key={lenderId} className="space-y-1">
+                          <label className="text-[11px] font-bold text-slate-400">{displayName}</label>
+                          <input
+                            type="email"
+                            value={settings.lenderEmails[lenderId]}
+                            onChange={(e) => {
+                              const updatedEmails = { ...settings.lenderEmails, [lenderId]: e.target.value };
+                              setSettings({ ...settings, lenderEmails: updatedEmails });
+                            }}
+                            className="w-full px-3 py-2 bg-slate-950/80 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-red-500 text-right"
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>

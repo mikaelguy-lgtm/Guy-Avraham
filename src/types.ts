@@ -75,4 +75,5 @@ export interface AdvisorProfile {
   smtpHost?: string;
   smtpPort?: string;
   smtpSecure?: boolean;
+  disableGemini?: boolean;
 }

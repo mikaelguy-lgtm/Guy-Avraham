@@ -68,13 +68,24 @@ export default function SettingsView({ profile, onUpdateProfile }: SettingsViewP
             <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">סטטוס חיבור AI</h4>
             <div className="flex items-center justify-between">
               <span className="text-xs sm:text-sm font-bold text-white">מנוע חיתום חכם (Gemini)</span>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                מחובר ופעיל
-              </span>
+              {profileForm.disableGemini ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-400 border border-red-500/20">
+                  <span className="h-1.5 w-1.5 rounded-full bg-red-400"></span>
+                  כבוי / לא פעיל
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                  מחובר ופעיל
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
-              החיבור ל-Gemini 3.5 Flash פעיל ומבצע כתיבה וניתוח אוטומטי של בקשות המימון בזמן אמת.
+              {profileForm.disableGemini ? (
+                "מנוע ה-AI כבוי בהגדרות שלך. הצעות החיתום וניסוח הבקשות יתבצעו לפי תבניות טקסט קבועות מראש."
+              ) : (
+                "החיבור ל-Gemini 3.5 Flash פעיל ומבצע כתיבה וניתוח אוטומטי של בקשות המימון בזמן אמת."
+              )}
             </p>
           </div>
         </div>
@@ -149,64 +160,25 @@ export default function SettingsView({ profile, onUpdateProfile }: SettingsViewP
               </div>
             </div>
 
-            {/* SMTP Mail Outbound Settings Section */}
+            {/* AI Underwriting Settings */}
             <div className="pt-5 mt-5 border-t border-slate-800/60 space-y-4">
               <h5 className="text-sm font-bold text-cyan-400 flex items-center gap-2">
-                <Mail className="h-4.5 w-4.5 text-cyan-400" />
-                הגדרות שרת דואר יוצא (SMTP) לשידור מחשבונך האישי
+                <Sparkles className="h-4.5 w-4.5 text-cyan-400" />
+                מנוע חיתום חכם (Gemini AI)
               </h5>
-              <p className="text-[11px] text-slate-400 leading-relaxed font-semibold">
-                על מנת שהמערכת תוכל לשדר את הבקשות האנונימיות וחבילות ה-PDF לכתובות המייל של חברות המימון ישירות בשמך, אנא הזן את פרטי ה-SMTP של חשבונך.
-              </p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-400">שרת יוצא (SMTP Host)</label>
-                  <input 
-                    type="text" 
-                    value={profileForm.smtpHost || ""}
-                    onChange={(e) => setProfileForm({ ...profileForm, smtpHost: e.target.value })}
-                    className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-2.5 px-3.5 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:ring-1 focus:ring-cyan-500 outline-none text-left font-mono"
-                    placeholder="smtp.gmail.com"
+              <div className="p-4 bg-slate-950/60 border border-slate-800/80 rounded-xl space-y-3">
+                <label className="flex items-center gap-3 text-xs font-bold text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!profileForm.disableGemini}
+                    onChange={(e) => setProfileForm({ ...profileForm, disableGemini: !e.target.checked })}
+                    className="rounded border-slate-800 text-cyan-500 focus:ring-cyan-500 h-4 w-4 bg-slate-950"
                   />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-400">פורט שרת יוצא (SMTP Port)</label>
-                  <input 
-                    type="text" 
-                    value={profileForm.smtpPort || ""}
-                    onChange={(e) => setProfileForm({ ...profileForm, smtpPort: e.target.value })}
-                    className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-2.5 px-3.5 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:ring-1 focus:ring-cyan-500 outline-none text-left font-mono"
-                    placeholder="465"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-400">סיסמת אפליקציה לשליחת מייל (Gmail App Password)</label>
-                  <input 
-                    type="password" 
-                    value={profileForm.smtpPassword || ""}
-                    onChange={(e) => setProfileForm({ ...profileForm, smtpPassword: e.target.value })}
-                    className="w-full rounded-xl bg-slate-950/80 border border-slate-800 py-2.5 px-3.5 text-xs sm:text-sm text-slate-200 placeholder-slate-500 focus:ring-1 focus:ring-cyan-500 outline-none text-right font-mono"
-                    placeholder="הזן סיסמת אפליקציה בת 16 תווים"
-                  />
-                  <p className="text-[10px] text-slate-500 leading-normal">
-                    אם תיבת המייל המקצועית שלך היא ב-Gmail, עליך לייצר 'סיסמת אפליקציה' (App Password) ייעודית של 16 תווים בהגדרות חשבון גוגל שלך ולהזינה כאן.
-                  </p>
-                </div>
-
-                <div className="space-y-1.5 flex items-center pt-5">
-                  <label className="flex items-center gap-2 text-xs font-bold text-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={profileForm.smtpSecure !== false}
-                      onChange={(e) => setProfileForm({ ...profileForm, smtpSecure: e.target.checked })}
-                      className="rounded border-slate-800 text-cyan-500 focus:ring-cyan-500 h-4 w-4 bg-slate-950"
-                    />
-                    חיבור מאובטח (SSL / TLS)
-                  </label>
-                </div>
+                  <span>הפעל מנוע חיתום חכם (Gemini 3.5 Flash)</span>
+                </label>
+                <p className="text-[11px] text-slate-400 leading-relaxed pr-7 font-medium">
+                  כאשר אפשרות זו פעילה, המערכת תשתמש בבינה מלאכותית (Gemini) כדי לנתח תיקי לקוחות, לייצר מכתבי אישור עקרוני וריביות מפורטים ולספק ייעוץ חכם. במידה ותכבה אותה, המערכת תשתמש בתבניות טקסט קבועות ופשוטות.
+                </p>
               </div>
             </div>
 

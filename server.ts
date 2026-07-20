@@ -467,9 +467,33 @@ function loadSettings() {
           email: settings.lenderEmails[l.id] || l.email
         }));
       }
-      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
     }
 
+    // Dynamic sync: Always update settings.lenderEmails based on actual settings.lenders array
+    settings.lenderEmails = settings.lenderEmails || {};
+    if (settings.lenders && Array.isArray(settings.lenders)) {
+      const syncedEmails: Record<string, string> = {};
+      settings.lenders.forEach((l: any) => {
+        if (l.id && l.email) {
+          syncedEmails[l.id] = l.email;
+        }
+      });
+      // Merge: syncedEmails takes precedence
+      settings.lenderEmails = {
+        ...settings.lenderEmails,
+        ...syncedEmails
+      };
+
+      // Clean up deleted ones
+      const currentLenderIds = new Set(settings.lenders.map((l: any) => l.id));
+      Object.keys(settings.lenderEmails).forEach((id) => {
+        if (!currentLenderIds.has(id)) {
+          delete settings.lenderEmails[id];
+        }
+      });
+    }
+
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
     return settings;
   } catch (error) {
     console.error("Error reading settings file, fallback to default", error);
@@ -1099,6 +1123,19 @@ app.post("/api/admin/settings", (req, res) => {
       ...currentSettings.lenderEmails,
       ...lenderEmails
     };
+
+    // Update the email in settings.lenders list for consistency!
+    if (currentSettings.lenders && Array.isArray(currentSettings.lenders)) {
+      currentSettings.lenders = currentSettings.lenders.map((l: any) => {
+        if (lenderEmails[l.id] !== undefined) {
+          return {
+            ...l,
+            email: lenderEmails[l.id].trim()
+          };
+        }
+        return l;
+      });
+    }
   }
   
   saveSettings(currentSettings);
@@ -1245,7 +1282,7 @@ app.post("/api/clients/:id/reveal-lender/:lenderId", async (req, res) => {
     `אנו מודים לך על שיתוף הפעולה במערכת SynCash. נשמח לקדם את העסקה במהירות לחתימה.\n\n` +
     `בברכה,\nצוות החיתום הבכיר, ${lenderId}`;
 
-  if (ai) {
+  if (ai && !advisor.disableGemini) {
     try {
       const promptData = {
         clientName: client.name,
@@ -1299,6 +1336,13 @@ app.post("/api/clients/:id/ask-advisor", async (req, res) => {
   const client = clients.find(c => c.id === req.params.id);
   if (!client) {
     return res.status(404).json({ error: "Client not found" });
+  }
+
+  const advisors = loadAdvisors();
+  const advisor = advisors.find(a => a.id === (client.advisorId || "advisor-1")) || advisors[0];
+
+  if (advisor && advisor.disableGemini) {
+    return res.json({ advice: "מנוע החיתום החכם (Gemini AI) כבוי בהגדרות שלך. על מנת להשתמש ביועץ הדיגיטלי החכם, אנא הפעל אותו בדף ההגדרות." });
   }
 
   let advice = "לא ניתן לקבל עצה כרגע עקב חוסר בחיבור לשרת ה-AI.";

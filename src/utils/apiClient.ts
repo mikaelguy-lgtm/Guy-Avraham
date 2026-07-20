@@ -541,20 +541,50 @@ export const api = {
   async getAdminSettings() {
     if (isStaticOrOffline()) {
       const stored = localStorage.getItem("syncash_settings");
-      if (stored) return JSON.parse(stored);
-      const def = {
-        systemSenderEmail: "requests@syncash-mail.co.il",
-        lenderEmails: {
-          "BTB": "credit@btb.co.il",
-          "Tarya": "underwriting@tarya.co.il",
-          "Peninsula": "deals@peninsula.co.il",
-          "Gamma": "mortgage@gamma.co.il",
-          "Clal": "clalfinance@clal.co.il",
-          "Harel": "harelfinance@harel.co.il"
-        }
+      let settings = stored ? JSON.parse(stored) : null;
+      
+      const defaultEmails = {
+        "BTB": "credit@btb.co.il",
+        "Tarya": "underwriting@tarya.co.il",
+        "Peninsula": "deals@peninsula.co.il",
+        "Gamma": "mortgage@gamma.co.il",
+        "Clal": "clalfinance@clal.co.il",
+        "Harel": "harelfinance@harel.co.il"
       };
-      localStorage.setItem("syncash_settings", JSON.stringify(def));
-      return def;
+
+      if (!settings) {
+        settings = {
+          systemSenderEmail: "requests@syncash-mail.co.il",
+          lenderEmails: defaultEmails
+        };
+      }
+
+      // Sync with syncash_lenders from localStorage
+      const lendersList = await this.getAdminLenders();
+      settings.lenderEmails = settings.lenderEmails || {};
+      
+      const syncedEmails: Record<string, string> = {};
+      lendersList.forEach((l: any) => {
+        if (l.id && l.email) {
+          syncedEmails[l.id] = l.email;
+        }
+      });
+
+      settings.lenderEmails = {
+        ...settings.lenderEmails,
+        ...syncedEmails
+      };
+
+      // Clean up deleted ones
+      const currentIds = new Set(lendersList.map((l: any) => l.id));
+      Object.keys(settings.lenderEmails).forEach((id) => {
+        if (!currentIds.has(id)) {
+          delete settings.lenderEmails[id];
+        }
+      });
+
+      localStorage.setItem("syncash_settings", JSON.stringify(settings));
+      return settings;
     }
 
     const res = await fetch("/api/admin/settings");
@@ -573,6 +603,22 @@ export const api = {
         }
       };
       localStorage.setItem("syncash_settings", JSON.stringify(updated));
+
+      // Also update the email in syncash_lenders!
+      if (settings.lenderEmails) {
+        const lenders = await this.getAdminLenders();
+        const updatedLenders = lenders.map((l: any) => {
+          if (settings.lenderEmails && settings.lenderEmails[l.id] !== undefined) {
+            return {
+              ...l,
+              email: settings.lenderEmails[l.id]
+            };
+          }
+          return l;
+        });
+        localStorage.setItem("syncash_lenders", JSON.stringify(updatedLenders));
+      }
+
       return updated;
     }
 
