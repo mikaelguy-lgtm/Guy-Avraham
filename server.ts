@@ -828,7 +828,7 @@ async function sendRealEmail(to: string, replyTo: string, subject: string, text:
 
 // POST /api/clients/:id/send-to-lenders (Generate anonymous cover pitch & set lenders status to sent_anonymous)
 app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
-  const { lenders, selectedLenders } = req.body; // Array of lender names e.g. ["BTB", "Tarya"]
+  const { lenders, selectedLenders, advisorId } = req.body; // Array of lender names e.g. ["BTB", "Tarya"]
   const targetLenders = lenders || selectedLenders;
   if (!targetLenders || !Array.isArray(targetLenders) || targetLenders.length === 0) {
     return res.status(400).json({ error: "Please select at least one out-of-bank lender." });
@@ -875,7 +875,8 @@ app.post("/api/clients/:id/send-to-lenders", async (req, res) => {
   }
 
   const advisors = loadAdvisors();
-  const advisor = advisors.find(a => a.id === (client.advisorId || "advisor-1")) || advisors[0];
+  const activeAdvisorId = advisorId || client.advisorId || "advisor-1";
+  const advisor = advisors.find(a => a.id === activeAdvisorId) || advisors[0];
   const advisorEmail = advisor ? advisor.email : "";
 
   // 3. Setup anonymous state for each selected lender (awaiting reply) & send real email

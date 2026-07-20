@@ -456,7 +456,7 @@ export const api = {
   },
 
   // SEND TO LENDERS (SUBMISSION ROUND)
-  async sendToLenders(clientId: string, selectedLenders: string[]) {
+  async sendToLenders(clientId: string, selectedLenders: string[], advisorId?: string) {
     if (isStaticOrOffline()) {
       const clients = getLocalClients();
       const client = clients.find(c => c.id === clientId);
@@ -492,7 +492,7 @@ export const api = {
     const res = await fetch(`/api/clients/${clientId}/send-to-lenders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selectedLenders, origin: window.location.origin })
+      body: JSON.stringify({ selectedLenders, origin: window.location.origin, advisorId })
     });
     if (!res.ok) throw new Error();
     return await res.json();

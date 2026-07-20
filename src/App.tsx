@@ -281,6 +281,7 @@ export default function App() {
                   clients={visibleClients}
                   initialSelectedClientId={selectedClientId}
                   onRefreshClients={fetchClients}
+                  advisorId={loggedInAdvisor.id}
                 />
               )}
 

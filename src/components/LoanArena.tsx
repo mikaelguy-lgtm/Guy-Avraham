@@ -22,6 +22,7 @@ interface LoanArenaProps {
   clients: Client[];
   initialSelectedClientId?: string;
   onRefreshClients: (silent?: boolean) => void;
+  advisorId?: string;
 }
 
 // Simple PMT mortgage calculator helper
@@ -37,7 +38,7 @@ function calculateMonthlyPayment(P: number, r: number, n: number): number {
   return isNaN(monthly) ? 0 : Math.round(monthly);
 }
 
-export default function LoanArena({ clients, initialSelectedClientId, onRefreshClients }: LoanArenaProps) {
+export default function LoanArena({ clients, initialSelectedClientId, onRefreshClients, advisorId }: LoanArenaProps) {
   const [selectedClientId, setSelectedClientId] = useState<string>(initialSelectedClientId || clients[0]?.id || "");
   const [lenders, setLenders] = useState<Lender[]>([]);
   const [loadingLenders, setLoadingLenders] = useState<boolean>(true);
@@ -53,12 +54,6 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
         // filter for active lenders
         const activeLenders = data.filter((l: any) => l.status === "active");
         setLenders(activeLenders);
-        
-        // set default selected lenders
-        if (activeLenders.length > 0 && selectedLenders.length === 0) {
-          const defaultSelected = activeLenders.slice(0, 2).map((l: any) => l.id);
-          setSelectedLenders(defaultSelected);
-        }
       } catch (err) {
         console.error("Failed to load active lenders for Loan Arena", err);
       } finally {
@@ -101,7 +96,7 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
     // Call unified api client logic to construct cover letters and replies!
     setTimeout(async () => {
       try {
-        await api.sendToLenders(selectedClientId, selectedLenders);
+        await api.sendToLenders(selectedClientId, selectedLenders, advisorId);
         onRefreshClients(true);
         setTransmissionStep(4);
         // Set first sent lender as active tab to show response
@@ -149,6 +144,7 @@ export default function LoanArena({ clients, initialSelectedClientId, onRefreshC
               onChange={(e) => {
                 setSelectedClientId(e.target.value);
                 setTransmissionStep(0); // reset simulation state
+                setSelectedLenders([]); // clear selection so they must explicitly choose lenders for the new client!
               }}
               className="w-full lg:w-80 rounded-xl border border-slate-800 py-3 px-4 text-xs sm:text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 bg-slate-950/80 outline-none text-right"
             >
