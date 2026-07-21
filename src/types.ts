@@ -71,9 +71,5 @@ export interface AdvisorProfile {
   phone: string;
   company: string;
   licenseNumber: string;
-  smtpPassword?: string;
-  smtpHost?: string;
-  smtpPort?: string;
-  smtpSecure?: boolean;
   disableGemini?: boolean;
 }

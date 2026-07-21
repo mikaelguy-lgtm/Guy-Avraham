@@ -29,16 +29,21 @@ interface CaseDetails {
   dealType: string;
   propertyType: string;
   propertyCity: string;
-  propertyStreet: string;
+  propertyStreet?: string;
   propertyValue: string;
   requestedAmount: string;
   financingPercentage: string;
   employmentType: string;
-  workplace: string;
+  workplace?: string;
   seniority: string;
   income: string;
   expenses: string;
-  notes: string;
+  notes?: string;
+  name?: string;
+  idNumber?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
   documents: Array<{ id: string; name: string; status: string }>;
   currentState?: {
     status: string;
@@ -66,14 +71,43 @@ export default function LenderPortal({ refId, onClose }: LenderPortalProps) {
   const [offerRate, setOfferRate] = useState("6.5");
   const [offerYears, setOfferYears] = useState("20");
 
+  // Reveal Request State
+  const [revealReason, setRevealReason] = useState("");
+  const [requestingReveal, setRequestingReveal] = useState(false);
+
+  const handleRequestReveal = async () => {
+    try {
+      setRequestingReveal(true);
+      const res = await fetch(`/api/lenders/invite/${encodeURIComponent(refId)}/identity-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: revealReason || "מבקש גישה לצורך אימות זהות ומסמכי מקור" })
+      });
+      if (!res.ok) {
+        throw new Error("בקשת חשיפה נכשלה בשרת");
+      }
+      
+      const detailsRes = await fetch(`/api/lenders/invite/${encodeURIComponent(refId)}`);
+      if (detailsRes.ok) {
+        const data = await detailsRes.json();
+        setCaseData(data);
+      }
+      alert("בקשת חשיפת הזהות נשלחה בהצלחה ליועץ.");
+    } catch (err: any) {
+      alert(err.message || "אירעה שגיאה בשליחת הבקשה.");
+    } finally {
+      setRequestingReveal(false);
+    }
+  };
+
   useEffect(() => {
     const fetchCaseDetails = async () => {
       try {
         setLoading(true);
         setError(null);
-        const res = await fetch(`/api/lenders/case-details?refId=${encodeURIComponent(refId)}`);
+        const res = await fetch(`/api/lenders/invite/${encodeURIComponent(refId)}`);
         if (!res.ok) {
-          const errData = await res.json();
+          const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || "שגיאה בטעינת נתוני התיק");
         }
         const data: CaseDetails = await res.json();
@@ -84,16 +118,16 @@ export default function LenderPortal({ refId, onClose }: LenderPortalProps) {
         
         // Populate current response if already replied
         if (data.currentState) {
-          if (data.currentState.status === "offer_received") {
+          if (data.currentState.status === "OFFER_RECEIVED") {
             setDecision("offer");
             if (data.currentState.offer) {
               setOfferAmount(data.currentState.offer.amount);
               setOfferRate(data.currentState.offer.rate);
               setOfferYears(data.currentState.offer.years);
             }
-          } else if (data.currentState.status === "interested") {
+          } else if (data.currentState.status === "IN_REVIEW") {
             setDecision("interested");
-          } else if (data.currentState.status === "not_interested") {
+          } else if (data.currentState.status === "DECLINED") {
             setDecision("not_interested");
           }
           
@@ -118,21 +152,34 @@ export default function LenderPortal({ refId, onClose }: LenderPortalProps) {
 
     try {
       setSubmitting(true);
-      const res = await fetch("/api/lenders/simulated-reply", {
+      
+      let url = `/api/lenders/invite/${encodeURIComponent(refId)}/reply`;
+      let payload: any = {};
+      
+      if (decision === "offer") {
+        url = `/api/lenders/invite/${encodeURIComponent(refId)}/offer`;
+        payload = {
+          amount: offerAmount,
+          rate: offerRate,
+          years: offerYears,
+          notes: replyText.trim()
+        };
+      } else {
+        payload = {
+          decision: decision === "interested" ? "interested" : "declined",
+          message: replyText.trim()
+        };
+      }
+
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          clientRefId: refId,
-          decision,
-          replyText: replyText.trim(),
-          offerAmount: decision === "offer" ? offerAmount : undefined,
-          offerRate: decision === "offer" ? offerRate : undefined,
-          offerYears: decision === "offer" ? offerYears : undefined
-        })
+        body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
-        throw new Error("שגיאה בשמירת התגובה בשרת");
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "שגיאה בשמירת התגובה בשרת");
       }
 
       setSuccess(true);
@@ -288,6 +335,32 @@ export default function LenderPortal({ refId, onClose }: LenderPortalProps) {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 text-xs">
                 <div className="flex justify-between border-b border-slate-800/50 pb-2">
+                  <span className="text-slate-400 font-medium">שם הלווה:</span>
+                  <span className="text-slate-200 font-bold">{caseData.name || caseData.anonymizedName}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-800/50 pb-2">
+                  <span className="text-slate-400 font-medium">תעודת זהות:</span>
+                  <span className="font-mono text-slate-200 font-bold">{caseData.idNumber || caseData.anonymizedId}</span>
+                </div>
+                {caseData.phone && (
+                  <div className="flex justify-between border-b border-slate-800/50 pb-2">
+                    <span className="text-slate-400 font-medium">טלפון ליצירת קשר:</span>
+                    <span className="font-mono text-slate-200 font-bold">{caseData.phone}</span>
+                  </div>
+                )}
+                {caseData.email && (
+                  <div className="flex justify-between border-b border-slate-800/50 pb-2">
+                    <span className="text-slate-400 font-medium">דוא"ל:</span>
+                    <span className="font-mono text-slate-200 font-bold">{caseData.email}</span>
+                  </div>
+                )}
+                {caseData.address && (
+                  <div className="flex justify-between border-b border-slate-800/50 pb-2">
+                    <span className="text-slate-400 font-medium">כתובת מגורים:</span>
+                    <span className="text-slate-200 font-bold">{caseData.address}</span>
+                  </div>
+                )}
+                <div className="flex justify-between border-b border-slate-800/50 pb-2">
                   <span className="text-slate-400 font-medium">קוד פנייה אנונימי:</span>
                   <span className="font-mono text-slate-200 font-bold">{caseData.refId}</span>
                 </div>
@@ -305,11 +378,11 @@ export default function LenderPortal({ refId, onClose }: LenderPortalProps) {
                 </div>
                 <div className="flex justify-between border-b border-slate-800/50 pb-2">
                   <span className="text-slate-400 font-medium">כתובת הנכס לשעבוד:</span>
-                  <span className="text-slate-200 font-bold">{caseData.propertyCity} {caseData.propertyStreet}</span>
+                  <span className="text-slate-200 font-bold">{caseData.propertyCity} {caseData.propertyStreet || ""}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-800/50 pb-2">
-                  <span className="text-slate-400 font-medium">מצב תעסוקתי של הלווה:</span>
-                  <span className="text-slate-200 font-bold">{caseData.employmentType} ({caseData.workplace})</span>
+                  <span className="text-slate-400 font-medium">מצב תעסוקתי:</span>
+                  <span className="text-slate-200 font-bold">{caseData.employmentType} {caseData.workplace ? `(${caseData.workplace})` : ""}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-800/50 pb-2">
                   <span className="text-slate-400 font-medium">ותק מוכח:</span>
@@ -333,6 +406,42 @@ export default function LenderPortal({ refId, onClose }: LenderPortalProps) {
               )}
             </div>
 
+            {/* Reveal request block inside portal */}
+            {!caseData.name && (
+              <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl text-right">
+                <h3 className="text-sm font-bold text-white border-b border-slate-800 pb-3 flex items-center justify-between">
+                  <span>בקשת חשיפת זהות ומסמכי מקור</span>
+                  <ShieldCheck className="h-4.5 w-4.5 text-cyan-400" />
+                </h3>
+                {caseData.currentState?.status === "IDENTITY_REQUESTED" ? (
+                  <div className="p-4 bg-cyan-950/20 border border-cyan-800/30 rounded-xl text-center">
+                    <p className="text-xs text-cyan-300 font-bold">נשלחה בקשת חשיפת זהות - ממתין לאישור יועץ המשכנתאות</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3.5">
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      אם הנך מעוניין להמשיך בתיק זה ולבחון את מסמכי המקור המקוריים או לבצע אימות זהות (PII), באפשרותך לבקש חשיפת זהות מיועץ המשכנתאות המורשה.
+                    </p>
+                    <textarea
+                      rows={2}
+                      value={revealReason}
+                      onChange={(e) => setRevealReason(e.target.value)}
+                      placeholder="הזן את סיבת הבקשה (לדוגמה: צורך באימות תלושים מול תעודת זהות)"
+                      className="w-full p-3 bg-slate-950 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-cyan-500 resize-none text-right font-medium"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleRequestReveal}
+                      disabled={requestingReveal}
+                      className="w-full py-2 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-850 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <span>{requestingReveal ? "שולח בקשה..." : "שלח בקשת חשיפת זהות"}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Verification & Documents Checkbox list */}
             <div className="bg-slate-900/40 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
               <h3 className="text-sm font-bold text-white border-b border-slate-800 pb-3 flex items-center justify-between">
@@ -347,7 +456,20 @@ export default function LenderPortal({ refId, onClose }: LenderPortalProps) {
                       <div className="h-4 w-4 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[9px]">✓</div>
                       <span className="text-slate-300 font-semibold">{d.name}</span>
                     </div>
-                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/10 px-2 py-0.5 rounded-md">מאומת ומוכן להורדה</span>
+                    {caseData.name ? (
+                      <a
+                        href={`/api/documents/download-by-token?token=${encodeURIComponent(refId)}&docId=${d.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[10px] text-cyan-400 hover:text-cyan-300 font-bold bg-cyan-500/10 border border-cyan-500/20 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>הורד קובץ מקור</span>
+                      </a>
+                    ) : (
+                      <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/10 px-2 py-0.5 rounded-md">
+                        מאומת (לבקש חשיפה להורדה)
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

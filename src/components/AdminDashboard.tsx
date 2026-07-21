@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { Client, AdvisorProfile, Lender } from "../types";
 import { api } from "../utils/apiClient";
+import SystemSettingsSubView from "./SystemSettingsSubView";
 
 // Extends AdvisorProfile with backend ID and metadata
 interface SavedAdvisor extends AdvisorProfile {
@@ -37,14 +38,15 @@ interface AdminDashboardProps {
   clients: Client[];
   onRefreshClients: () => void;
   onBackToApp: () => void;
+  currentRole: string;
 }
 
-export default function AdminDashboard({ clients, onRefreshClients, onBackToApp }: AdminDashboardProps) {
+export default function AdminDashboard({ clients, onRefreshClients, onBackToApp, currentRole }: AdminDashboardProps) {
   const [advisors, setAdvisors] = useState<SavedAdvisor[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedAdvisorFilter, setSelectedAdvisorFilter] = useState<string>("all");
-  const [adminTab, setAdminTab] = useState<"advisors" | "clients" | "analytics" | "transmission" | "lenders">("advisors");
+  const [adminTab, setAdminTab] = useState<"advisors" | "clients" | "analytics" | "transmission" | "lenders" | "settings">("advisors");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Lenders State
@@ -470,6 +472,17 @@ export default function AdminDashboard({ clients, onRefreshClients, onBackToApp 
           {adminTab === "lenders" && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-400 rounded-full"></span>}
           <span>ניהול חברות מימון ({lenders.length})</span>
         </button>
+        {(currentRole === "SUPER_ADMIN" || currentRole === "ADMIN") && (
+          <button
+            onClick={() => { setAdminTab("settings"); }}
+            className={`pb-3 text-sm font-bold transition-all relative ${
+              adminTab === "settings" ? "text-red-400 font-extrabold" : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            {adminTab === "settings" && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-400 rounded-full"></span>}
+            <span>הגדרות מערכת ⚙️</span>
+          </button>
+        )}
       </div>
 
       {/* Content Canvas */}
@@ -905,130 +918,6 @@ export default function AdminDashboard({ clients, onRefreshClients, onBackToApp 
 
         return (
           <div className="space-y-8 animate-fade-in">
-            {/* Email Settings Form */}
-            <div className="bg-slate-900/40 border border-slate-800 p-6 rounded-2xl shadow-md space-y-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-red-500/10 text-red-400 rounded-xl">
-                  <Settings className="h-5 w-5" />
-                </div>
-                <div>
-                  <h4 className="text-lg font-bold text-white">הגדרות כתובות דוא"ל ושידור</h4>
-                  <p className="text-xs text-slate-400 mt-0.5">קבע את כתובת השרת השולח ממנו ייצאו הבקשות האנונימיות, ואת המיילים הישירים של חברות המימון.</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2 text-right">
-                <div className="space-y-2 col-span-1 md:col-span-2">
-                  <label className="block text-xs font-bold text-slate-300">כתובת מייל גלובלית לשליחת בקשות (Sender Address)</label>
-                  <div className="relative">
-                    <Mail className="absolute right-3 top-2.5 h-4 w-4 text-slate-500" />
-                    <input
-                      type="email"
-                      value={settings.systemSenderEmail}
-                      onChange={(e) => setSettings({ ...settings, systemSenderEmail: e.target.value })}
-                      className="w-full pl-3 pr-10 py-2.5 bg-slate-950/80 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-red-500 text-right"
-                      placeholder="requests@syncash-mail.co.il"
-                    />
-                  </div>
-                  <p className="text-[10px] text-slate-500">כלל יועצי המשכנתאות ישדרו מאחורי הקלעים באמצעות כתובת אנונימית זו.</p>
-                </div>
-
-                <div className="space-y-2 col-span-1">
-                  <label className="block text-xs font-bold text-slate-300">סיסמת אפליקציה לשליחת מייל (Gmail App Password / SMTP Pass)</label>
-                  <input
-                    type="password"
-                    value={settings.smtpPassword || ""}
-                    onChange={(e) => setSettings({ ...settings, smtpPassword: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-slate-950/80 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-red-500 text-right font-mono"
-                    placeholder="הזן סיסמת אפליקציה של גוגל"
-                  />
-                  <p className="text-[10px] text-slate-500">לשליחה מחשבון ה-Gmail האישי שלך (כמו kiss.my.twins@gmail.com), עליך לייצר בגוגל 'סיסמת אפליקציה' (App Password) בת 16 תווים ללא רווחים ולהזין אותה כאן.</p>
-                </div>
-
-                <div className="space-y-2 col-span-1">
-                  <label className="block text-xs font-bold text-slate-300">שרת יוצא (SMTP Host)</label>
-                  <input
-                    type="text"
-                    value={settings.smtpHost || "smtp.gmail.com"}
-                    onChange={(e) => setSettings({ ...settings, smtpHost: e.target.value })}
-                    className="w-full px-3 py-2.5 bg-slate-950/80 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-red-500 text-left font-mono"
-                    placeholder="smtp.gmail.com"
-                  />
-                  <p className="text-[10px] text-slate-500">ברירת המחדל היא smtp.gmail.com עבור Gmail.</p>
-                </div>
-
-                <div className="space-y-2 col-span-1">
-                  <label className="block text-xs font-bold text-slate-300">פורט שרת יוצא (SMTP Port)</label>
-                  <input
-                    type="number"
-                    value={settings.smtpPort || 465}
-                    onChange={(e) => setSettings({ ...settings, smtpPort: parseInt(e.target.value, 10) || 465 })}
-                    className="w-full px-3 py-2.5 bg-slate-950/80 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-red-500 text-left font-mono"
-                    placeholder="465"
-                  />
-                  <p className="text-[10px] text-slate-500">מומלץ 465 עבור חיבור מאובטח (SSL) או 587 (TLS).</p>
-                </div>
-
-                <div className="space-y-2 col-span-1 flex items-center pt-6">
-                  <label className="flex items-center gap-2 text-xs font-bold text-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={settings.smtpSecure !== false}
-                      onChange={(e) => setSettings({ ...settings, smtpSecure: e.target.checked })}
-                      className="rounded border-slate-800 text-red-500 focus:ring-red-500 h-4 w-4 bg-slate-950"
-                    />
-                    חיבור מאובטח (SSL / TLS)
-                  </label>
-                </div>
-
-                <div className="col-span-1 md:col-span-2 border-t border-slate-800/80 my-2 pt-4">
-                  <h5 className="text-xs font-bold text-slate-300 mb-3">כתובות דואר ייעודיות לחברות המימון החוץ-בנקאיות</h5>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {Object.keys(settings.lenderEmails).map((lenderId) => {
-                      const lenderObj = lenders.find((l) => l.id === lenderId);
-                      const displayName = lenderObj ? `${lenderObj.name} (${lenderId})` : lenderId;
-                      return (
-                        <div key={lenderId} className="space-y-1">
-                          <label className="text-[11px] font-bold text-slate-400">{displayName}</label>
-                          <input
-                            type="email"
-                            value={settings.lenderEmails[lenderId]}
-                            onChange={(e) => {
-                              const updatedEmails = { ...settings.lenderEmails, [lenderId]: e.target.value };
-                              setSettings({ ...settings, lenderEmails: updatedEmails });
-                            }}
-                            className="w-full px-3 py-2 bg-slate-950/80 border border-slate-800 rounded-lg text-xs text-slate-200 outline-none focus:ring-1 focus:ring-red-500 text-right"
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-start">
-                <button
-                  disabled={savingSettings}
-                  onClick={async () => {
-                    try {
-                      setSavingSettings(true);
-                      await api.saveAdminSettings(settings);
-                      setSuccessMessage("הגדרות הדואר נשמרו בהצלחה במערכת");
-                      setTimeout(() => setSuccessMessage(null), 3000);
-                    } catch (err) {
-                      console.error(err);
-                      alert("שגיאה בשמירת ההגדרות");
-                    } finally {
-                      setSavingSettings(false);
-                    }
-                  }}
-                  className="px-5 py-2.5 bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer disabled:opacity-50"
-                >
-                  {savingSettings ? "שומר..." : "שמור הגדרות שידור"}
-                </button>
-              </div>
-            </div>
-
             {/* SIMULATED INBOUND MAILBOX WEBHOOK */}
             <div className="bg-slate-900/40 border border-slate-800 p-6 rounded-2xl shadow-md space-y-6">
               <div className="flex items-center justify-between">
@@ -1370,6 +1259,10 @@ export default function AdminDashboard({ clients, onRefreshClients, onBackToApp 
             </div>
           </div>
         </div>
+      )}
+
+      {adminTab === "settings" && (
+        <SystemSettingsSubView currentRole={currentRole} />
       )}
 
       {/* Client Edit Modal Overlay */}

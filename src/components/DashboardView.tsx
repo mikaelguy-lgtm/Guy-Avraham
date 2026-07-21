@@ -13,7 +13,8 @@ import {
   MessageSquare,
   AlertCircle,
   Pencil,
-  X
+  X,
+  ShieldCheck
 } from "lucide-react";
 
 interface DashboardViewProps {
@@ -38,6 +39,52 @@ export default function DashboardView({
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiAnswers, setAiAnswers] = useState<{ [clientId: string]: string }>({});
   const [aiLoading, setAiLoading] = useState(false);
+
+  // Identity Reveal Requests State
+  const [revealRequests, setRevealRequests] = useState<any[]>([]);
+  const [loadingRequests, setLoadingRequests] = useState(false);
+
+  const fetchRequests = async () => {
+    try {
+      setLoadingRequests(true);
+      const res = await fetch("/api/advisor/reveal-requests");
+      if (res.ok) {
+        const data = await res.json();
+        setRevealRequests(data);
+      }
+    } catch (err) {
+      console.error("Failed to load reveal requests", err);
+    } finally {
+      setLoadingRequests(false);
+    }
+  };
+
+  const handleRespondRequest = async (requestId: number, decision: "APPROVED" | "REJECTED") => {
+    try {
+      const res = await fetch(`/api/advisor/reveal-requests/${requestId}/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision })
+      });
+      if (res.ok) {
+        await fetchRequests();
+        if (onRefreshClients) {
+          onRefreshClients();
+        }
+        alert(decision === "APPROVED" ? "חשיפת הזהות אושרה בהצלחה!" : "בקשת החשיפה נדחתה.");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || "שגיאה במתן החלטה לבקשה");
+      }
+    } catch (err) {
+      console.error("Error responding to reveal request:", err);
+      alert("שגיאה במתן החלטה");
+    }
+  };
+
+  React.useEffect(() => {
+    fetchRequests();
+  }, [clients]);
 
   // Filter clients based on search
   const filteredClients = clients.filter(c => 
@@ -451,101 +498,158 @@ export default function DashboardView({
           </div>
         </div>
 
-        {/* AI Mortgage Consultant Section */}
-        <div className="bg-slate-900/30 backdrop-blur-md border border-slate-800/80 rounded-xl shadow-lg p-6 flex flex-col justify-between">
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 text-cyan-400">
-              <Sparkles className="h-5 w-5 text-amber-400 fill-amber-500/30 animate-pulse" />
-              <h4 className="text-lg font-bold text-white">היועץ הפיננסי מבוסס AI</h4>
-            </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              בחר תיק לקוח וקבל ייעוץ אסטרטגי לגבי סיכויי הגיוס, אסטרטגיית חיתום ואיזו חברה חוץ-בנקאית הכי מתאימה עבורו.
-            </p>
-
-            <div className="space-y-1.5">
-              <label className="block text-xs font-bold text-slate-300">בחר לקוח לניתוח</label>
-              <select 
-                value={aiSelectedClient}
-                onChange={(e) => setAiSelectedClient(e.target.value)}
-                className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
-              >
-                <option value="" className="bg-slate-950">-- בחר לקוח --</option>
-                {clients.map(c => (
-                  <option key={c.id} value={c.id} className="bg-slate-950">{c.name} ({c.employmentType === "self-employed" ? "עצמאי" : "שכיר"})</option>
-                ))}
-              </select>
-            </div>
-
-            {selectedClientForAi && (
-              <div className="p-3 bg-slate-950/60 border border-slate-800/60 rounded-lg text-xs space-y-1.5 text-slate-300">
-                <p><span className="font-bold text-slate-400">לקוח:</span> {selectedClientForAi.name}</p>
-                <p><span className="font-bold text-slate-400">עסקה:</span> {selectedClientForAi.dealType}</p>
-                <p><span className="font-bold text-slate-400">שיעור מימון:</span> {selectedClientForAi.financingPercentage}%</p>
-                <p><span className="font-bold text-slate-400">הכנסה חודשית:</span> {Number(selectedClientForAi.income).toLocaleString()} ₪</p>
+        <div className="space-y-6 lg:col-span-1">
+          {/* AI Mortgage Consultant Section */}
+          <div className="bg-slate-900/30 backdrop-blur-md border border-slate-800/80 rounded-xl shadow-lg p-6 flex flex-col justify-between">
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-cyan-400">
+                <Sparkles className="h-5 w-5 text-amber-400 fill-amber-500/30 animate-pulse" />
+                <h4 className="text-lg font-bold text-white font-sans">היועץ הפיננסי מבוסס AI</h4>
               </div>
-            )}
+              <p className="text-xs text-slate-400 leading-relaxed">
+                בחר תיק לקוח וקבל ייעוץ אסטרטגי לגבי סיכויי הגיוס, אסטרטגיית חיתום ואיזו חברה חוץ-בנקאית הכי מתאימה עבורו.
+              </p>
 
-            {/* Answer Display */}
-            <div className="bg-slate-950/60 border border-slate-800/60 rounded-lg p-4 min-h-[140px] max-h-[220px] overflow-y-auto text-xs text-slate-300 leading-relaxed font-medium">
-              {aiLoading ? (
-                <div className="h-full flex flex-col items-center justify-center space-y-2 py-8">
-                  <div className="h-5 w-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
-                  <p className="text-slate-400 animate-pulse text-center">מנתח את תיק הלקוח ומגבש המלצה...</p>
-                </div>
-              ) : aiAnswers[aiSelectedClient] ? (
-                <div className="space-y-2 whitespace-pre-line">
-                  <p className="font-bold text-cyan-400 flex items-center gap-1.5">
-                    <MessageSquare className="h-4 w-4 text-cyan-400" />
-                    הניתוח הפיננסי של SynCash AI:
-                  </p>
-                  <p className="text-slate-200">{aiAnswers[aiSelectedClient]}</p>
-                </div>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 py-10">
-                  <Sparkles className="h-8 w-8 text-slate-700 mb-2" />
-                  <p className="font-bold">הניתוח יוצג כאן</p>
-                  <p className="text-[10px] text-slate-600 mt-1">שאל שאלה או בחר אחת מהשאלות המוצעות למטה.</p>
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-300">בחר לקוח לניתוח</label>
+                <select 
+                  value={aiSelectedClient}
+                  onChange={(e) => setAiSelectedClient(e.target.value)}
+                  className="w-full rounded-lg bg-slate-950/80 border border-slate-800 py-2.5 px-3 text-sm text-slate-200 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all"
+                >
+                  <option value="" className="bg-slate-950">-- בחר לקוח --</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id} className="bg-slate-950">{c.name} ({c.employmentType === "self-employed" ? "עצמאי" : "שכיר"})</option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedClientForAi && (
+                <div className="p-3 bg-slate-950/60 border border-slate-800/60 rounded-lg text-xs space-y-1.5 text-slate-300">
+                  <p><span className="font-bold text-slate-400">לקוח:</span> {selectedClientForAi.name}</p>
+                  <p><span className="font-bold text-slate-400">עסקה:</span> {selectedClientForAi.dealType}</p>
+                  <p><span className="font-bold text-slate-400">שיעור מימון:</span> {selectedClientForAi.financingPercentage}%</p>
+                  <p><span className="font-bold text-slate-400">הכנסה חודשית:</span> {Number(selectedClientForAi.income).toLocaleString()} ₪</p>
                 </div>
               )}
+
+              {/* Answer Display */}
+              <div className="bg-slate-950/60 border border-slate-800/60 rounded-lg p-4 min-h-[140px] max-h-[220px] overflow-y-auto text-xs text-slate-300 leading-relaxed font-medium">
+                {aiLoading ? (
+                  <div className="h-full flex flex-col items-center justify-center space-y-2 py-8">
+                    <div className="h-5 w-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+                    <p className="text-slate-400 animate-pulse text-center">מנתח את תיק הלקוח ומגבש המלצה...</p>
+                  </div>
+                ) : aiAnswers[aiSelectedClient] ? (
+                  <div className="space-y-2 whitespace-pre-line">
+                    <p className="font-bold text-cyan-400 flex items-center gap-1.5">
+                      <MessageSquare className="h-4 w-4 text-cyan-400" />
+                      הניתוח הפיננסי של SynCash AI:
+                    </p>
+                    <p className="text-slate-200">{aiAnswers[aiSelectedClient]}</p>
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 py-10">
+                    <Sparkles className="h-8 w-8 text-slate-700 mb-2" />
+                    <p className="font-bold">הניתוח יוצג כאן</p>
+                    <p className="text-[10px] text-slate-600 mt-1">שאל שאלה או בחר אחת מהשאלות המוצעות למטה.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3 mt-4 pt-4 border-t border-slate-800/80">
+              {/* Suggested prompts */}
+              {selectedClientForAi && !aiLoading && (
+                <div className="flex flex-wrap gap-1.5 font-sans">
+                  <button 
+                    onClick={() => handleAskAi("אילו חברות חוץ-בנקאיות הכי מתאימות לתיק הזה ולמה?")}
+                    className="px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-[10px] font-bold text-slate-300 border border-slate-700/40 text-right transition-colors cursor-pointer"
+                  >
+                    🎯 אילו חברות מימון הכי מתאימות?
+                  </button>
+                  <button 
+                    onClick={() => handleAskAi("מהם האתגרים או נקודות התורפה בתיק זה ואיך כדאי להציג אותו לחברות?")}
+                    className="px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-[10px] font-bold text-slate-300 border border-slate-700/40 text-right transition-colors cursor-pointer"
+                  >
+                    ⚡ מהם האתגרים בתיק?
+                  </button>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  placeholder="שאל את ה-AI על התיק..."
+                  value={aiQuestion}
+                  onChange={(e) => setAiQuestion(e.target.value)}
+                  disabled={!aiSelectedClient || aiLoading}
+                  className="flex-1 rounded-lg bg-slate-950/80 border border-slate-800 py-2 px-3 text-xs text-slate-200 placeholder-slate-500 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none disabled:bg-slate-950/20 disabled:text-slate-600 transition-all font-medium"
+                />
+                <button
+                  onClick={() => handleAskAi()}
+                  disabled={!aiQuestion || !aiSelectedClient || aiLoading}
+                  className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold disabled:bg-slate-800 disabled:text-slate-600 transition-colors shadow-md cursor-pointer"
+                >
+                  שאל
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="space-y-3 mt-4 pt-4 border-t border-slate-800/80">
-            {/* Suggested prompts */}
-            {selectedClientForAi && !aiLoading && (
-              <div className="flex flex-wrap gap-1.5">
-                <button 
-                  onClick={() => handleAskAi("אילו חברות חוץ-בנקאיות הכי מתאימות לתיק הזה ולמה?")}
-                  className="px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-[10px] font-bold text-slate-300 border border-slate-700/40 text-right transition-colors"
-                >
-                  🎯 אילו חברות מימון הכי מתאימות?
-                </button>
-                <button 
-                  onClick={() => handleAskAi("מהם האתגרים או נקודות התורפה בתיק זה ואיך כדאי להציג אותו לחברות?")}
-                  className="px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-[10px] font-bold text-slate-300 border border-slate-700/40 text-right transition-colors"
-                >
-                  ⚡ מהם האתגרים בתיק?
-                </button>
+          {/* Pending Identity Reveal Requests Section */}
+          <div className="bg-slate-900/30 backdrop-blur-md border border-slate-800/80 rounded-xl shadow-lg p-6 space-y-4 text-right">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+              <span className="text-[10px] bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 font-bold px-2 py-0.5 rounded-full font-mono">
+                {revealRequests.length} ממתינות
+              </span>
+              <div className="flex items-center gap-2 text-cyan-400">
+                <h4 className="text-sm font-bold text-white">בקשות חשיפת זהות</h4>
+                <ShieldCheck className="h-4.5 w-4.5 text-cyan-400" />
+              </div>
+            </div>
+
+            {revealRequests.length === 0 ? (
+              <div className="py-6 text-center text-slate-500 text-xs">
+                <CheckCircle2 className="h-6 w-6 text-slate-850 mx-auto mb-2" />
+                <p className="font-bold text-slate-400">אין בקשות חשיפה ממתינות</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">כאשר גורם מימון יבקש חשיפה לתיק אנונימי, היא תופיע כאן.</p>
+              </div>
+            ) : (
+              <div className="space-y-3.5 max-h-[300px] overflow-y-auto">
+                {revealRequests.map((reqItem) => (
+                  <div key={reqItem.id} className="p-3 bg-slate-950/40 border border-slate-850 rounded-xl space-y-2 text-xs">
+                    <div className="flex justify-between items-start">
+                      <span className="text-[10px] text-slate-400">{new Date(reqItem.createdAt).toLocaleDateString("he-IL")}</span>
+                      <p className="font-extrabold text-white text-right">{reqItem.clientName}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[11px] text-slate-400">
+                        <span className="font-semibold text-cyan-400">גוף מגיש:</span> {reqItem.lenderName}
+                      </p>
+                      <p className="text-[11px] text-slate-300 leading-relaxed bg-slate-950/60 p-2 rounded border border-slate-850/60 font-medium">
+                        <span className="font-semibold text-slate-400 block mb-0.5 text-[10px]">סיבת הבקשה:</span>
+                        {reqItem.reason}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        onClick={() => handleRespondRequest(reqItem.id, "REJECTED")}
+                        className="flex-1 py-1.5 bg-slate-900 hover:bg-red-950/30 border border-slate-800 hover:border-red-900/40 text-slate-400 hover:text-red-400 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                      >
+                        דחה בקשה
+                      </button>
+                      <button
+                        onClick={() => handleRespondRequest(reqItem.id, "APPROVED")}
+                        className="flex-1 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                      >
+                        אשר חשיפה
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
-
-            <div className="flex gap-2">
-              <input 
-                type="text" 
-                placeholder="שאל את ה-AI על התיק..."
-                value={aiQuestion}
-                onChange={(e) => setAiQuestion(e.target.value)}
-                disabled={!aiSelectedClient || aiLoading}
-                className="flex-1 rounded-lg bg-slate-950/80 border border-slate-800 py-2 px-3 text-xs text-slate-200 placeholder-slate-500 focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 outline-none disabled:bg-slate-950/20 disabled:text-slate-600 transition-all"
-              />
-              <button
-                onClick={() => handleAskAi()}
-                disabled={!aiQuestion || !aiSelectedClient || aiLoading}
-                className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold disabled:bg-slate-800 disabled:text-slate-600 transition-colors shadow-md"
-              >
-                שאל
-              </button>
-            </div>
           </div>
         </div>
       </div>

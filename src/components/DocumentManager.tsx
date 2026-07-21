@@ -47,36 +47,84 @@ export default function DocumentManager({
   const [previewDoc, setPreviewDoc] = useState<ClientDocument | null>(null);
   const [downloadSuccess, setDownloadSuccess] = useState<boolean>(false);
 
+  const [realFileUrl, setRealFileUrl] = useState<string | null>(null);
+  const [realFileType, setRealFileType] = useState<string>("");
+  const [loadingFile, setLoadingFile] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (!previewDoc || !selectedClientId) {
+      if (realFileUrl) {
+        URL.revokeObjectURL(realFileUrl);
+      }
+      setRealFileUrl(null);
+      setRealFileType("");
+      setLoadingFile(false);
+      return;
+    }
+
+    let isMounted = true;
+    setLoadingFile(true);
+
+    const loadDocBlob = async () => {
+      try {
+        const blob = await api.downloadDocBlob(selectedClientId, previewDoc.id);
+        if (!isMounted) return;
+
+        const objectUrl = URL.createObjectURL(blob);
+        setRealFileUrl(objectUrl);
+        setRealFileType(blob.type);
+      } catch (err) {
+        console.error("Failed to load secure document blob:", err);
+      } finally {
+        if (isMounted) {
+          setLoadingFile(false);
+        }
+      }
+    };
+
+    loadDocBlob();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [previewDoc, selectedClientId]);
+
   const selectedClient = clients.find(c => c.id === selectedClientId);
 
-  const handleSimulateUpload = async (docId: string, name?: string, fileName?: string, fileObj?: File) => {
+  const handleUploadDocument = async (docId: string, name?: string, fileName?: string, fileObj?: File) => {
     if (!selectedClientId) return;
+    if (!fileObj) {
+      alert("שגיאה: לא נבחר קובץ פיזי להעלאה.");
+      return;
+    }
 
     setUploadingDocId(docId);
     
-    // Create Object URL for client-side high-fidelity actual file preview
-    if (fileObj) {
+    try {
+      // Create Object URL for instant client-side actual file preview
       const fileUrl = URL.createObjectURL(fileObj);
-      setUploadedFileUrls(prev => ({
-        ...prev,
-        [docId]: { url: fileUrl, type: fileObj.type, name: fileObj.name }
-      }));
+      setUploadedFileUrls(prev => {
+        if (prev[docId]) {
+          URL.revokeObjectURL(prev[docId].url);
+        }
+        return {
+          ...prev,
+          [docId]: { url: fileUrl, type: fileObj.type, name: fileObj.name }
+        };
+      });
+
+      const finalName = name || "מסמך";
+
+      await api.uploadDoc(selectedClientId, docId, finalName, fileObj);
+      onRefreshClients(true);
+      setCustomDocName("");
+    } catch (error) {
+      console.error("Error uploading document:", error);
+      alert("העלאת המסמך נכשלה. נא לנסות שנית.");
+    } finally {
+      setUploadingDocId(null);
+      setActiveDocToUpload(null);
     }
-    
-    // Simulate real delay for visual effect
-    setTimeout(async () => {
-      try {
-        const displayName = fileName ? `${name || "מסמך"} (${fileName})` : name;
-        await api.uploadDoc(selectedClientId, docId, displayName);
-        onRefreshClients(true);
-        setCustomDocName("");
-      } catch (error) {
-        console.error("Error uploading document", error);
-      } finally {
-        setUploadingDocId(null);
-        setActiveDocToUpload(null);
-      }
-    }, 1200);
   };
 
   const handleDeleteDoc = async (docId: string) => {
@@ -124,7 +172,7 @@ export default function DocumentManager({
         setIsCustomSlot(true);
       }
     } else {
-      handleSimulateUpload(activeDocToUpload.id, activeDocToUpload.name, file.name, file);
+      handleUploadDocument(activeDocToUpload.id, activeDocToUpload.name, file.name, file);
     }
   };
 
@@ -141,7 +189,7 @@ export default function DocumentManager({
       ? customSlotName.trim() 
       : (selectedClient.documents.find(d => d.id === selectedSlotId)?.name || "מסמך שהועלה");
 
-    handleSimulateUpload(targetId, targetName, pendingFile.name, pendingFile);
+    handleUploadDocument(targetId, targetName, pendingFile.name, pendingFile);
 
     // Reset mapping state
     setPendingFile(null);
@@ -152,34 +200,46 @@ export default function DocumentManager({
 
   // Render highly realistic mock document preview on the screen based on content type
   const renderMockDocumentContent = (doc: ClientDocument, client: Client) => {
-    // If there is an actual client-side uploaded file URL, render it directly!
-    const customFile = uploadedFileUrls[doc.id];
-    if (customFile) {
-      if (customFile.type.startsWith("image/")) {
+    if (loadingFile) {
+      return (
+        <div className="flex flex-col items-center justify-center py-24 space-y-4 text-center">
+          <div className="h-10 w-10 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-sm font-bold text-slate-400 animate-pulse">מוריד ומאמת קובץ מאובטח משרתי S3...</p>
+        </div>
+      );
+    }
+
+    // If there is an actual client-side uploaded / downloaded S3 file, render it directly!
+    const previewUrl = realFileUrl || uploadedFileUrls[doc.id]?.url;
+    const previewType = realFileType || uploadedFileUrls[doc.id]?.type || "application/pdf";
+    const previewName = uploadedFileUrls[doc.id]?.name || doc.name;
+
+    if (previewUrl) {
+      if (previewType.startsWith("image/")) {
         return (
           <div className="space-y-4 text-center">
             <div className="border border-slate-700 rounded-xl overflow-hidden max-h-[420px] flex items-center justify-center bg-slate-950">
               <img 
-                src={customFile.url} 
+                src={previewUrl} 
                 alt={doc.name} 
                 className="max-h-[420px] max-w-full object-contain"
                 referrerPolicy="no-referrer"
               />
             </div>
-            <p className="text-xs text-slate-400 font-medium">תצוגה מקדימה של הקובץ שהועלה: <span className="font-bold text-slate-300">{customFile.name}</span></p>
+            <p className="text-xs text-slate-400 font-medium">תצוגה מקדימה של הקובץ מהאחסון המאובטח: <span className="font-bold text-slate-300">{previewName}</span></p>
           </div>
         );
-      } else if (customFile.type === "application/pdf") {
+      } else if (previewType === "application/pdf" || previewType.includes("pdf")) {
         return (
           <div className="space-y-4">
             <div className="border border-slate-700 rounded-xl overflow-hidden h-[450px]">
               <iframe 
-                src={customFile.url} 
+                src={previewUrl} 
                 title={doc.name} 
                 className="w-full h-full border-none"
               />
             </div>
-            <p className="text-xs text-slate-400 font-medium text-center font-sans">תצוגה מקדימה של ה-PDF שהועלה: <span className="font-bold text-slate-300">{customFile.name}</span></p>
+            <p className="text-xs text-slate-400 font-medium text-center font-sans">תצוגה מקדימה של ה-PDF מהאחסון המאובטח: <span className="font-bold text-slate-300">{previewName}</span></p>
           </div>
         );
       } else {
@@ -190,8 +250,8 @@ export default function DocumentManager({
               <FileText className="h-8 w-8" />
             </div>
             <div className="space-y-1">
-              <h4 className="font-extrabold text-slate-100 text-sm sm:text-base">הקובץ {customFile.name} הועלה בהצלחה!</h4>
-              <p className="text-xs text-slate-400">פורמט קובץ: <span className="font-bold">{customFile.type || "מסמך"}</span></p>
+              <h4 className="font-extrabold text-slate-100 text-sm sm:text-base">הקובץ {previewName} זמין להורדה!</h4>
+              <p className="text-xs text-slate-400">פורמט קובץ: <span className="font-bold">{previewType || "מסמך"}</span></p>
             </div>
             <div className="p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-xl max-w-sm mx-auto">
               <p className="text-xs text-emerald-400 font-bold">סריקת אבטחה הושלמה בהצלחה ✓ קובץ תקין ומוכן לשידור לקרנות המימון.</p>
@@ -637,7 +697,7 @@ export default function DocumentManager({
                     className="w-full sm:w-auto rounded-xl bg-slate-950/80 border border-slate-800 px-3.5 py-2 text-xs text-slate-200 placeholder-slate-600 focus:ring-1 focus:ring-cyan-500 outline-none text-right"
                   />
                   <button 
-                    onClick={() => handleSimulateUpload("custom-" + Date.now(), customDocName)}
+                    onClick={() => triggerFileSelection("custom-" + Date.now(), customDocName)}
                     disabled={!customDocName || uploadingDocId !== null}
                     className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all disabled:bg-slate-800 disabled:text-slate-600 disabled:shadow-none shadow-[0_4px_12px_rgba(8,145,178,0.15)] shrink-0"
                   >
@@ -974,18 +1034,28 @@ export default function DocumentManager({
                       link.click();
                       document.body.removeChild(link);
                     } else {
-                      const blob = new Blob([`Secure document mockup for ${previewDoc.name} - SynCash Israel`], { type: "text/plain" });
-                      const url = URL.createObjectURL(blob);
-                      const link = document.createElement("a");
-                      link.href = url;
-                      link.download = `${previewDoc.name}.txt`;
-                      document.body.appendChild(link);
-                      link.click();
-                      document.body.removeChild(link);
-                      URL.revokeObjectURL(url);
+                      setLoadingFile(true);
+                      api.downloadDocBlob(selectedClientId, previewDoc.id)
+                        .then((blob) => {
+                          const url = URL.createObjectURL(blob);
+                          const link = document.createElement("a");
+                          link.href = url;
+                          link.download = `${previewDoc.name || 'document'}.${blob.type.split('/')[1] || 'pdf'}`;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                          URL.revokeObjectURL(url);
+                          setDownloadSuccess(true);
+                          setTimeout(() => setDownloadSuccess(false), 3000);
+                        })
+                        .catch((err) => {
+                          console.error("Error downloading file:", err);
+                          alert("שגיאה בהורדת הקובץ: אין הרשאה או שהקובץ אינו קיים במערכת.");
+                        })
+                        .finally(() => {
+                          setLoadingFile(false);
+                        });
                     }
-                    setDownloadSuccess(true);
-                    setTimeout(() => setDownloadSuccess(false), 3000);
                   }}
                   className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                     downloadSuccess 

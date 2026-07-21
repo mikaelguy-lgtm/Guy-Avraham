@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { Routes, Route, useParams } from "react-router-dom";
 import { Client, AdvisorProfile } from "./types";
 import Sidebar from "./components/Sidebar";
 import DashboardView from "./components/DashboardView";
@@ -11,9 +12,13 @@ import AdminDashboard from "./components/AdminDashboard";
 import SynCashLogo from "./components/SynCashLogo";
 import LenderPortal from "./components/LenderPortal";
 import { api } from "./utils/apiClient";
+import { auth } from "./lib/firebase";
 import { Search, Bell, HelpCircle, Settings as SettingsIcon, Menu } from "lucide-react";
 
-export default function App() {
+function MainAppContent() {
+  const [authState, setAuthState] = useState<"INITIALIZING" | "AUTHENTICATED" | "UNAUTHENTICATED" | "DISABLED" | "ERROR">("INITIALIZING");
+  const [loggedInAdvisor, setLoggedInAdvisor] = useState<(AdvisorProfile & { id: string; isAdmin?: boolean }) | null>(null);
+  const [authErrorMessage, setAuthErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [clients, setClients] = useState<Client[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | undefined>(undefined);
@@ -21,24 +26,7 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [uploadedFileUrls, setUploadedFileUrls] = useState<Record<string, { url: string; type: string; name: string }>>({});
 
-  // Check if there is a query parameter for lender decision in the URL
-  const [lenderRefId, setLenderRefId] = useState<string | null>(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("refId") || params.get("lenderRefId");
-  });
-
-  // Loaded logged-in advisor session from localStorage
-  const [loggedInAdvisor, setLoggedInAdvisor] = useState<(AdvisorProfile & { id: string; isAdmin?: boolean }) | null>(() => {
-    const saved = localStorage.getItem("advisor_session");
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error("Failed to parse advisor session:", e);
-      }
-    }
-    return null;
-  });
+  // Lender invite state handled separately in route wrapper
 
   // Fetch clients from our unified API
   const fetchClients = async (silent = false) => {
@@ -54,10 +42,71 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (loggedInAdvisor) {
+    const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
+      if (!firebaseUser) {
+        setLoggedInAdvisor(null);
+        setAuthState("UNAUTHENTICATED");
+        setLoading(false);
+      } else {
+        try {
+          // Fetch authenticated profile from DB
+          const res = await api.getMe();
+          if (res) {
+            if (res.status === "ACTIVE") {
+              const profile = {
+                id: String(res.id),
+                name: res.firstName || res.email.split("@")[0],
+                role: res.role === "SUPER_ADMIN" ? "סופר אדמין" : (res.role === "LENDER_UNDERWRITER" ? "חתם" : "יועץ משכנתאות"),
+                isAdmin: res.role === "SUPER_ADMIN" || res.role === "ADMIN",
+                phone: res.phone,
+                company: res.businessName || "",
+                licenseNumber: res.licenseNumber || "",
+                disableGemini: res.disableGemini || false
+              };
+              setLoggedInAdvisor(profile);
+              setAuthState("AUTHENTICATED");
+            } else {
+              setLoggedInAdvisor(null);
+              setAuthErrorMessage(
+                res.status === "SUSPENDED" 
+                  ? "חשבונך מושעה. אנא פנה למנהל המערכת." 
+                  : "חשבונך מבוטל או נמחק."
+              );
+              setAuthState("DISABLED");
+            }
+          } else {
+            setLoggedInAdvisor(null);
+            setAuthState("UNAUTHENTICATED");
+          }
+        } catch (err: any) {
+          console.error("Authentication check failed:", err);
+          setLoggedInAdvisor(null);
+          setAuthErrorMessage(err.message || "שגיאה באימות מול השרת");
+          setAuthState("ERROR");
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+
+    // Session expiration listener
+    const handleExpired = () => {
+      setLoggedInAdvisor(null);
+      setAuthState("UNAUTHENTICATED");
+    };
+    window.addEventListener("syncash-session-expired", handleExpired);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener("syncash-session-expired", handleExpired);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authState === "AUTHENTICATED" && loggedInAdvisor) {
       fetchClients();
     }
-  }, [loggedInAdvisor]);
+  }, [authState, loggedInAdvisor]);
 
   const handleSelectClientFromDashboard = (client: Client, tab: string) => {
     setSelectedClientId(client.id);
@@ -79,47 +128,116 @@ export default function App() {
         const savedProfile = await api.updateAdvisor(loggedInAdvisor.id, updated);
         const newProfile = { ...loggedInAdvisor, ...savedProfile };
         setLoggedInAdvisor(newProfile);
-        localStorage.setItem("advisor_session", JSON.stringify(newProfile));
       } catch (err) {
         console.error("Failed to update profile on backend:", err);
-        // Fallback to local storage if API call fails
         const newProfile = { ...loggedInAdvisor, ...updated };
         setLoggedInAdvisor(newProfile);
-        localStorage.setItem("advisor_session", JSON.stringify(newProfile));
       }
     }
   };
 
   const handleLogout = () => {
+    api.logout().catch(err => console.error("Firebase logout failed:", err));
     setLoggedInAdvisor(null);
-    localStorage.removeItem("advisor_session");
+    setAuthState("UNAUTHENTICATED");
     setActiveTab("dashboard");
   };
 
-  // If a lender reference code is present in URL, render the secure public Lender Portal directly!
-  if (lenderRefId) {
+  // Legacy lender ref ID conditional render removed
+
+  // Handle various states of authentication
+  if (authState === "INITIALIZING" || (authState === "AUTHENTICATED" && loading && !loggedInAdvisor)) {
     return (
-      <LenderPortal 
-        refId={lenderRefId} 
-        onClose={() => {
-          // Clean up URL query parameters
-          const url = new URL(window.location.href);
-          url.searchParams.delete("refId");
-          url.searchParams.delete("lenderRefId");
-          window.history.replaceState({}, document.title, url.toString());
-          setLenderRefId(null);
-        }} 
-      />
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6 py-16" dir="rtl">
+        <SynCashLogo size="md" showSubtitle={true} showText={true} className="animate-pulse" />
+        <div className="flex items-center gap-2">
+          <div className="h-4 w-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-xs text-slate-400 font-bold tracking-wider">מאתחל את מערכת האבטחה של SynCash...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === "DISABLED") {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center" dir="rtl">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-md w-full space-y-6">
+          <div className="h-16 w-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto">
+            <span className="text-2xl font-bold">✕</span>
+          </div>
+          <h2 className="text-xl font-bold text-white">גישת החשבון נחסמה</h2>
+          <p className="text-xs text-slate-400 leading-relaxed">{authErrorMessage || "חשבונך מושעה או מבוטל במערכת. אנא פנה לתמיכה לקבלת עזרה."}</p>
+          <button 
+            onClick={handleLogout}
+            className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+          >
+            התנתק וחזור למסך הכניסה
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === "ERROR") {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center" dir="rtl">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-md w-full space-y-6">
+          <div className="h-16 w-16 bg-amber-500/10 text-amber-500 rounded-full flex items-center justify-center mx-auto">
+            <span className="text-2xl font-bold">!</span>
+          </div>
+          <h2 className="text-xl font-bold text-white">שגיאה בתהליך ההתחברות</h2>
+          <p className="text-xs text-slate-400 leading-relaxed">{authErrorMessage || "לא הצלחנו לאמת את פרטיך מול מסד הנתונים."}</p>
+          <div className="flex gap-4">
+            <button 
+              onClick={() => {
+                setAuthState("INITIALIZING");
+                auth.currentUser?.getIdToken(true)
+                  .then(() => {
+                    api.getMe().then(res => {
+                      if (res && res.status === "ACTIVE") {
+                        setLoggedInAdvisor({
+                          id: String(res.id),
+                          name: res.firstName || res.email.split("@")[0],
+                          role: res.role === "SUPER_ADMIN" ? "סופר אדמין" : (res.role === "LENDER_UNDERWRITER" ? "חתם" : "יועץ משכנתאות"),
+                          isAdmin: res.role === "SUPER_ADMIN" || res.role === "ADMIN",
+                          phone: res.phone,
+                          company: res.businessName || "",
+                          licenseNumber: res.licenseNumber || "",
+                          disableGemini: res.disableGemini || false
+                        });
+                        setAuthState("AUTHENTICATED");
+                      } else {
+                        setAuthState("DISABLED");
+                      }
+                    }).catch((e) => {
+                      setAuthErrorMessage(e.message || "שגיאה בטעינת הנתונים");
+                      setAuthState("UNAUTHENTICATED");
+                    });
+                  })
+                  .catch(() => setAuthState("UNAUTHENTICATED"));
+              }}
+              className="flex-1 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+            >
+              נסה שוב
+            </button>
+            <button 
+              onClick={handleLogout}
+              className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+            >
+              התנתק
+            </button>
+          </div>
+        </div>
+      </div>
     );
   }
 
   // If no advisor is logged in, intercept with the clean registration/login view
-  if (!loggedInAdvisor) {
+  if (authState === "UNAUTHENTICATED" || !loggedInAdvisor) {
     return (
       <AuthScreen 
-        onLoginSuccess={(advisor) => {
-          setLoggedInAdvisor(advisor);
-          localStorage.setItem("advisor_session", JSON.stringify(advisor));
+        onLoginSuccess={() => {
+          setAuthState("INITIALIZING");
           setActiveTab("dashboard");
         }} 
       />
@@ -297,6 +415,7 @@ export default function App() {
                   clients={clients} 
                   onRefreshClients={fetchClients}
                   onBackToApp={() => setActiveTab("dashboard")}
+                  currentRole={loggedInAdvisor.role}
                 />
               )}
             </div>
@@ -318,5 +437,91 @@ export default function App() {
 
       </div>
     </div>
+  );
+}
+
+function LenderInviteRouteWrapper() {
+  const { token } = useParams<{ token: string }>();
+  const [isValid, setIsValid] = useState<boolean | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) {
+      setError("טוקן הזמנה חסר");
+      setLoading(false);
+      return;
+    }
+
+    const validateToken = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const res = await fetch(`/api/lender/validate-invite?token=${encodeURIComponent(token)}`);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "קישור ההזמנה פג תוקף או שאינו קיים");
+        }
+        setIsValid(true);
+      } catch (err: any) {
+        console.error("Token validation failed:", err);
+        setError(err.message || "שגיאה בתהליך אימות קישור ההזמנה");
+        setIsValid(false);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    validateToken();
+  }, [token]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-6" dir="rtl">
+        <SynCashLogo size="md" showSubtitle={true} showText={true} className="animate-pulse" />
+        <div className="flex items-center gap-2">
+          <div className="h-4 w-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-xs text-slate-400 font-bold">מאמת את קישור ההזמנה המאובטח...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !isValid || !token) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center" dir="rtl">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 max-w-md w-full space-y-6">
+          <div className="h-16 w-16 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto">
+            <span className="text-2xl font-bold">✕</span>
+          </div>
+          <h2 className="text-xl font-bold text-white">קישור ההזמנה פג תוקף או שאינו קיים</h2>
+          <p className="text-xs text-slate-400 leading-relaxed">{error || "מזהה הפנייה אינו תקין או שההזמנה בוטלה על ידי היועץ."}</p>
+          <button 
+            onClick={() => { window.location.href = "/"; }}
+            className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+          >
+            חזור לדף הבית
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <LenderPortal 
+      refId={token} 
+      onClose={() => {
+        window.location.href = "/";
+      }} 
+    />
+  );
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/lender/invite/:token" element={<LenderInviteRouteWrapper />} />
+      <Route path="*" element={<MainAppContent />} />
+    </Routes>
   );
 }
