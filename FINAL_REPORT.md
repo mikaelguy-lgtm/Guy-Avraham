@@ -1,9 +1,22 @@
 # SynCash Local Production Rebuild Report
 
 Date: 2026-07-22
-Branch: `codex-local-production-rebuild`  
+Branch: `codex-syncash-production-rebuild`  
 Deployment performed: no  
 Remote push or PR performed: no
+
+## Origin/main transplant verification — 2026-07-22
+
+- Created `codex-syncash-production-rebuild` directly from `origin/main` at `6a5e5990c514de8979cd58e94653e30e6251205a`.
+- Protected the completed local state with tag `backup-syncash-local-complete` at `c01e0e32562d5c8752f0c85625f9f81421e0b5d9`.
+- Chronological cherry-picking was rejected because the first local commit was a full-tree import that overlapped the existing origin tree. The final tracked tree was transplanted exactly from the protected tag, preserving origin/main as the parent history.
+- The transplanted tree hash matched the protected source tree: `4aa5bb2db9b20feb761c24a4581b7455c1ef2c8f`.
+- Secret scanning found no private keys, bearer tokens, tracked runtime environment files, Google API keys in the final tree, or high-confidence runtime secrets. The public Firebase web configuration inherited in origin/main history is removed by the transplant commit.
+- `npm ci` passed. `npm audit` reports 15 moderate transitive development/tooling findings and no high or critical findings. `npm audit fix` makes no safe changes; npm only proposes breaking downgrades of current Firebase and Drizzle tooling, so no forced downgrade was applied.
+- `npm run db:check` passed inside the API container. The host invocation cannot resolve the Compose-only hostname `postgres`, which is intentionally not published to the host.
+- `npm run typecheck`, `npm run lint`, `npm run test:unit` (34/34), `npm run test:integration` (53/53), `npm run test:e2e` (7/7), and `npm run build` passed.
+- Docker Compose configuration passed and all seven required services were healthy: `api`, `frontend`, `firebase-auth`, `postgres`, `redis`, `minio`, and `mailpit`.
+- No deploy, push, merge, force-push, production-data access, or origin/main modification was performed.
 
 ## Final client-module delivery audit — 2026-07-22
 
