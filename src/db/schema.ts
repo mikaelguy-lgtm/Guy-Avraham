@@ -1,532 +1,324 @@
-import { relations } from 'drizzle-orm';
 import {
+  boolean,
+  check,
+  index,
   integer,
+  jsonb,
+  numeric,
+  pgEnum,
   pgTable,
   serial,
   text,
   timestamp,
-  boolean,
-  numeric,
-  pgEnum,
   uniqueIndex,
-  index
-} from 'drizzle-orm/pg-core';
+  varchar
+} from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
-// --- ENUMS DEFINITIONS ---
-// We can define native Postgres enums or use text with typescript checks.
-// In Drizzle, pgEnum creates native enums in database.
-export const userRoleEnum = pgEnum('user_role', ['SUPER_ADMIN', 'ADMIN', 'ADVISOR', 'LENDER_ADMIN', 'LENDER_UNDERWRITER']);
-export const userStatusEnum = pgEnum('user_status', ['PENDING', 'ACTIVE', 'SUSPENDED', 'DISABLED', 'DELETED']);
-export const clientStatusEnum = pgEnum('client_status', ['DRAFT', 'ACTIVE', 'READY_FOR_SUBMISSION', 'SUBMITTED', 'IN_REVIEW', 'APPROVED', 'DECLINED', 'CLOSED', 'ARCHIVED']);
-export const documentStatusEnum = pgEnum('document_status', ['UPLOADING', 'UPLOADED', 'PROCESSING', 'VERIFIED', 'REJECTED', 'DELETED']);
-export const submissionStatusEnum = pgEnum('submission_status', [
-  'DRAFT', 'PENDING_DELIVERY', 'SENT', 'DELIVERY_FAILED', 'DELIVERED', 'OPENED', 'IN_REVIEW', 'MORE_INFO_REQUESTED',
-  'IDENTITY_REQUESTED', 'IDENTITY_APPROVED', 'IDENTITY_REJECTED', 'OFFER_RECEIVED',
-  'DECLINED', 'EXPIRED', 'CANCELLED'
+export const userRoleEnum = pgEnum("user_role", ["SUPER_ADMIN", "ADMIN", "ADVISOR", "LENDER_ADMIN", "LENDER_UNDERWRITER"]);
+export const userStatusEnum = pgEnum("user_status", ["PENDING", "ACTIVE", "SUSPENDED", "DISABLED"]);
+export const clientStatusEnum = pgEnum("client_status", ["DRAFT", "ACTIVE", "SUBMITTED", "CLOSED", "ARCHIVED"]);
+export const documentStatusEnum = pgEnum("document_status", ["UPLOADED", "VERIFIED", "REJECTED", "DELETED"]);
+export const submissionStatusEnum = pgEnum("submission_status", [
+  "DRAFT", "PENDING_DELIVERY", "SENT", "DELIVERED", "DELIVERY_FAILED", "OPENED", "IN_REVIEW",
+  "MORE_INFO_REQUESTED", "IDENTITY_REQUESTED", "IDENTITY_APPROVED", "IDENTITY_REJECTED",
+  "OFFER_RECEIVED", "DECLINED", "EXPIRED", "CANCELLED"
 ]);
-export const responseTypeEnum = pgEnum('response_type', ['INTERESTED', 'NOT_INTERESTED', 'REQUEST_MORE_INFORMATION', 'REQUEST_IDENTITY_REVEAL', 'GENERAL_MESSAGE']);
-export const offerStatusEnum = pgEnum('offer_status', ['DRAFT', 'SUBMITTED', 'UPDATED', 'ACCEPTED', 'REJECTED', 'WITHDRAWN', 'EXPIRED']);
+export const responseTypeEnum = pgEnum("response_type", ["MESSAGE", "MORE_INFO_REQUEST", "INTERESTED", "DECLINED"]);
+export const offerStatusEnum = pgEnum("offer_status", ["DRAFT", "SUBMITTED", "UPDATED", "WITHDRAWN", "ACCEPTED", "REJECTED", "EXPIRED"]);
+export const identityRequestStatusEnum = pgEnum("identity_request_status", ["PENDING", "PARTIALLY_APPROVED", "APPROVED", "REJECTED", "CANCELLED"]);
 
-// --- TABLES ---
+const timestamps = {
+  createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", {withTimezone: true}).notNull().defaultNow()
+};
 
-// 1. Users Table
-export const users = pgTable('users', {
-  id: serial('id').primaryKey(),
-  firebaseUid: text('firebase_uid').notNull().unique(),
-  email: text('email').notNull().unique(),
-  firstName: text('first_name'),
-  lastName: text('last_name'),
-  phone: text('phone'),
-  role: userRoleEnum('role').notNull().default('ADVISOR'), // SUPER_ADMIN, ADMIN, ADVISOR, LENDER_ADMIN, LENDER_UNDERWRITER
-  status: userStatusEnum('status').notNull().default('ACTIVE'), // PENDING, ACTIVE, SUSPENDED, DISABLED, DELETED
-  emailVerified: boolean('email_verified').default(false),
-  lastLoginAt: timestamp('last_login_at'),
-  lastActivityAt: timestamp('last_activity_at'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
-}, (table) => {
-  return {
-    firebaseUidIdx: index('users_firebase_uid_idx').on(table.firebaseUid),
-    emailIdx: index('users_email_idx').on(table.email),
-    roleIdx: index('users_role_idx').on(table.role),
-    statusIdx: index('users_status_idx').on(table.status),
-  };
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  firebaseUid: varchar("firebase_uid", {length: 128}).notNull().unique(),
+  email: varchar("email", {length: 320}).notNull().unique(),
+  firstName: varchar("first_name", {length: 100}).notNull(),
+  lastName: varchar("last_name", {length: 100}).notNull(),
+  phoneEncrypted: text("phone_encrypted"),
+  role: userRoleEnum("role").notNull(),
+  roleLabel: varchar("role_label", {length: 100}).notNull(),
+  status: userStatusEnum("status").notNull().default("PENDING"),
+  emailVerified: boolean("email_verified").notNull().default(false),
+  deletedAt: timestamp("deleted_at", {withTimezone: true}),
+  lastLoginAt: timestamp("last_login_at", {withTimezone: true}),
+  ...timestamps
 });
 
-// 2. Advisor Profiles Table
-export const advisorProfiles = pgTable('advisor_profiles', {
-  id: serial('id').primaryKey(),
-  userId: integer('user_id').references(() => users.id).notNull().unique(),
-  businessName: text('business_name'),
-  licenseNumber: text('license_number'),
-  businessPhone: text('business_phone'),
-  businessEmail: text('business_email'),
-  address: text('address'),
-  logoStorageKey: text('logo_storage_key'),
-  disableGemini: boolean('disable_gemini').default(false),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
+export const advisorProfiles = pgTable("advisor_profiles", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  businessName: varchar("business_name", {length: 200}),
+  businessPhoneEncrypted: text("business_phone_encrypted"),
+  businessEmail: varchar("business_email", {length: 320}),
+  licenseNumber: varchar("license_number", {length: 100}),
+  ...timestamps
+}, (table) => [uniqueIndex("advisor_profiles_user_id_uq").on(table.userId)]);
+
+export const lenders = pgTable("lenders", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", {length: 200}).notNull(),
+  slug: varchar("slug", {length: 100}).notNull().unique(),
+  contactEmail: varchar("contact_email", {length: 320}).notNull(),
+  active: boolean("active").notNull().default(true),
+  ...timestamps
 });
 
-// 3. Lenders Table
-export const lenders = pgTable('lenders', {
-  id: serial('id').primaryKey(),
-  name: text('name').notNull(),
-  legalName: text('legal_name'),
-  companyNumber: text('company_number'),
-  status: text('status').notNull().default('ACTIVE'), // ACTIVE, SUSPENDED, DELETED
-  website: text('website'),
-  generalEmail: text('general_email'),
-  phone: text('phone'),
-  logoStorageKey: text('logo_storage_key'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
+export const lenderUsers = pgTable("lender_users", {
+  id: serial("id").primaryKey(),
+  lenderId: integer("lender_id").notNull().references(() => lenders.id),
+  userId: integer("user_id").notNull().references(() => users.id),
+  ...timestamps
+}, (table) => [
+  uniqueIndex("lender_users_lender_user_uq").on(table.lenderId, table.userId),
+  index("lender_users_user_idx").on(table.userId)
+]);
+
+export const clients = pgTable("clients", {
+  id: serial("id").primaryKey(),
+  publicCaseNumber: varchar("public_case_number", {length: 32}).notNull().unique(),
+  advisorId: integer("advisor_id").notNull().references(() => advisorProfiles.id),
+  status: clientStatusEnum("status").notNull().default("DRAFT"),
+  firstNameEncrypted: text("first_name_encrypted").notNull(),
+  lastNameEncrypted: text("last_name_encrypted").notNull(),
+  identityNumberEncrypted: text("identity_number_encrypted").notNull(),
+  phoneEncrypted: text("phone_encrypted").notNull(),
+  emailEncrypted: text("email_encrypted").notNull(),
+  addressEncrypted: text("address_encrypted"),
+  notesEncrypted: text("notes_encrypted"),
+  maritalStatus: varchar("marital_status", {length: 30}).notNull().default("SINGLE"),
+  numberOfChildren: integer("number_of_children").notNull().default(0),
+  childrenAges: jsonb("children_ages").$type<number[]>().notNull().default([]),
+  borrowerCount: integer("borrower_count").notNull().default(1),
+  deletedAt: timestamp("deleted_at", {withTimezone: true}),
+  ...timestamps
+}, (table) => [
+  index("clients_advisor_idx").on(table.advisorId),
+  index("clients_deleted_idx").on(table.deletedAt),
+  check("clients_marital_status_check", sql`${table.maritalStatus} in ('SINGLE', 'MARRIED', 'DIVORCED', 'WIDOWED', 'COMMON_LAW', 'SEPARATED', 'OTHER')`),
+  check("clients_children_count_check", sql`${table.numberOfChildren} >= 0`),
+  check("clients_borrower_count_check", sql`${table.borrowerCount} >= 1`)
+]);
+
+export const borrowers = pgTable("borrowers", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  borrowerType: varchar("borrower_type", {length: 20}).notNull(),
+  fullNameEncrypted: text("full_name_encrypted").notNull(),
+  identityNumberEncrypted: text("identity_number_encrypted").notNull(),
+  birthDate: timestamp("birth_date", {withTimezone: false}),
+  ...timestamps
+}, (table) => [index("borrowers_client_idx").on(table.clientId)]);
+
+export const employmentRecords = pgTable("employment_records", {
+  id: serial("id").primaryKey(),
+  borrowerId: integer("borrower_id").notNull().references(() => borrowers.id),
+  employmentType: varchar("employment_type", {length: 30}).notNull(),
+  employerNameEncrypted: text("employer_name_encrypted"),
+  jobTitle: varchar("job_title", {length: 150}),
+  monthlyNetIncome: numeric("monthly_net_income", {precision: 14, scale: 2}).notNull(),
+  monthlyGrossIncome: numeric("monthly_gross_income", {precision: 14, scale: 2}).notNull().default("0"),
+  additionalIncome: numeric("additional_income", {precision: 14, scale: 2}).notNull().default("0"),
+  hasAdditionalIncome: boolean("has_additional_income").notNull().default(false),
+  additionalIncomeType: varchar("additional_income_type", {length: 50}),
+  additionalIncomeAmount: numeric("additional_income_amount", {precision: 14, scale: 2}).notNull().default("0"),
+  additionalIncomeDescriptionEncrypted: text("additional_income_description_encrypted"),
+  startDate: timestamp("start_date", {withTimezone: false}),
+  ...timestamps
+}, (table) => [
+  check("employment_type_check", sql`${table.employmentType} in ('SALARIED', 'SELF_EMPLOYED', 'CONTROLLING_SHAREHOLDER', 'RETIRED', 'GOVERNMENT_EMPLOYEE', 'SECURITY_FORCES', 'ALLOWANCE', 'UNEMPLOYED', 'OTHER')`),
+  check("employment_income_check", sql`${table.monthlyNetIncome} >= 0 and ${table.additionalIncomeAmount} >= 0`),
+  check("employment_additional_type_check", sql`${table.additionalIncomeType} is null or ${table.additionalIncomeType} in ('SECOND_BUSINESS', 'RENTAL_INCOME', 'ALLOWANCE', 'ALIMONY', 'PENSION', 'REGULAR_OVERTIME', 'REGULAR_BONUSES', 'FOREIGN_INCOME', 'INVESTMENT_INCOME', 'FAMILY_SUPPORT', 'OTHER')`),
+  check("employment_additional_income_check", sql`(${table.hasAdditionalIncome} = false and ${table.additionalIncomeType} is null and ${table.additionalIncomeAmount} = 0) or (${table.hasAdditionalIncome} = true and ${table.additionalIncomeType} is not null and ${table.additionalIncomeAmount} > 0)`)
+]);
+
+export const incomeSources = pgTable("income_sources", {
+  id: serial("id").primaryKey(),
+  borrowerId: integer("borrower_id").notNull().references(() => borrowers.id),
+  sourceType: varchar("source_type", {length: 50}).notNull(),
+  monthlyAmount: numeric("monthly_amount", {precision: 14, scale: 2}).notNull(),
+  descriptionEncrypted: text("description_encrypted"),
+  ...timestamps
 });
 
-// 4. Lender Users Table
-export const lenderUsers = pgTable('lender_users', {
-  id: serial('id').primaryKey(),
-  userId: integer('user_id').references(() => users.id).notNull().unique(),
-  lenderId: integer('lender_id').references(() => lenders.id).notNull(),
-  jobTitle: text('job_title'),
-  isPrimaryContact: boolean('is_primary_contact').default(false),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-}, (table) => {
-  return {
-    userIdIdx: index('lender_users_user_id_idx').on(table.userId),
-    lenderIdIdx: index('lender_users_lender_id_idx').on(table.lenderId),
-  };
+export const liabilities = pgTable("liabilities", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  liabilityType: varchar("liability_type", {length: 50}).notNull(),
+  outstandingBalance: numeric("outstanding_balance", {precision: 14, scale: 2}).notNull(),
+  monthlyPayment: numeric("monthly_payment", {precision: 14, scale: 2}).notNull(),
+  ...timestamps
+}, (table) => [
+  check("liabilities_amounts_check", sql`${table.outstandingBalance} >= 0 and ${table.monthlyPayment} >= 0`)
+]);
+
+export const properties = pgTable("properties", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  propertyType: varchar("property_type", {length: 50}).notNull(),
+  region: varchar("region", {length: 100}).notNull(),
+  city: varchar("city", {length: 100}),
+  addressEncrypted: text("address_encrypted"),
+  propertyTypeOtherDescriptionEncrypted: text("property_type_other_description_encrypted"),
+  estimatedValue: numeric("estimated_value", {precision: 14, scale: 2}).notNull(),
+  existingMortgageBalance: numeric("existing_mortgage_balance", {precision: 14, scale: 2}).notNull().default("0"),
+  ...timestamps
+}, (table) => [
+  check("properties_type_check", sql`${table.propertyType} in ('APARTMENT', 'HOUSE', 'SEMI_DETACHED', 'GARDEN_APARTMENT', 'PENTHOUSE', 'LAND', 'COMMERCIAL', 'FARM', 'ESTATE', 'KIBBUTZ', 'OTHER')`),
+  check("properties_amounts_check", sql`${table.estimatedValue} >= 0 and ${table.existingMortgageBalance} >= 0`)
+]);
+
+export const loanRequests = pgTable("loan_requests", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  purpose: varchar("purpose", {length: 50}).notNull(),
+  requestedAmount: numeric("requested_amount", {precision: 14, scale: 2}).notNull(),
+  requestedTermMonths: integer("requested_term_months").notNull(),
+  loanToValue: numeric("loan_to_value", {precision: 6, scale: 2}).notNull(),
+  ...timestamps
+}, (table) => [
+  check("loan_requests_purpose_check", sql`${table.purpose} in ('PURCHASE_FROM_CONTRACTOR', 'BUYER_PRICE_PROGRAM', 'SECOND_HAND_PURCHASE', 'RENOVATION', 'DEBT_CONSOLIDATION', 'BUSINESS_PURPOSE', 'ANY_PURPOSE', 'SELF_CONSTRUCTION', 'FAMILY_TRANSACTION', 'KIBBUTZ_PURCHASE_OR_CONSTRUCTION', 'RECEIVER_PURCHASE', 'REVERSE_MORTGAGE', 'TAMA', 'MORTGAGE_REFINANCE')`),
+  check("loan_requests_amounts_check", sql`${table.requestedAmount} >= 0 and ${table.requestedTermMonths} > 0 and ${table.loanToValue} >= 0`)
+]);
+
+export const documents = pgTable("documents", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  uploadedByUserId: integer("uploaded_by_user_id").notNull().references(() => users.id),
+  documentType: varchar("document_type", {length: 80}).notNull(),
+  originalFileName: varchar("original_file_name", {length: 255}).notNull(),
+  storageKey: varchar("storage_key", {length: 512}).notNull().unique(),
+  mimeType: varchar("mime_type", {length: 100}).notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  checksumSha256: varchar("checksum_sha256", {length: 64}).notNull(),
+  status: documentStatusEnum("status").notNull().default("UPLOADED"),
+  deletedAt: timestamp("deleted_at", {withTimezone: true}),
+  ...timestamps
+}, (table) => [index("documents_client_idx").on(table.clientId)]);
+
+export const lenderSubmissions = pgTable("lender_submissions", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  lenderId: integer("lender_id").notNull().references(() => lenders.id),
+  createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+  status: submissionStatusEnum("status").notNull().default("DRAFT"),
+  anonymousSnapshot: jsonb("anonymous_snapshot").notNull(),
+  anonymousPdfStorageKey: varchar("anonymous_pdf_storage_key", {length: 512}),
+  sentAt: timestamp("sent_at", {withTimezone: true}),
+  deliveredAt: timestamp("delivered_at", {withTimezone: true}),
+  openedAt: timestamp("opened_at", {withTimezone: true}),
+  ...timestamps
+}, (table) => [index("submissions_client_idx").on(table.clientId), index("submissions_lender_idx").on(table.lenderId)]);
+
+export const lenderResponses = pgTable("lender_responses", {
+  id: serial("id").primaryKey(),
+  submissionId: integer("submission_id").notNull().references(() => lenderSubmissions.id),
+  createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+  responseType: responseTypeEnum("response_type").notNull(),
+  message: text("message").notNull(),
+  ...timestamps
 });
 
-// 5. Clients Table
-export const clients = pgTable('clients', {
-  id: serial('id').primaryKey(),
-  advisorId: integer('advisor_id').references(() => users.id).notNull(),
-  caseNumber: text('case_number').notNull().unique(),
-  status: clientStatusEnum('status').notNull().default('DRAFT'), // DRAFT, ACTIVE, READY_FOR_SUBMISSION, SUBMITTED, IN_REVIEW, APPROVED, DECLINED, CLOSED, ARCHIVED
-  firstName: text('first_name').notNull(),
-  lastName: text('last_name').notNull(),
-  identityNumberEncrypted: text('identity_number_encrypted'),
-  identityNumberHash: text('identity_number_hash'),
-  identityNumberLast4: text('identity_number_last4'),
-  birthDate: text('birth_date'),
-  phoneEncrypted: text('phone_encrypted'),
-  emailEncrypted: text('email_encrypted'),
-  maritalStatus: text('marital_status'),
-  numberOfChildren: integer('number_of_children').default(0),
-  city: text('city'),
-  addressEncrypted: text('address_encrypted'),
-  notesEncrypted: text('notes_encrypted'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
-}, (table) => {
-  return {
-    advisorIdIdx: index('clients_advisor_id_idx').on(table.advisorId),
-    caseNumberIdx: index('clients_case_number_idx').on(table.caseNumber),
-    statusIdx: index('clients_status_idx').on(table.status),
-    idNumHashIdx: index('clients_identity_number_hash_idx').on(table.identityNumberHash),
-    createdAtIdx: index('clients_created_at_idx').on(table.createdAt),
-  };
+export const identityRevealRequests = pgTable("identity_reveal_requests", {
+  id: serial("id").primaryKey(),
+  submissionId: integer("submission_id").notNull().references(() => lenderSubmissions.id),
+  requestedByUserId: integer("requested_by_user_id").notNull().references(() => users.id),
+  reason: text("reason").notNull(),
+  requestedFields: jsonb("requested_fields").notNull(),
+  approvedFields: jsonb("approved_fields").notNull().default([]),
+  approvedDocumentIds: jsonb("approved_document_ids").notNull().default([]),
+  status: identityRequestStatusEnum("status").notNull().default("PENDING"),
+  decidedByUserId: integer("decided_by_user_id").references(() => users.id),
+  decidedAt: timestamp("decided_at", {withTimezone: true}),
+  ...timestamps
 });
 
-// 6. Borrowers Table
-export const borrowers = pgTable('borrowers', {
-  id: serial('id').primaryKey(),
-  clientId: integer('client_id').references(() => clients.id).notNull(),
-  borrowerType: text('borrower_type').notNull().default('PRIMARY'), // PRIMARY, CO_SIGNER
-  firstName: text('first_name').notNull(),
-  lastName: text('last_name').notNull(),
-  identityNumberEncrypted: text('identity_number_encrypted'),
-  identityNumberHash: text('identity_number_hash'),
-  identityNumberLast4: text('identity_number_last4'),
-  birthDate: text('birth_date'),
-  phoneEncrypted: text('phone_encrypted'),
-  emailEncrypted: text('email_encrypted'),
-  relationshipToPrimary: text('relationship_to_primary'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
-}, (table) => {
-  return {
-    clientIdIdx: index('borrowers_client_id_idx').on(table.clientId),
-  };
+export const loanOffers = pgTable("loan_offers", {
+  id: serial("id").primaryKey(),
+  submissionId: integer("submission_id").notNull().references(() => lenderSubmissions.id),
+  lenderUserId: integer("lender_user_id").notNull().references(() => users.id),
+  amount: numeric("amount", {precision: 14, scale: 2}).notNull(),
+  interestRate: numeric("interest_rate", {precision: 7, scale: 4}).notNull(),
+  termMonths: integer("term_months").notNull(),
+  monthlyPayment: numeric("monthly_payment", {precision: 14, scale: 2}),
+  conditions: text("conditions"),
+  status: offerStatusEnum("status").notNull().default("SUBMITTED"),
+  expiresAt: timestamp("expires_at", {withTimezone: true}),
+  ...timestamps
 });
 
-// 7. Employment Records Table
-export const employmentRecords = pgTable('employment_records', {
-  id: serial('id').primaryKey(),
-  borrowerId: integer('borrower_id').references(() => borrowers.id).notNull(),
-  employmentType: text('employment_type'), // SALARIED, SELF_EMPLOYED, UNEMPLOYED
-  employerNameEncrypted: text('employer_name_encrypted'),
-  jobTitle: text('job_title'),
-  startDate: text('start_date'),
-  monthlyNetIncome: numeric('monthly_net_income', { precision: 12, scale: 2 }).default('0'),
-  monthlyGrossIncome: numeric('monthly_gross_income', { precision: 12, scale: 2 }).default('0'),
-  additionalIncome: numeric('additional_income', { precision: 12, scale: 2 }).default('0'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
+export const notifications = pgTable("notifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  type: varchar("type", {length: 80}).notNull(),
+  title: varchar("title", {length: 200}).notNull(),
+  body: text("body").notNull(),
+  readAt: timestamp("read_at", {withTimezone: true}),
+  ...timestamps
 });
 
-// 8. Income Sources Table
-export const incomeSources = pgTable('income_sources', {
-  id: serial('id').primaryKey(),
-  borrowerId: integer('borrower_id').references(() => borrowers.id).notNull(),
-  incomeType: text('income_type').notNull(), // SALARY, BUSINESS, RENTAL, PENSION, CHILD_SUPPORT, OTHER
-  description: text('description'),
-  monthlyAmount: numeric('monthly_amount', { precision: 12, scale: 2 }).notNull().default('0'),
-  isFixed: boolean('is_fixed').default(true),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
+export const auditLogs = pgTable("audit_logs", {
+  id: serial("id").primaryKey(),
+  actorUserId: integer("actor_user_id").references(() => users.id),
+  action: varchar("action", {length: 100}).notNull(),
+  entityType: varchar("entity_type", {length: 80}),
+  entityId: integer("entity_id"),
+  metadata: jsonb("metadata"),
+  requestId: varchar("request_id", {length: 64}),
+  ipAddress: varchar("ip_address", {length: 64}),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
+}, (table) => [index("audit_actor_idx").on(table.actorUserId), index("audit_action_idx").on(table.action)]);
+
+export const emailLogs = pgTable("email_logs", {
+  id: serial("id").primaryKey(),
+  submissionId: integer("submission_id").references(() => lenderSubmissions.id),
+  userId: integer("user_id").references(() => users.id),
+  template: varchar("template", {length: 100}),
+  recipient: varchar("recipient", {length: 320}).notNull(),
+  messageId: varchar("message_id", {length: 255}),
+  status: varchar("status", {length: 40}).notNull(),
+  sanitizedError: text("sanitized_error"),
+  requestId: varchar("request_id", {length: 64}),
+  sentAt: timestamp("sent_at", {withTimezone: true}),
+  failedAt: timestamp("failed_at", {withTimezone: true}),
+  createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
 });
 
-// 9. Liabilities Table
-export const liabilities = pgTable('liabilities', {
-  id: serial('id').primaryKey(),
-  clientId: integer('client_id').references(() => clients.id).notNull(),
-  liabilityType: text('liability_type').notNull(), // MORTGAGE, LOAN, CREDIT_CARD, CHILD_SUPPORT, OTHER
-  institution: text('institution'),
-  originalAmount: numeric('original_amount', { precision: 12, scale: 2 }).default('0'),
-  currentBalance: numeric('current_balance', { precision: 12, scale: 2 }).default('0'),
-  monthlyPayment: numeric('monthly_payment', { precision: 12, scale: 2 }).default('0'),
-  interestRate: numeric('interest_rate', { precision: 5, scale: 2 }),
-  endDate: text('end_date'),
-  notes: text('notes'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
+export const aiAnalysisLogs = pgTable("ai_analysis_logs", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  requestedByUserId: integer("requested_by_user_id").notNull().references(() => users.id),
+  model: varchar("model", {length: 100}).notNull(),
+  promptCharacters: integer("prompt_characters").notNull(),
+  status: varchar("status", {length: 40}).notNull(),
+  durationMs: integer("duration_ms"),
+  sanitizedError: text("sanitized_error"),
+  createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
 });
 
-// 10. Properties Table
-export const properties = pgTable('properties', {
-  id: serial('id').primaryKey(),
-  clientId: integer('client_id').references(() => clients.id).notNull(),
-  propertyType: text('property_type'), // APARTMENT, HOUSE, PLOT, COMMERCIAL, OTHER
-  city: text('city'),
-  addressEncrypted: text('address_encrypted'),
-  estimatedValue: numeric('estimated_value', { precision: 12, scale: 2 }).default('0'),
-  purchasePrice: numeric('purchase_price', { precision: 12, scale: 2 }).default('0'),
-  existingMortgageBalance: numeric('existing_mortgage_balance', { precision: 12, scale: 2 }).default('0'),
-  ownershipPercentage: numeric('ownership_percentage', { precision: 5, scale: 2 }).default('100.00'),
-  registrationType: text('registration_type'), // TABU, MINHAL, CHEVRA_MESHAKENET, OTHER
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
+export const lenderInviteTokens = pgTable("lender_invite_tokens", {
+  id: serial("id").primaryKey(),
+  submissionId: integer("submission_id").notNull().references(() => lenderSubmissions.id),
+  tokenHash: varchar("token_hash", {length: 64}).notNull(),
+  expiresAt: timestamp("expires_at", {withTimezone: true}).notNull(),
+  usedAt: timestamp("used_at", {withTimezone: true}),
+  usedByUserId: integer("used_by_user_id").references(() => users.id),
+  revokedAt: timestamp("revoked_at", {withTimezone: true}),
+  createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
+}, (table) => [uniqueIndex("invite_token_hash_uq").on(table.tokenHash), index("invite_submission_idx").on(table.submissionId)]);
+
+export const systemSettings = pgTable("system_settings", {
+  id: serial("id").primaryKey(),
+  key: varchar("key", {length: 120}).notNull().unique(),
+  value: text("value"),
+  category: varchar("category", {length: 60}).notNull(),
+  isSecret: boolean("is_secret").notNull().default(false),
+  description: text("description"),
+  updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+  ...timestamps
 });
-
-// 11. Loan Requests Table
-export const loanRequests = pgTable('loan_requests', {
-  id: serial('id').primaryKey(),
-  clientId: integer('client_id').references(() => clients.id).notNull(),
-  purpose: text('purpose'), // PURCHASE, REFINANCE, EQUITY_RELEASE, BRIDGE, ALL_PURPOSES
-  requestedAmount: numeric('requested_amount', { precision: 12, scale: 2 }).default('0'),
-  requestedTermMonths: integer('requested_term_months'),
-  requestedMonthlyPayment: numeric('requested_monthly_payment', { precision: 12, scale: 2 }).default('0'),
-  loanToValue: numeric('loan_to_value', { precision: 5, scale: 2 }),
-  notes: text('notes'),
-  status: text('status'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
-});
-
-// 12. Documents Table
-export const documents = pgTable('documents', {
-  id: serial('id').primaryKey(),
-  clientId: integer('client_id').references(() => clients.id).notNull(),
-  borrowerId: integer('borrower_id').references(() => borrowers.id),
-  documentType: text('document_type').notNull(), // ID_CARD, PAYSLIP, BANK_STATEMENT, MORTGAGE_STATEMENT, PROPERTY_REGISTRATION, TAX_REPORT, OTHER
-  originalFilename: text('original_filename').notNull(),
-  storageKey: text('storage_key').notNull(),
-  mimeType: text('mime_type').notNull(),
-  sizeBytes: integer('size_bytes').notNull(),
-  checksum: text('checksum'),
-  status: documentStatusEnum('status').notNull().default('UPLOADED'), // UPLOADING, UPLOADED, PROCESSING, VERIFIED, REJECTED, DELETED
-  uploadedByUserId: integer('uploaded_by_user_id').references(() => users.id),
-  uploadedAt: timestamp('uploaded_at'),
-  verifiedByUserId: integer('verified_by_user_id').references(() => users.id),
-  verifiedAt: timestamp('verified_at'),
-  rejectionReason: text('rejection_reason'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
-}, (table) => {
-  return {
-    clientIdIdx: index('documents_client_id_idx').on(table.clientId),
-    borrowerIdIdx: index('documents_borrower_id_idx').on(table.borrowerId),
-    statusIdx: index('documents_status_idx').on(table.status),
-  };
-});
-
-// 13. Lender Submissions Table
-export const lenderSubmissions = pgTable('lender_submissions', {
-  id: serial('id').primaryKey(),
-  clientId: integer('client_id').references(() => clients.id).notNull(),
-  advisorId: integer('advisor_id').references(() => users.id).notNull(),
-  lenderId: integer('lender_id').references(() => lenders.id).notNull(),
-  status: submissionStatusEnum('status').notNull().default('SENT'), // SENT, DELIVERED, OPENED, IN_REVIEW, MORE_INFO_REQUESTED, IDENTITY_REQUESTED, IDENTITY_APPROVED, IDENTITY_REJECTED, OFFER_RECEIVED, DECLINED, EXPIRED, CANCELLED
-  anonymousSnapshot: text('anonymous_snapshot'), // Full JSON structure as string
-  sentAt: timestamp('sent_at').defaultNow(),
-  deliveredAt: timestamp('delivered_at'),
-  openedAt: timestamp('opened_at'),
-  identityRequestedAt: timestamp('identity_requested_at'),
-  identityApprovedAt: timestamp('identity_approved_at'),
-  identityRejectedAt: timestamp('identity_rejected_at'),
-  identityApprovedByUserId: integer('identity_approved_by_user_id').references(() => users.id),
-  expiresAt: timestamp('expires_at'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  cancelledAt: timestamp('cancelled_at'),
-}, (table) => {
-  return {
-    clientIdIdx: index('lender_submissions_client_id_idx').on(table.clientId),
-    advisorIdIdx: index('lender_submissions_advisor_id_idx').on(table.advisorId),
-    lenderIdIdx: index('lender_submissions_lender_id_idx').on(table.lenderId),
-    statusIdx: index('lender_submissions_status_idx').on(table.status),
-    createdAtIdx: index('lender_submissions_created_at_idx').on(table.createdAt),
-  };
-});
-
-// 14. Lender Responses Table
-export const lenderResponses = pgTable('lender_responses', {
-  id: serial('id').primaryKey(),
-  submissionId: integer('submission_id').references(() => lenderSubmissions.id).notNull(),
-  lenderUserId: integer('lender_user_id').references(() => users.id).notNull(),
-  responseType: responseTypeEnum('response_type').notNull(), // INTERESTED, NOT_INTERESTED, REQUEST_MORE_INFORMATION, REQUEST_IDENTITY_REVEAL, GENERAL_MESSAGE
-  message: text('message'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
-}, (table) => {
-  return {
-    subIdIdx: index('lender_responses_sub_id_idx').on(table.submissionId),
-  };
-});
-
-// 15. Identity Reveal Requests Table
-export const identityRevealRequests = pgTable('identity_reveal_requests', {
-  id: serial('id').primaryKey(),
-  submissionId: integer('submission_id').references(() => lenderSubmissions.id).notNull(),
-  requestedByUserId: integer('requested_by_user_id').references(() => users.id).notNull(),
-  requestedFields: text('requested_fields'), // Comma separated or JSON string
-  reason: text('reason'),
-  status: text('status').notNull().default('PENDING'), // PENDING, APPROVED, REJECTED
-  reviewedByUserId: integer('reviewed_by_user_id').references(() => users.id),
-  reviewedAt: timestamp('reviewed_at'),
-  approvedFields: text('approved_fields'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-}, (table) => {
-  return {
-    subIdIdx: index('identity_reveal_requests_sub_id_idx').on(table.submissionId),
-    statusIdx: index('identity_reveal_requests_status_idx').on(table.status),
-  };
-});
-
-// 16. Loan Offers Table
-export const loanOffers = pgTable('loan_offers', {
-  id: serial('id').primaryKey(),
-  submissionId: integer('submission_id').references(() => lenderSubmissions.id).notNull(),
-  lenderId: integer('lender_id').references(() => lenders.id).notNull(),
-  amount: numeric('amount', { precision: 12, scale: 2 }).notNull().default('0'),
-  interestRate: numeric('interest_rate', { precision: 5, scale: 2 }).notNull(),
-  interestType: text('interest_type').notNull(), // FIXED, PRIME, CPI_LINKED, VARIABLE
-  linkedToIndex: text('linked_to_index'), // NONE, CPI, PRIME, OTHER
-  termMonths: integer('term_months').notNull(),
-  monthlyPayment: numeric('monthly_payment', { precision: 12, scale: 2 }),
-  originationFee: numeric('origination_fee', { precision: 12, scale: 2 }).default('0'),
-  additionalFees: numeric('additional_fees', { precision: 12, scale: 2 }).default('0'),
-  conditions: text('conditions'),
-  validUntil: timestamp('valid_until'),
-  status: offerStatusEnum('status').notNull().default('SUBMITTED'), // DRAFT, SUBMITTED, UPDATED, ACCEPTED, REJECTED, WITHDRAWN, EXPIRED
-  createdByUserId: integer('created_by_user_id').references(() => users.id).notNull(),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  deletedAt: timestamp('deleted_at'),
-}, (table) => {
-  return {
-    subIdIdx: index('loan_offers_sub_id_idx').on(table.submissionId),
-    lenderIdIdx: index('loan_offers_lender_id_idx').on(table.lenderId),
-    statusIdx: index('loan_offers_status_idx').on(table.status),
-  };
-});
-
-// 17. Notifications Table
-export const notifications = pgTable('notifications', {
-  id: serial('id').primaryKey(),
-  userId: integer('user_id').references(() => users.id).notNull(),
-  type: text('type').notNull(), // INFO, SUCCESS, WARNING, SUBMISSION_UPDATE, OFFER_RECEIVED, CHAT
-  title: text('title').notNull(),
-  body: text('body').notNull(),
-  metadata: text('metadata'), // JSON as string
-  readAt: timestamp('read_at'),
-  createdAt: timestamp('created_at').defaultNow(),
-}, (table) => {
-  return {
-    userIdIdx: index('notifications_user_id_idx').on(table.userId),
-    readAtIdx: index('notifications_read_at_idx').on(table.readAt),
-  };
-});
-
-// 18. Audit Logs Table
-export const auditLogs = pgTable('audit_logs', {
-  id: serial('id').primaryKey(),
-  actorUserId: integer('actor_user_id').references(() => users.id),
-  action: text('action').notNull(), // LOGIN, VIEW_CLIENT, UPDATE_CLIENT, UPLOAD_DOCUMENT, SEND_SUBMISSION, REVEAL_IDENTITY, etc.
-  entityType: text('entity_type'), // USER, CLIENT, DOCUMENT, SUBMISSION, OFFER
-  entityId: integer('entity_id'),
-  metadata: text('metadata'), // JSON as string
-  ipAddress: text('ip_address'),
-  userAgent: text('user_agent'),
-  createdAt: timestamp('created_at').defaultNow(),
-}, (table) => {
-  return {
-    actorIdx: index('audit_logs_actor_idx').on(table.actorUserId),
-    entityIdx: index('audit_logs_entity_idx').on(table.entityType, table.entityId),
-    createdAtIdx: index('audit_logs_created_at_idx').on(table.createdAt),
-  };
-});
-
-// 19. Email Logs Table
-export const emailLogs = pgTable('email_logs', {
-  id: serial('id').primaryKey(),
-  recipient: text('recipient').notNull(),
-  template: text('template').notNull(),
-  relatedEntityType: text('related_entity_type'),
-  relatedEntityId: integer('related_entity_id'),
-  providerMessageId: text('provider_message_id'),
-  status: text('status').notNull(), // SENT, FAILED, DELIVERED
-  errorMessage: text('error_message'),
-  sentAt: timestamp('sent_at'),
-  deliveredAt: timestamp('delivered_at'),
-  failedAt: timestamp('failed_at'),
-  createdAt: timestamp('created_at').defaultNow(),
-});
-
-// 20. AI Analysis Logs Table
-export const aiAnalysisLogs = pgTable('ai_analysis_logs', {
-  id: serial('id').primaryKey(),
-  clientId: integer('client_id').references(() => clients.id).notNull(),
-  requestedByUserId: integer('requested_by_user_id').references(() => users.id).notNull(),
-  analysisType: text('analysis_type').notNull(), // CLIENT_SUMMARY, OFFER_ANALYSIS, ADVISOR_ASK
-  model: text('model').notNull(),
-  promptVersion: text('prompt_version'),
-  status: text('status').notNull(), // PENDING, COMPLETED, FAILED
-  tokenUsage: integer('token_usage'),
-  errorMessage: text('error_message'),
-  createdAt: timestamp('created_at').defaultNow(),
-  completedAt: timestamp('completed_at'),
-});
-
-// 21. Lender Invite Tokens Table
-export const lenderInviteTokens = pgTable('lender_invite_tokens', {
-  id: serial('id').primaryKey(),
-  submissionId: integer('submission_id').references(() => lenderSubmissions.id).notNull(),
-  tokenHash: text('token_hash').notNull().unique(),
-  expiresAt: timestamp('expires_at').notNull(),
-  usedAt: timestamp('used_at'),
-  revokedAt: timestamp('revoked_at'),
-  createdAt: timestamp('created_at').defaultNow(),
-});
-
-// 22. System Settings Table
-export const systemSettings = pgTable('system_settings', {
-  id: serial('id').primaryKey(),
-  key: text('key').notNull().unique(),
-  value: text('value'),
-  valueType: text('value_type').notNull().default('text'), // 'text', 'number', 'boolean'
-  category: text('category').notNull().default('GENERAL'), // 'GENERAL', 'EMAIL', 'DATABASE', 'SECURITY', 'AI', 'STORAGE'
-  isSecret: boolean('is_secret').notNull().default(false),
-  description: text('description'),
-  updatedByUserId: integer('updated_by_user_id').references(() => users.id),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
-// --- RELATION RELATIONSHIPS (Optional but helpful for Drizzle) ---
-
-export const usersRelations = relations(users, ({ many, one }) => ({
-  advisorProfile: one(advisorProfiles, {
-    fields: [users.id],
-    references: [advisorProfiles.userId],
-  }),
-  lenderUser: one(lenderUsers, {
-    fields: [users.id],
-    references: [lenderUsers.userId],
-  }),
-  clients: many(clients),
-  submissions: many(lenderSubmissions),
-  notifications: many(notifications),
-  auditLogs: many(auditLogs),
-}));
-
-export const advisorProfilesRelations = relations(advisorProfiles, ({ one }) => ({
-  user: one(users, {
-    fields: [advisorProfiles.userId],
-    references: [users.id],
-  }),
-}));
-
-export const lendersRelations = relations(lenders, ({ many }) => ({
-  lenderUsers: many(lenderUsers),
-  submissions: many(lenderSubmissions),
-  offers: many(loanOffers),
-}));
-
-export const lenderUsersRelations = relations(lenderUsers, ({ one }) => ({
-  user: one(users, {
-    fields: [lenderUsers.userId],
-    references: [users.id],
-  }),
-  lender: one(lenders, {
-    fields: [lenderUsers.lenderId],
-    references: [lenders.id],
-  }),
-}));
-
-export const clientsRelations = relations(clients, ({ many, one }) => ({
-  advisor: one(users, {
-    fields: [clients.advisorId],
-    references: [users.id],
-  }),
-  borrowers: many(borrowers),
-  liabilities: many(liabilities),
-  properties: many(properties),
-  loanRequests: many(loanRequests),
-  documents: many(documents),
-  submissions: many(lenderSubmissions),
-}));
-
-export const borrowersRelations = relations(borrowers, ({ one, many }) => ({
-  client: one(clients, {
-    fields: [borrowers.clientId],
-    references: [clients.id],
-  }),
-  employmentRecords: many(employmentRecords),
-  incomeSources: many(incomeSources),
-  documents: many(documents),
-}));
-
-export const lenderSubmissionsRelations = relations(lenderSubmissions, ({ one, many }) => ({
-  client: one(clients, {
-    fields: [lenderSubmissions.clientId],
-    references: [clients.id],
-  }),
-  advisor: one(users, {
-    fields: [lenderSubmissions.advisorId],
-    references: [users.id],
-  }),
-  lender: one(lenders, {
-    fields: [lenderSubmissions.lenderId],
-    references: [lenders.id],
-  }),
-  responses: many(lenderResponses),
-  identityRevealRequests: many(identityRevealRequests),
-  offers: many(loanOffers),
-  inviteTokens: many(lenderInviteTokens),
-}));
