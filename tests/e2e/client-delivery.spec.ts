@@ -63,7 +63,7 @@ test("final client module delivery verifies all required fields and deal types",
     await expect(page.getByLabel(/^גיל ילד/)).toHaveCount(2);
     await page.getByLabel("גיל ילד 1").fill("5");
     await page.getByLabel("גיל ילד 2").fill("9");
-    await page.getByLabel("מספר לווים בתיק").fill("2");
+    await page.getByLabel("מספר לווים בתיק").fill("1");
     await page.getByRole("button", {name: "הבא"}).click();
 
     await expect(page.getByText("הכנסה ברוטו")).toHaveCount(0);
@@ -148,7 +148,7 @@ test("final client module delivery verifies all required fields and deal types",
     await expect(page.getByText("6, 9")).toBeVisible();
     await page.getByRole("button", {name: "הכנסות", exact: true}).click();
     await expect(page.getByText("הכנסה מהשקעות")).toBeVisible();
-    await expect(page.getByText("24,000", {exact: false})).toBeVisible();
+    await expect(page.getByText("24,000", {exact: false}).first()).toBeVisible();
     expect(consoleErrors).toEqual([]);
     expect(failedRequests).toEqual([]);
     await page.screenshot({path: "output/playwright/final-client-delivery.png", fullPage: true, animations: "disabled"});

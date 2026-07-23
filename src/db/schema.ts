@@ -94,6 +94,11 @@ export const clients = pgTable("clients", {
   numberOfChildren: integer("number_of_children").notNull().default(0),
   childrenAges: jsonb("children_ages").$type<number[]>().notNull().default([]),
   borrowerCount: integer("borrower_count").notNull().default(1),
+  numberOfBorrowers: integer("number_of_borrowers").notNull().default(1),
+  borrowerRelationship: varchar("borrower_relationship", {length: 30}),
+  borrowerRelationshipOtherEncrypted: text("borrower_relationship_other_encrypted"),
+  householdChildrenCount: integer("household_children_count").notNull().default(0),
+  householdChildrenAges: jsonb("household_children_ages").$type<number[]>().notNull().default([]),
   deletedAt: timestamp("deleted_at", {withTimezone: true}),
   ...timestamps
 }, (table) => [
@@ -102,6 +107,9 @@ export const clients = pgTable("clients", {
   check("clients_marital_status_check", sql`${table.maritalStatus} in ('SINGLE', 'MARRIED', 'DIVORCED', 'WIDOWED', 'COMMON_LAW', 'SEPARATED', 'OTHER')`),
   check("clients_children_count_check", sql`${table.numberOfChildren} >= 0`),
   check("clients_borrower_count_check", sql`${table.borrowerCount} >= 1`)
+  ,check("clients_number_of_borrowers_check", sql`${table.numberOfBorrowers} between 1 and 5`)
+  ,check("clients_borrower_relationship_check", sql`${table.borrowerRelationship} is null or ${table.borrowerRelationship} in ('MARRIED', 'COMMON_LAW', 'FAMILY', 'PARTNERS', 'OTHER')`)
+  ,check("clients_household_children_count_check", sql`${table.householdChildrenCount} >= 0`)
 ]);
 
 export const borrowers = pgTable("borrowers", {
@@ -111,8 +119,28 @@ export const borrowers = pgTable("borrowers", {
   fullNameEncrypted: text("full_name_encrypted").notNull(),
   identityNumberEncrypted: text("identity_number_encrypted").notNull(),
   birthDate: timestamp("birth_date", {withTimezone: false}),
+  borrowerOrder: integer("borrower_order").notNull().default(1),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  firstNameEncrypted: text("first_name_encrypted"),
+  lastNameEncrypted: text("last_name_encrypted"),
+  identityNumberHash: varchar("identity_number_hash", {length: 64}),
+  birthDateEncrypted: text("date_of_birth_encrypted"),
+  phoneEncrypted: text("phone_encrypted"),
+  emailEncrypted: text("email_encrypted"),
+  addressEncrypted: text("address_encrypted"),
+  maritalStatus: varchar("marital_status", {length: 30}),
+  numberOfChildren: integer("number_of_children").notNull().default(0),
+  childrenAges: jsonb("children_ages").$type<number[]>().notNull().default([]),
   ...timestamps
-}, (table) => [index("borrowers_client_idx").on(table.clientId)]);
+}, (table) => [
+  index("borrowers_client_idx").on(table.clientId),
+  uniqueIndex("borrowers_client_order_uq").on(table.clientId, table.borrowerOrder),
+  uniqueIndex("borrowers_client_identity_uq").on(table.clientId, table.identityNumberHash),
+  uniqueIndex("borrowers_client_primary_uq").on(table.clientId).where(sql`${table.isPrimary} = true`),
+  check("borrowers_order_check", sql`${table.borrowerOrder} >= 1`),
+  check("borrowers_children_count_check", sql`${table.numberOfChildren} >= 0`),
+  check("borrowers_marital_status_check", sql`${table.maritalStatus} is null or ${table.maritalStatus} in ('SINGLE', 'MARRIED', 'DIVORCED', 'WIDOWED', 'COMMON_LAW', 'SEPARATED', 'OTHER')`)
+]);
 
 export const employmentRecords = pgTable("employment_records", {
   id: serial("id").primaryKey(),
@@ -127,6 +155,7 @@ export const employmentRecords = pgTable("employment_records", {
   additionalIncomeType: varchar("additional_income_type", {length: 50}),
   additionalIncomeAmount: numeric("additional_income_amount", {precision: 14, scale: 2}).notNull().default("0"),
   additionalIncomeDescriptionEncrypted: text("additional_income_description_encrypted"),
+  employmentSeniorityYears: integer("employment_seniority_years").notNull().default(0),
   startDate: timestamp("start_date", {withTimezone: false}),
   ...timestamps
 }, (table) => [
@@ -148,11 +177,13 @@ export const incomeSources = pgTable("income_sources", {
 export const liabilities = pgTable("liabilities", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull().references(() => clients.id),
+  borrowerId: integer("borrower_id").references(() => borrowers.id),
   liabilityType: varchar("liability_type", {length: 50}).notNull(),
   outstandingBalance: numeric("outstanding_balance", {precision: 14, scale: 2}).notNull(),
   monthlyPayment: numeric("monthly_payment", {precision: 14, scale: 2}).notNull(),
   ...timestamps
 }, (table) => [
+  index("liabilities_borrower_idx").on(table.borrowerId),
   check("liabilities_amounts_check", sql`${table.outstandingBalance} >= 0 and ${table.monthlyPayment} >= 0`)
 ]);
 

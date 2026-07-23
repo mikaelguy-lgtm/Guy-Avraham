@@ -35,6 +35,26 @@ export interface AdvisorProfile {
   disableGemini?: boolean;
 }
 
+export interface ClientBorrower {
+  id: number;
+  borrowerOrder: number;
+  isPrimary: boolean;
+  firstName: string;
+  lastName: string;
+  identityNumber: string;
+  birthDate: string;
+  age: number | null;
+  calculatedAge: number | null;
+  phone: string;
+  email: string;
+  address: string;
+  maritalStatus: string;
+  children: {numberOfChildren: number; childrenAges: number[]};
+  employment: {employmentType: string; employerName: string; jobTitle: string; employmentSeniorityYears: number};
+  income: {monthlyNetIncome: number; hasAdditionalIncome: boolean; additionalIncomeType: string | null; additionalIncomeAmount: number; additionalIncomeDescription: string | null};
+  liabilities: {monthlyLiabilities: number; existingMortgageBalance: number; existingMortgageMonthlyPayment: number};
+}
+
 export interface Client {
   id: number;
   publicCaseNumber: string;
@@ -52,6 +72,11 @@ export interface Client {
   numberOfChildren: number;
   childrenAges: number[];
   borrowerCount: number;
+  numberOfBorrowers: number;
+  borrowerRelationship: string | null;
+  borrowerRelationshipOther: string | null;
+  household: {numberOfChildren: number; childrenAges: number[]};
+  borrowers: ClientBorrower[];
   employmentType: string;
   employerName: string;
   jobTitle: string;
@@ -76,6 +101,8 @@ export interface Client {
   financingPercentage: number;
   latestSubmissionStatus: string | null;
   offerCount: number;
+  totalMonthlyIncome: number;
+  totalMonthlyPayments: number;
   createdAt: string;
   updatedAt: string;
 }

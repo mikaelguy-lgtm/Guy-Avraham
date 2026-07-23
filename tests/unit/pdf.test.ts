@@ -6,7 +6,8 @@ describe("anonymous PDF", () => {
   it("is generated only from the anonymous snapshot", async () => {
     const pdf = await createAnonymousPdf({
       publicCaseNumber: "SC-SAFE-123", dealType: "SECOND_HAND_PURCHASE", propertyType: "APARTMENT", propertyRegion: "CENTER",
-      propertyValue: 2_000_000, requestedAmount: 1_000_000, financingPercentage: 50, employmentType: "SALARIED",
+      propertyValue: 2_000_000, requestedAmount: 1_000_000, financingPercentage: 50, numberOfBorrowers: 2,
+      borrowerRelationship: "COUPLE", borrowerAges: [41, 39], employmentTypes: ["SALARIED", "SELF_EMPLOYED"],
       totalMonthlyIncome: 35_000, totalMonthlyPayments: 5_000, existingMortgageBalance: 400_000, requestedTermMonths: 240
     });
     const document = await getDocument({data: new Uint8Array(pdf)}).promise;

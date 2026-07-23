@@ -35,7 +35,10 @@ export interface AnonymousSubmissionSnapshot {
   propertyValue: number;
   requestedAmount: number;
   financingPercentage: number;
-  employmentType: string;
+  numberOfBorrowers: number;
+  borrowerRelationship: "COUPLE" | "FAMILY" | "PARTNERS" | "OTHER" | null;
+  borrowerAges: number[];
+  employmentTypes: string[];
   totalMonthlyIncome: number;
   totalMonthlyPayments: number;
   existingMortgageBalance: number;

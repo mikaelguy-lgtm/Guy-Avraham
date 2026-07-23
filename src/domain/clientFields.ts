@@ -28,3 +28,8 @@ export type PropertyType = typeof PROPERTY_TYPES[number];
 
 export const PROPERTY_REGIONS = ["CENTER", "NORTH", "SOUTH", "JERUSALEM"] as const;
 export type PropertyRegion = typeof PROPERTY_REGIONS[number];
+
+export const BORROWER_RELATIONSHIPS = ["MARRIED", "COMMON_LAW", "FAMILY", "PARTNERS", "OTHER"] as const;
+export type BorrowerRelationship = typeof BORROWER_RELATIONSHIPS[number];
+
+export const MAX_BORROWERS = 5;

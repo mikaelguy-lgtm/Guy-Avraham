@@ -122,6 +122,16 @@ export const formatOfferStatus = (value: string) => value === "SUBMITTED" ? "ה�
 export const formatIdentityStatus = (value: string) => labels[value] ?? "בטיפול";
 export const formatIdentityField = (value: string) => labels[value] ?? "פרט נוסף";
 
+const borrowerRelationshipLabels: Record<string, string> = {
+  MARRIED: "נשואים",
+  COMMON_LAW: "ידועים בציבור",
+  FAMILY: "משפחה",
+  PARTNERS: "שותפים",
+  OTHER: "אחר"
+};
+
+export const formatBorrowerRelationship = (value: string | null) => value ? borrowerRelationshipLabels[value] ?? "אחר" : "לווה יחיד";
+
 export function formatCurrency(value: number | string | null | undefined): string {
   const amount = Number(value ?? 0);
   return new Intl.NumberFormat("he-IL", {style: "currency", currency: "ILS", maximumFractionDigits: 0}).format(Number.isFinite(amount) ? amount : 0);

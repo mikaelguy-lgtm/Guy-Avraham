@@ -1,9 +1,21 @@
 # SynCash Local Production Rebuild Report
 
-Date: 2026-07-22
+Date: 2026-07-23
 Branch: `codex-syncash-production-rebuild`  
 Deployment performed: no  
-Remote push or PR performed: no
+Remote push performed: feature branch only; no merge or production deployment
+
+## Dynamic co-borrowers and automatic age — 2026-07-23
+
+- Added migration `drizzle/0005_next_thor.sql` with a safe legacy backfill into canonical `borrowers` rows, encrypted borrower PII, identity hashes, per-borrower employment/liabilities, borrower ordering, one-primary enforcement, and deferred count consistency triggers.
+- Create and update APIs now accept the nested `numberOfBorrowers`, relationship, household, `borrowers[]`, property, and loan-request structure. Ownership and roles remain server-derived, and all borrower writes run in one PostgreSQL transaction.
+- Supported relationship values are `MARRIED`, `COMMON_LAW`, `FAMILY`, `PARTNERS`, and `OTHER`; the UI renders only Hebrew labels. Married/common-law children are stored once at household level, while family/partner/other children remain borrower-specific.
+- `calculateAge` computes the current age from encrypted date of birth without persisting age. Future dates, borrowers under 18, ages over 120, invalid dates, duplicate identities, invalid ordering, and invalid primary designation are rejected in both frontend and backend validation.
+- The Hebrew RTL wizard, editor, and detail tabs render a separate card for every borrower, support dynamic add/remove/reorder with confirmations, preserve form state, show per-borrower errors, and calculate combined income, payments, repayment ratio, and loan-to-value.
+- Anonymous lender snapshots now include borrower count, generalized relationship, calculated ages, employment types, combined financials, and shared property/request data while excluding names, identity numbers, full birth dates, phones, email addresses, home/property addresses, child ages, employers, and professional notes.
+- Final verification: `db:generate` passed with no pending schema changes; `db:migrate` and `db:check` passed inside the API container; typecheck and lint passed; unit tests `48/48`, integration tests `64/64`, Playwright tests `9/9`, and web/API build passed.
+- Docker Compose reports all seven services healthy: `api`, `frontend`, `firebase-auth`, `postgres`, `redis`, `minio`, and `mailpit`.
+- Local verification URL: `http://localhost:5173/advisor/clients/new`.
 
 ## Origin/main transplant verification — 2026-07-22
 

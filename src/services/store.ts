@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   advisorProfiles,
@@ -10,6 +10,7 @@ import {
   emailLogs,
   employmentRecords,
   identityRevealRequests,
+  incomeSources,
   lenderInviteTokens,
   lenderResponses,
   lenderSubmissions,
@@ -26,20 +27,21 @@ import {
 import type { AdvisorAccount, AnonymousSubmissionSnapshot, DatabaseUser, IdentityField, UserStatus } from "../domain/types.js";
 import type { AuthorizationDirectory } from "../middleware/auth.js";
 
-export interface ClientMutationRecord {
+export interface BorrowerMutationRecord {
+  borrowerOrder: number;
+  isPrimary: boolean;
   firstNameEncrypted: string;
   lastNameEncrypted: string;
   identityNumberEncrypted: string;
+  identityNumberHash: string;
+  birthDateEncrypted: string;
   phoneEncrypted: string;
   emailEncrypted: string;
   addressEncrypted: string;
-  notesEncrypted: string;
   maritalStatus: string;
   numberOfChildren: number;
   childrenAges: number[];
-  borrowerCount: number;
   fullNameEncrypted: string;
-  birthDate: Date;
   employmentType: string;
   employerNameEncrypted: string;
   jobTitle: string;
@@ -49,6 +51,19 @@ export interface ClientMutationRecord {
   additionalIncomeType: string | null;
   additionalIncomeAmount: number;
   additionalIncomeDescriptionEncrypted: string | null;
+  monthlyLiabilities: number;
+  existingMortgageBalance: number;
+  existingMortgageMonthlyPayment: number;
+}
+
+export interface ClientMutationRecord {
+  notesEncrypted: string;
+  numberOfBorrowers: number;
+  borrowerRelationship: string | null;
+  borrowerRelationshipOtherEncrypted: string | null;
+  householdChildrenCount: number;
+  householdChildrenAges: number[];
+  borrowers: BorrowerMutationRecord[];
   dealType: string;
   propertyType: string;
   propertyTypeOtherDescriptionEncrypted: string | null;
@@ -56,11 +71,8 @@ export interface ClientMutationRecord {
   propertyCity: string;
   propertyAddressEncrypted: string;
   propertyValue: number;
-  existingMortgageBalance: number;
   requestedAmount: number;
   requestedTermMonths: number;
-  monthlyLiabilities: number;
-  existingMortgageMonthlyPayment: number;
   status: "ACTIVE";
 }
 
@@ -85,17 +97,54 @@ export interface ClientRecord {
   numberOfChildren: number;
   childrenAges: number[];
   borrowerCount: number;
+  numberOfBorrowers: number;
+  borrowerRelationship: string | null;
+  borrowerRelationshipOtherEncrypted: string | null;
+  householdChildrenCount: number;
+  householdChildrenAges: number[];
   deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
+export interface BorrowerFinancialDetails {
+  id: number;
+  borrowerOrder: number;
+  isPrimary: boolean;
+  firstNameEncrypted: string | null;
+  lastNameEncrypted: string | null;
+  identityNumberEncrypted: string;
+  birthDateEncrypted: string | null;
+  birthDate: Date | null;
+  phoneEncrypted: string | null;
+  emailEncrypted: string | null;
+  addressEncrypted: string | null;
+  maritalStatus: string | null;
+  numberOfChildren: number;
+  childrenAges: number[];
+  employmentType: string;
+  employerNameEncrypted: string | null;
+  jobTitle: string;
+  employmentStartDate: Date | null;
+  employmentSeniorityYears: number;
+  monthlyNetIncome: number;
+  hasAdditionalIncome: boolean;
+  additionalIncomeType: string | null;
+  additionalIncomeAmount: number;
+  additionalIncomeDescriptionEncrypted: string | null;
+  monthlyLiabilities: number;
+  existingMortgageBalance: number;
+  existingMortgageMonthlyPayment: number;
+}
+
 export interface ClientFinancialDetails {
+  borrowers: BorrowerFinancialDetails[];
   birthDate: Date | null;
   employmentType: string;
   employerNameEncrypted: string | null;
   jobTitle: string;
   employmentStartDate: Date | null;
+  employmentSeniorityYears: number;
   monthlyNetIncome: number;
   hasAdditionalIncome: boolean;
   additionalIncomeType: string | null;
@@ -164,7 +213,9 @@ export interface AppStore extends AuthorizationDirectory {
   listClientSubmissions(clientId: number): Promise<Array<{id: number; lenderId: number; lenderName: string; status: string; updatedAt: Date}>>;
   getSnapshotSource(clientId: number): Promise<{
     publicCaseNumber: string; dealType: string; propertyType: string; propertyRegion: string; propertyValue: number;
-    requestedAmount: number; employmentType: string; totalMonthlyIncome: number; totalMonthlyPayments: number;
+    requestedAmount: number; numberOfBorrowers: number; borrowerRelationship: string | null;
+    employmentTypes: string[]; borrowerBirthDatesEncrypted: Array<string | null>; borrowerBirthDates: Array<Date | null>;
+    totalMonthlyIncome: number; totalMonthlyPayments: number;
     existingMortgageBalance: number; requestedTermMonths: number;
   } | null>;
   createSubmission(values: {clientId: number; lenderId: number; createdByUserId: number; snapshot: AnonymousSubmissionSnapshot; pdfStorageKey: string; tokenHash: string; expiresAt: Date}): Promise<{id: number}>;
@@ -318,39 +369,66 @@ export class PostgresStore implements AppStore {
 
   async createClient(record: CreateClientRecord): Promise<ClientRecord> {
     return db.transaction(async (transaction) => {
+      const primary = record.borrowers[0];
+      const existingMortgageBalance = record.borrowers.reduce((sum, borrower) => sum + borrower.existingMortgageBalance, 0);
       const [client] = await transaction.insert(clients).values({
         publicCaseNumber: record.publicCaseNumber,
         advisorId: record.advisorId,
-        firstNameEncrypted: record.firstNameEncrypted,
-        lastNameEncrypted: record.lastNameEncrypted,
-        identityNumberEncrypted: record.identityNumberEncrypted,
-        phoneEncrypted: record.phoneEncrypted,
-        emailEncrypted: record.emailEncrypted,
-        addressEncrypted: record.addressEncrypted,
+        firstNameEncrypted: primary.firstNameEncrypted,
+        lastNameEncrypted: primary.lastNameEncrypted,
+        identityNumberEncrypted: primary.identityNumberEncrypted,
+        phoneEncrypted: primary.phoneEncrypted,
+        emailEncrypted: primary.emailEncrypted,
+        addressEncrypted: primary.addressEncrypted,
         notesEncrypted: record.notesEncrypted,
-        maritalStatus: record.maritalStatus,
-        numberOfChildren: record.numberOfChildren,
-        childrenAges: record.childrenAges,
-        borrowerCount: record.borrowerCount,
+        maritalStatus: primary.maritalStatus,
+        numberOfChildren: primary.numberOfChildren,
+        childrenAges: primary.childrenAges,
+        borrowerCount: record.numberOfBorrowers,
+        numberOfBorrowers: record.numberOfBorrowers,
+        borrowerRelationship: record.borrowerRelationship,
+        borrowerRelationshipOtherEncrypted: record.borrowerRelationshipOtherEncrypted,
+        householdChildrenCount: record.householdChildrenCount,
+        householdChildrenAges: record.householdChildrenAges,
         status: record.status
       }).returning();
-      const [borrower] = await transaction.insert(borrowers).values({
-        clientId: client.id, borrowerType: "PRIMARY", fullNameEncrypted: record.fullNameEncrypted,
-        identityNumberEncrypted: record.identityNumberEncrypted, birthDate: record.birthDate
-      }).returning();
-      await transaction.insert(employmentRecords).values({
-        borrowerId: borrower.id, employmentType: record.employmentType,
-        employerNameEncrypted: record.employerNameEncrypted, jobTitle: record.jobTitle,
-        startDate: new Date(new Date().setFullYear(new Date().getFullYear() - record.employmentSeniorityYears)),
-        monthlyNetIncome: String(record.monthlyNetIncome),
-        hasAdditionalIncome: record.hasAdditionalIncome, additionalIncomeType: record.additionalIncomeType,
-        additionalIncomeAmount: String(record.additionalIncomeAmount),
-        additionalIncomeDescriptionEncrypted: record.additionalIncomeDescriptionEncrypted
-      });
+      for (const borrowerRecord of record.borrowers) {
+        const [borrower] = await transaction.insert(borrowers).values({
+          clientId: client.id,
+          borrowerType: borrowerRecord.isPrimary ? "PRIMARY" : "CO_BORROWER",
+          borrowerOrder: borrowerRecord.borrowerOrder,
+          isPrimary: borrowerRecord.isPrimary,
+          fullNameEncrypted: borrowerRecord.fullNameEncrypted,
+          firstNameEncrypted: borrowerRecord.firstNameEncrypted,
+          lastNameEncrypted: borrowerRecord.lastNameEncrypted,
+          identityNumberEncrypted: borrowerRecord.identityNumberEncrypted,
+          identityNumberHash: borrowerRecord.identityNumberHash,
+          birthDateEncrypted: borrowerRecord.birthDateEncrypted,
+          phoneEncrypted: borrowerRecord.phoneEncrypted,
+          emailEncrypted: borrowerRecord.emailEncrypted,
+          addressEncrypted: borrowerRecord.addressEncrypted,
+          maritalStatus: borrowerRecord.maritalStatus,
+          numberOfChildren: borrowerRecord.numberOfChildren,
+          childrenAges: borrowerRecord.childrenAges
+        }).returning({id: borrowers.id});
+        await transaction.insert(employmentRecords).values({
+          borrowerId: borrower.id, employmentType: borrowerRecord.employmentType,
+          employerNameEncrypted: borrowerRecord.employerNameEncrypted, jobTitle: borrowerRecord.jobTitle,
+          employmentSeniorityYears: borrowerRecord.employmentSeniorityYears,
+          monthlyNetIncome: String(borrowerRecord.monthlyNetIncome),
+          hasAdditionalIncome: borrowerRecord.hasAdditionalIncome, additionalIncomeType: borrowerRecord.additionalIncomeType,
+          additionalIncomeAmount: String(borrowerRecord.additionalIncomeAmount),
+          additionalIncomeDescriptionEncrypted: borrowerRecord.additionalIncomeDescriptionEncrypted
+        });
+        await transaction.insert(liabilities).values([
+          {clientId: client.id, borrowerId: borrower.id, liabilityType: "OTHER", outstandingBalance: "0", monthlyPayment: String(borrowerRecord.monthlyLiabilities)},
+          {clientId: client.id, borrowerId: borrower.id, liabilityType: "MORTGAGE", outstandingBalance: String(borrowerRecord.existingMortgageBalance), monthlyPayment: String(borrowerRecord.existingMortgageMonthlyPayment)}
+        ]);
+      }
       await transaction.insert(properties).values({
         clientId: client.id, propertyType: record.propertyType, region: record.propertyRegion, city: record.propertyCity,
         addressEncrypted: record.propertyAddressEncrypted, estimatedValue: String(record.propertyValue),
-        existingMortgageBalance: String(record.existingMortgageBalance),
+        existingMortgageBalance: String(existingMortgageBalance),
         propertyTypeOtherDescriptionEncrypted: record.propertyTypeOtherDescriptionEncrypted
       });
       await transaction.insert(loanRequests).values({
@@ -358,10 +436,6 @@ export class PostgresStore implements AppStore {
         requestedTermMonths: record.requestedTermMonths,
         loanToValue: String(record.propertyValue > 0 ? (record.requestedAmount / record.propertyValue) * 100 : 0)
       });
-      await transaction.insert(liabilities).values([
-        {clientId: client.id, liabilityType: "OTHER", outstandingBalance: "0", monthlyPayment: String(record.monthlyLiabilities)},
-        {clientId: client.id, liabilityType: "MORTGAGE", outstandingBalance: String(record.existingMortgageBalance), monthlyPayment: String(record.existingMortgageMonthlyPayment)}
-      ]);
       return client;
     });
   }
@@ -372,8 +446,21 @@ export class PostgresStore implements AppStore {
   }
 
   async getClientDetails(id: number): Promise<ClientFinancialDetails | null> {
-    const [employment] = await db.select({
+    const borrowerRows = await db.select({
+      id: borrowers.id,
+      borrowerOrder: borrowers.borrowerOrder,
+      isPrimary: borrowers.isPrimary,
+      firstNameEncrypted: borrowers.firstNameEncrypted,
+      lastNameEncrypted: borrowers.lastNameEncrypted,
+      identityNumberEncrypted: borrowers.identityNumberEncrypted,
+      birthDateEncrypted: borrowers.birthDateEncrypted,
       birthDate: borrowers.birthDate,
+      phoneEncrypted: borrowers.phoneEncrypted,
+      emailEncrypted: borrowers.emailEncrypted,
+      addressEncrypted: borrowers.addressEncrypted,
+      maritalStatus: borrowers.maritalStatus,
+      numberOfChildren: borrowers.numberOfChildren,
+      childrenAges: borrowers.childrenAges,
       employmentType: employmentRecords.employmentType,
       employerNameEncrypted: employmentRecords.employerNameEncrypted,
       jobTitle: employmentRecords.jobTitle,
@@ -382,32 +469,48 @@ export class PostgresStore implements AppStore {
       hasAdditionalIncome: employmentRecords.hasAdditionalIncome,
       additionalIncomeType: employmentRecords.additionalIncomeType,
       additionalIncomeAmount: employmentRecords.additionalIncomeAmount,
-      additionalIncomeDescriptionEncrypted: employmentRecords.additionalIncomeDescriptionEncrypted
-    }).from(employmentRecords).innerJoin(borrowers, eq(borrowers.id, employmentRecords.borrowerId))
-      .where(eq(borrowers.clientId, id)).limit(1);
+      additionalIncomeDescriptionEncrypted: employmentRecords.additionalIncomeDescriptionEncrypted,
+      employmentSeniorityYears: employmentRecords.employmentSeniorityYears
+    }).from(borrowers).innerJoin(employmentRecords, eq(borrowers.id, employmentRecords.borrowerId))
+      .where(eq(borrowers.clientId, id)).orderBy(asc(borrowers.borrowerOrder));
     const [property] = await db.select().from(properties).where(eq(properties.clientId, id)).limit(1);
     const [loan] = await db.select().from(loanRequests).where(eq(loanRequests.clientId, id)).limit(1);
-    if (!employment || !property || !loan) return null;
-    const liabilityRows = await db.select({type: liabilities.liabilityType, monthlyPayment: liabilities.monthlyPayment})
+    if (borrowerRows.length === 0 || !property || !loan) return null;
+    const liabilityRows = await db.select({borrowerId: liabilities.borrowerId, type: liabilities.liabilityType, outstandingBalance: liabilities.outstandingBalance, monthlyPayment: liabilities.monthlyPayment})
       .from(liabilities).where(eq(liabilities.clientId, id));
     const [latestSubmission] = await db.select({status: lenderSubmissions.status}).from(lenderSubmissions)
       .where(eq(lenderSubmissions.clientId, id)).orderBy(desc(lenderSubmissions.updatedAt)).limit(1);
     const [offersCount] = await db.select({value: sql<number>`count(*)::int`}).from(loanOffers)
       .innerJoin(lenderSubmissions, eq(lenderSubmissions.id, loanOffers.submissionId))
       .where(eq(lenderSubmissions.clientId, id));
+    const borrowerDetails = borrowerRows.map((borrower) => {
+      const ownLiabilities = liabilityRows.filter((row) => row.borrowerId === borrower.id || (row.borrowerId === null && borrower.isPrimary));
+      return {
+        ...borrower,
+        jobTitle: borrower.jobTitle ?? "",
+        monthlyNetIncome: Number(borrower.monthlyNetIncome),
+        additionalIncomeAmount: Number(borrower.additionalIncomeAmount),
+        monthlyLiabilities: ownLiabilities.filter((row) => row.type !== "MORTGAGE").reduce((sum, row) => sum + Number(row.monthlyPayment), 0),
+        existingMortgageBalance: ownLiabilities.filter((row) => row.type === "MORTGAGE").reduce((sum, row) => sum + Number(row.outstandingBalance), 0),
+        existingMortgageMonthlyPayment: ownLiabilities.filter((row) => row.type === "MORTGAGE").reduce((sum, row) => sum + Number(row.monthlyPayment), 0)
+      };
+    });
+    const primary = borrowerDetails[0];
     return {
-      birthDate: employment.birthDate,
-      employmentType: employment.employmentType,
-      employerNameEncrypted: employment.employerNameEncrypted,
-      jobTitle: employment.jobTitle ?? "",
-      employmentStartDate: employment.employmentStartDate,
-      monthlyNetIncome: Number(employment.monthlyNetIncome),
-      hasAdditionalIncome: employment.hasAdditionalIncome,
-      additionalIncomeType: employment.additionalIncomeType,
-      additionalIncomeAmount: Number(employment.additionalIncomeAmount),
-      additionalIncomeDescriptionEncrypted: employment.additionalIncomeDescriptionEncrypted,
-      monthlyLiabilities: liabilityRows.filter((row) => row.type !== "MORTGAGE").reduce((sum, row) => sum + Number(row.monthlyPayment), 0),
-      existingMortgageMonthlyPayment: liabilityRows.filter((row) => row.type === "MORTGAGE").reduce((sum, row) => sum + Number(row.monthlyPayment), 0),
+      borrowers: borrowerDetails,
+      birthDate: primary.birthDate,
+      employmentType: primary.employmentType,
+      employerNameEncrypted: primary.employerNameEncrypted,
+      jobTitle: primary.jobTitle,
+      employmentStartDate: primary.employmentStartDate,
+      employmentSeniorityYears: primary.employmentSeniorityYears,
+      monthlyNetIncome: primary.monthlyNetIncome,
+      hasAdditionalIncome: primary.hasAdditionalIncome,
+      additionalIncomeType: primary.additionalIncomeType,
+      additionalIncomeAmount: primary.additionalIncomeAmount,
+      additionalIncomeDescriptionEncrypted: primary.additionalIncomeDescriptionEncrypted,
+      monthlyLiabilities: borrowerDetails.reduce((sum, borrower) => sum + borrower.monthlyLiabilities, 0),
+      existingMortgageMonthlyPayment: borrowerDetails.reduce((sum, borrower) => sum + borrower.existingMortgageMonthlyPayment, 0),
       dealType: loan.purpose,
       propertyType: property.propertyType,
       propertyRegion: property.region,
@@ -426,46 +529,104 @@ export class PostgresStore implements AppStore {
 
   async updateClient(id: number, record: ClientMutationRecord): Promise<ClientRecord | null> {
     return db.transaction(async (transaction) => {
+      const primary = record.borrowers[0];
+      const existingMortgageBalance = record.borrowers.reduce((sum, borrower) => sum + borrower.existingMortgageBalance, 0);
       const [client] = await transaction.update(clients).set({
-        firstNameEncrypted: record.firstNameEncrypted, lastNameEncrypted: record.lastNameEncrypted,
-        identityNumberEncrypted: record.identityNumberEncrypted, phoneEncrypted: record.phoneEncrypted,
-        emailEncrypted: record.emailEncrypted, addressEncrypted: record.addressEncrypted, notesEncrypted: record.notesEncrypted,
-        maritalStatus: record.maritalStatus, numberOfChildren: record.numberOfChildren, childrenAges: record.childrenAges,
-        borrowerCount: record.borrowerCount, status: record.status, updatedAt: new Date()
+        firstNameEncrypted: primary.firstNameEncrypted, lastNameEncrypted: primary.lastNameEncrypted,
+        identityNumberEncrypted: primary.identityNumberEncrypted, phoneEncrypted: primary.phoneEncrypted,
+        emailEncrypted: primary.emailEncrypted, addressEncrypted: primary.addressEncrypted, notesEncrypted: record.notesEncrypted,
+        maritalStatus: primary.maritalStatus, numberOfChildren: primary.numberOfChildren, childrenAges: primary.childrenAges,
+        borrowerCount: record.numberOfBorrowers, numberOfBorrowers: record.numberOfBorrowers,
+        borrowerRelationship: record.borrowerRelationship,
+        borrowerRelationshipOtherEncrypted: record.borrowerRelationshipOtherEncrypted,
+        householdChildrenCount: record.householdChildrenCount,
+        householdChildrenAges: record.householdChildrenAges,
+        status: record.status, updatedAt: new Date()
       }).where(and(eq(clients.id, id), isNull(clients.deletedAt))).returning();
       if (!client) return null;
 
-      const [borrower] = await transaction.select({id: borrowers.id}).from(borrowers)
-        .where(and(eq(borrowers.clientId, id), eq(borrowers.borrowerType, "PRIMARY"))).limit(1);
+      const existingBorrowers = await transaction.select({id: borrowers.id, borrowerOrder: borrowers.borrowerOrder, identityNumberHash: borrowers.identityNumberHash}).from(borrowers)
+        .where(eq(borrowers.clientId, id)).orderBy(asc(borrowers.borrowerOrder));
       const [property] = await transaction.select({id: properties.id}).from(properties).where(eq(properties.clientId, id)).limit(1);
       const [loan] = await transaction.select({id: loanRequests.id}).from(loanRequests).where(eq(loanRequests.clientId, id)).limit(1);
-      if (!borrower || !property || !loan) throw new Error("CLIENT_FINANCIAL_DATA_INCOMPLETE");
+      if (!property || !loan) throw new Error("CLIENT_FINANCIAL_DATA_INCOMPLETE");
 
+      const retainedBorrowerIds: number[] = [];
       await transaction.update(borrowers).set({
-        fullNameEncrypted: record.fullNameEncrypted, identityNumberEncrypted: record.identityNumberEncrypted,
-        birthDate: record.birthDate, updatedAt: new Date()
-      }).where(eq(borrowers.id, borrower.id));
-      await transaction.update(employmentRecords).set({
-        employmentType: record.employmentType, employerNameEncrypted: record.employerNameEncrypted,
-        jobTitle: record.jobTitle, startDate: new Date(new Date().setFullYear(new Date().getFullYear() - record.employmentSeniorityYears)),
-        monthlyNetIncome: String(record.monthlyNetIncome), hasAdditionalIncome: record.hasAdditionalIncome,
-        additionalIncomeType: record.additionalIncomeType, additionalIncomeAmount: String(record.additionalIncomeAmount),
-        additionalIncomeDescriptionEncrypted: record.additionalIncomeDescriptionEncrypted, updatedAt: new Date()
-      }).where(eq(employmentRecords.borrowerId, borrower.id));
+        borrowerOrder: sql`${borrowers.borrowerOrder} + 100`,
+        isPrimary: false,
+        borrowerType: "CO_BORROWER",
+        updatedAt: new Date()
+      }).where(eq(borrowers.clientId, id));
+      for (const borrowerRecord of record.borrowers) {
+        const existingBorrower = existingBorrowers.find((item) => item.identityNumberHash === borrowerRecord.identityNumberHash)
+          ?? existingBorrowers.find((item) => item.borrowerOrder === borrowerRecord.borrowerOrder && !retainedBorrowerIds.includes(item.id));
+        let borrowerId: number;
+        const borrowerValues = {
+          borrowerType: borrowerRecord.isPrimary ? "PRIMARY" : "CO_BORROWER",
+          borrowerOrder: borrowerRecord.borrowerOrder,
+          isPrimary: borrowerRecord.isPrimary,
+          fullNameEncrypted: borrowerRecord.fullNameEncrypted,
+          firstNameEncrypted: borrowerRecord.firstNameEncrypted,
+          lastNameEncrypted: borrowerRecord.lastNameEncrypted,
+          identityNumberEncrypted: borrowerRecord.identityNumberEncrypted,
+          identityNumberHash: borrowerRecord.identityNumberHash,
+          birthDateEncrypted: borrowerRecord.birthDateEncrypted,
+          birthDate: null,
+          phoneEncrypted: borrowerRecord.phoneEncrypted,
+          emailEncrypted: borrowerRecord.emailEncrypted,
+          addressEncrypted: borrowerRecord.addressEncrypted,
+          maritalStatus: borrowerRecord.maritalStatus,
+          numberOfChildren: borrowerRecord.numberOfChildren,
+          childrenAges: borrowerRecord.childrenAges,
+          updatedAt: new Date()
+        };
+        if (existingBorrower) {
+          borrowerId = existingBorrower.id;
+          await transaction.update(borrowers).set(borrowerValues).where(eq(borrowers.id, borrowerId));
+        } else {
+          const [createdBorrower] = await transaction.insert(borrowers).values({clientId: id, ...borrowerValues}).returning({id: borrowers.id});
+          borrowerId = createdBorrower.id;
+        }
+        retainedBorrowerIds.push(borrowerId);
+        const [employment] = await transaction.select({id: employmentRecords.id}).from(employmentRecords).where(eq(employmentRecords.borrowerId, borrowerId)).limit(1);
+        const employmentValues = {
+          employmentType: borrowerRecord.employmentType,
+          employerNameEncrypted: borrowerRecord.employerNameEncrypted,
+          jobTitle: borrowerRecord.jobTitle,
+          employmentSeniorityYears: borrowerRecord.employmentSeniorityYears,
+          startDate: null,
+          monthlyNetIncome: String(borrowerRecord.monthlyNetIncome),
+          hasAdditionalIncome: borrowerRecord.hasAdditionalIncome,
+          additionalIncomeType: borrowerRecord.additionalIncomeType,
+          additionalIncomeAmount: String(borrowerRecord.additionalIncomeAmount),
+          additionalIncomeDescriptionEncrypted: borrowerRecord.additionalIncomeDescriptionEncrypted,
+          updatedAt: new Date()
+        };
+        if (employment) await transaction.update(employmentRecords).set(employmentValues).where(eq(employmentRecords.id, employment.id));
+        else await transaction.insert(employmentRecords).values({borrowerId, ...employmentValues});
+        await transaction.delete(liabilities).where(eq(liabilities.borrowerId, borrowerId));
+        await transaction.insert(liabilities).values([
+          {clientId: id, borrowerId, liabilityType: "OTHER", outstandingBalance: "0", monthlyPayment: String(borrowerRecord.monthlyLiabilities)},
+          {clientId: id, borrowerId, liabilityType: "MORTGAGE", outstandingBalance: String(borrowerRecord.existingMortgageBalance), monthlyPayment: String(borrowerRecord.existingMortgageMonthlyPayment)}
+        ]);
+      }
+      const removedBorrowerIds = existingBorrowers.map((item) => item.id).filter((borrowerId) => !retainedBorrowerIds.includes(borrowerId));
+      if (removedBorrowerIds.length > 0) {
+        await transaction.delete(liabilities).where(inArray(liabilities.borrowerId, removedBorrowerIds));
+        await transaction.delete(incomeSources).where(inArray(incomeSources.borrowerId, removedBorrowerIds));
+        await transaction.delete(employmentRecords).where(inArray(employmentRecords.borrowerId, removedBorrowerIds));
+        await transaction.delete(borrowers).where(inArray(borrowers.id, removedBorrowerIds));
+      }
       await transaction.update(properties).set({
         propertyType: record.propertyType, propertyTypeOtherDescriptionEncrypted: record.propertyTypeOtherDescriptionEncrypted,
         region: record.propertyRegion, city: record.propertyCity, addressEncrypted: record.propertyAddressEncrypted,
-        estimatedValue: String(record.propertyValue), existingMortgageBalance: String(record.existingMortgageBalance), updatedAt: new Date()
+        estimatedValue: String(record.propertyValue), existingMortgageBalance: String(existingMortgageBalance), updatedAt: new Date()
       }).where(eq(properties.id, property.id));
       await transaction.update(loanRequests).set({
         purpose: record.dealType, requestedAmount: String(record.requestedAmount), requestedTermMonths: record.requestedTermMonths,
         loanToValue: String(record.propertyValue > 0 ? (record.requestedAmount / record.propertyValue) * 100 : 0), updatedAt: new Date()
       }).where(eq(loanRequests.id, loan.id));
-      await transaction.delete(liabilities).where(eq(liabilities.clientId, id));
-      await transaction.insert(liabilities).values([
-        {clientId: id, liabilityType: "OTHER", outstandingBalance: "0", monthlyPayment: String(record.monthlyLiabilities)},
-        {clientId: id, liabilityType: "MORTGAGE", outstandingBalance: String(record.existingMortgageBalance), monthlyPayment: String(record.existingMortgageMonthlyPayment)}
-      ]);
       return client;
     });
   }
@@ -505,23 +666,34 @@ export class PostgresStore implements AppStore {
   }
 
   async getSnapshotSource(clientId: number) {
-    const [client] = await db.select({publicCaseNumber: clients.publicCaseNumber}).from(clients).where(and(eq(clients.id, clientId), isNull(clients.deletedAt))).limit(1);
+    const [client] = await db.select({
+      publicCaseNumber: clients.publicCaseNumber,
+      numberOfBorrowers: clients.numberOfBorrowers,
+      borrowerRelationship: clients.borrowerRelationship
+    }).from(clients).where(and(eq(clients.id, clientId), isNull(clients.deletedAt))).limit(1);
     if (!client) return null;
     const [property] = await db.select().from(properties).where(eq(properties.clientId, clientId)).limit(1);
     const [loan] = await db.select().from(loanRequests).where(eq(loanRequests.clientId, clientId)).limit(1);
-    const [employment] = await db.select({
+    const employmentRows = await db.select({
       employmentType: employmentRecords.employmentType,
       monthlyNetIncome: employmentRecords.monthlyNetIncome,
-      additionalIncomeAmount: employmentRecords.additionalIncomeAmount
+      additionalIncomeAmount: employmentRecords.additionalIncomeAmount,
+      birthDateEncrypted: borrowers.birthDateEncrypted,
+      birthDate: borrowers.birthDate
     })
-      .from(employmentRecords).innerJoin(borrowers, eq(borrowers.id, employmentRecords.borrowerId)).where(eq(borrowers.clientId, clientId)).limit(1);
+      .from(employmentRecords).innerJoin(borrowers, eq(borrowers.id, employmentRecords.borrowerId))
+      .where(eq(borrowers.clientId, clientId)).orderBy(asc(borrowers.borrowerOrder));
     const [liability] = await db.select({monthly: sql<string>`coalesce(sum(${liabilities.monthlyPayment}), 0)`}).from(liabilities).where(eq(liabilities.clientId, clientId));
-    if (!property || !loan || !employment) return null;
+    if (!property || !loan || employmentRows.length === 0) return null;
     return {
       publicCaseNumber: client.publicCaseNumber, dealType: loan.purpose, propertyType: property.propertyType,
       propertyRegion: property.region, propertyValue: Number(property.estimatedValue), requestedAmount: Number(loan.requestedAmount),
-      employmentType: employment.employmentType,
-      totalMonthlyIncome: Number(employment.monthlyNetIncome) + Number(employment.additionalIncomeAmount),
+      numberOfBorrowers: client.numberOfBorrowers,
+      borrowerRelationship: client.borrowerRelationship,
+      employmentTypes: employmentRows.map((employment) => employment.employmentType),
+      borrowerBirthDatesEncrypted: employmentRows.map((employment) => employment.birthDateEncrypted),
+      borrowerBirthDates: employmentRows.map((employment) => employment.birthDate),
+      totalMonthlyIncome: employmentRows.reduce((sum, employment) => sum + Number(employment.monthlyNetIncome) + Number(employment.additionalIncomeAmount), 0),
       totalMonthlyPayments: Number(liability?.monthly ?? 0), existingMortgageBalance: Number(property.existingMortgageBalance),
       requestedTermMonths: loan.requestedTermMonths
     };
@@ -655,16 +827,25 @@ export class PostgresStore implements AppStore {
 
   async getIdentityData(clientId: number) {
     const [row] = await db.select({
-      firstNameEncrypted: clients.firstNameEncrypted, lastNameEncrypted: clients.lastNameEncrypted,
-      phoneEncrypted: clients.phoneEncrypted, emailEncrypted: clients.emailEncrypted,
-      identityNumberEncrypted: clients.identityNumberEncrypted, propertyAddressEncrypted: properties.addressEncrypted,
+      firstNameEncrypted: borrowers.firstNameEncrypted, lastNameEncrypted: borrowers.lastNameEncrypted,
+      phoneEncrypted: borrowers.phoneEncrypted, emailEncrypted: borrowers.emailEncrypted,
+      identityNumberEncrypted: borrowers.identityNumberEncrypted, propertyAddressEncrypted: properties.addressEncrypted,
       employerNameEncrypted: employmentRecords.employerNameEncrypted
     }).from(clients)
       .leftJoin(properties, eq(properties.clientId, clients.id))
       .leftJoin(borrowers, eq(borrowers.clientId, clients.id))
       .leftJoin(employmentRecords, eq(employmentRecords.borrowerId, borrowers.id))
-      .where(eq(clients.id, clientId)).limit(1);
-    return row ?? null;
+      .where(and(eq(clients.id, clientId), eq(borrowers.isPrimary, true))).limit(1);
+    if (!row?.firstNameEncrypted || !row.lastNameEncrypted || !row.phoneEncrypted || !row.emailEncrypted || !row.identityNumberEncrypted) return null;
+    return {
+      firstNameEncrypted: row.firstNameEncrypted,
+      lastNameEncrypted: row.lastNameEncrypted,
+      phoneEncrypted: row.phoneEncrypted,
+      emailEncrypted: row.emailEncrypted,
+      identityNumberEncrypted: row.identityNumberEncrypted,
+      propertyAddressEncrypted: row.propertyAddressEncrypted,
+      employerNameEncrypted: row.employerNameEncrypted
+    };
   }
 
   async createOffer(values: {submissionId: number; userId: number; amount: number; interestRate: number; termMonths: number; monthlyPayment?: number; conditions?: string; expiresAt?: Date}) {

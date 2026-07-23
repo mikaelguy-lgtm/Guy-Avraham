@@ -8,7 +8,10 @@ export interface SnapshotSource {
   propertyRegion: string;
   propertyValue: number;
   requestedAmount: number;
-  employmentType: string;
+  numberOfBorrowers: number;
+  borrowerRelationship: string | null;
+  borrowerAges: number[];
+  employmentTypes: string[];
   totalMonthlyIncome: number;
   totalMonthlyPayments: number;
   existingMortgageBalance: number;
@@ -25,7 +28,12 @@ export function buildAnonymousSubmissionSnapshot(source: SnapshotSource): Anonym
     propertyValue: source.propertyValue,
     requestedAmount: source.requestedAmount,
     financingPercentage,
-    employmentType: source.employmentType,
+    numberOfBorrowers: source.numberOfBorrowers,
+    borrowerRelationship: source.borrowerRelationship === "MARRIED" || source.borrowerRelationship === "COMMON_LAW"
+      ? "COUPLE"
+      : source.borrowerRelationship as "FAMILY" | "PARTNERS" | "OTHER" | null,
+    borrowerAges: source.borrowerAges,
+    employmentTypes: source.employmentTypes,
     totalMonthlyIncome: source.totalMonthlyIncome,
     totalMonthlyPayments: source.totalMonthlyPayments,
     existingMortgageBalance: source.existingMortgageBalance,

@@ -18,6 +18,7 @@ import { sanitizeEmailError, sanitizeSmtpFailure, type EmailService } from "../s
 import { ADVISOR_EMAIL_VERIFICATION_TEMPLATE, EmailVerificationDeliveryError, type EmailVerificationService } from "../services/emailVerification.js";
 import type { GeminiService } from "../services/gemini.js";
 import { EncryptionService, hashToken } from "../utils/crypto.js";
+import { calculateAge } from "../utils/age.js";
 import type { SecretProvider } from "../utils/secretManager.js";
 
 export interface AppServices {
@@ -65,59 +66,129 @@ function publicAdvisorAccount(account: Awaited<ReturnType<AppStore["getAdvisorAc
 function clientMutationRecord(input: ClientInput, encryption: EncryptionService): ClientMutationRecord {
   const encrypt = (value: string) => encryption.encrypt(value);
   return {
-    firstNameEncrypted: encrypt(input.firstName), lastNameEncrypted: encrypt(input.lastName),
-    identityNumberEncrypted: encrypt(input.identityNumber), phoneEncrypted: encrypt(input.phone),
-    emailEncrypted: encrypt(input.email), addressEncrypted: encrypt(input.address), notesEncrypted: encrypt(input.notes),
-    maritalStatus: input.maritalStatus, numberOfChildren: input.numberOfChildren, childrenAges: input.childrenAges,
-    borrowerCount: input.borrowerCount, fullNameEncrypted: encrypt(`${input.firstName} ${input.lastName}`),
-    birthDate: new Date(`${input.birthDate}T00:00:00.000Z`), employmentType: input.employmentType,
-    employerNameEncrypted: encrypt(input.employerName), jobTitle: input.jobTitle,
-    employmentSeniorityYears: input.employmentSeniorityYears, monthlyNetIncome: input.monthlyNetIncome,
-    hasAdditionalIncome: input.hasAdditionalIncome, additionalIncomeType: input.additionalIncomeType,
-    additionalIncomeAmount: input.additionalIncomeAmount,
-    additionalIncomeDescriptionEncrypted: input.additionalIncomeDescription ? encrypt(input.additionalIncomeDescription) : null,
-    monthlyLiabilities: input.monthlyLiabilities, existingMortgageBalance: input.existingMortgageBalance,
-    existingMortgageMonthlyPayment: input.existingMortgageMonthlyPayment, dealType: input.dealType,
-    propertyType: input.propertyType,
-    propertyTypeOtherDescriptionEncrypted: input.propertyTypeOtherDescription ? encrypt(input.propertyTypeOtherDescription) : null,
-    propertyRegion: input.propertyRegion, propertyCity: input.propertyCity,
-    propertyAddressEncrypted: encrypt(input.propertyAddress), propertyValue: input.propertyValue,
-    requestedAmount: input.requestedAmount, requestedTermMonths: input.requestedTermMonths, status: "ACTIVE"
+    notesEncrypted: encrypt(input.notes),
+    numberOfBorrowers: input.numberOfBorrowers,
+    borrowerRelationship: input.borrowerRelationship,
+    borrowerRelationshipOtherEncrypted: input.borrowerRelationshipOther ? encrypt(input.borrowerRelationshipOther) : null,
+    householdChildrenCount: input.household.numberOfChildren,
+    householdChildrenAges: input.household.childrenAges,
+    borrowers: input.borrowers.map((borrower) => ({
+      borrowerOrder: borrower.order,
+      isPrimary: borrower.isPrimary,
+      firstNameEncrypted: encrypt(borrower.firstName),
+      lastNameEncrypted: encrypt(borrower.lastName),
+      fullNameEncrypted: encrypt(`${borrower.firstName} ${borrower.lastName}`),
+      identityNumberEncrypted: encrypt(borrower.identityNumber),
+      identityNumberHash: createHash("sha256").update(borrower.identityNumber.replace(/\D/g, "")).digest("hex"),
+      birthDateEncrypted: encrypt(borrower.dateOfBirth),
+      phoneEncrypted: encrypt(borrower.phone),
+      emailEncrypted: encrypt(borrower.email),
+      addressEncrypted: encrypt(borrower.address),
+      maritalStatus: borrower.maritalStatus,
+      numberOfChildren: borrower.children.numberOfChildren,
+      childrenAges: borrower.children.childrenAges,
+      employmentType: borrower.employment.employmentType,
+      employerNameEncrypted: encrypt(borrower.employment.employerName),
+      jobTitle: borrower.employment.jobTitle,
+      employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
+      monthlyNetIncome: borrower.income.monthlyNetIncome,
+      hasAdditionalIncome: borrower.income.hasAdditionalIncome,
+      additionalIncomeType: borrower.income.additionalIncomeType,
+      additionalIncomeAmount: borrower.income.additionalIncomeAmount,
+      additionalIncomeDescriptionEncrypted: borrower.income.additionalIncomeDescription ? encrypt(borrower.income.additionalIncomeDescription) : null,
+      monthlyLiabilities: borrower.liabilities.monthlyLiabilities,
+      existingMortgageBalance: borrower.liabilities.existingMortgageBalance,
+      existingMortgageMonthlyPayment: borrower.liabilities.existingMortgageMonthlyPayment
+    })),
+    dealType: input.loanRequest.dealType,
+    propertyType: input.property.propertyType,
+    propertyTypeOtherDescriptionEncrypted: input.property.propertyTypeOtherDescription ? encrypt(input.property.propertyTypeOtherDescription) : null,
+    propertyRegion: input.property.region,
+    propertyCity: input.property.city,
+    propertyAddressEncrypted: encrypt(input.property.address),
+    propertyValue: input.property.value,
+    requestedAmount: input.loanRequest.requestedAmount,
+    requestedTermMonths: input.loanRequest.requestedTermMonths,
+    status: "ACTIVE"
   };
 }
 
 async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, store: AppStore, encryption: EncryptionService) {
   if (!client) return null;
   const details = await store.getClientDetails(client.id);
-  const seniorityYears = details?.employmentStartDate
-    ? Math.max(0, Math.floor((Date.now() - details.employmentStartDate.getTime()) / (365.25 * 24 * 60 * 60 * 1000)))
-    : 0;
+  const publicBorrowers = (details?.borrowers ?? []).map((borrower) => {
+    const birthDate = borrower.birthDateEncrypted
+      ? encryption.decrypt(borrower.birthDateEncrypted)
+      : borrower.birthDate?.toISOString().slice(0, 10) ?? "";
+    return {
+      id: borrower.id,
+      borrowerOrder: borrower.borrowerOrder,
+      isPrimary: borrower.isPrimary,
+      firstName: borrower.firstNameEncrypted ? encryption.decrypt(borrower.firstNameEncrypted) : "",
+      lastName: borrower.lastNameEncrypted ? encryption.decrypt(borrower.lastNameEncrypted) : "",
+      identityNumber: encryption.decrypt(borrower.identityNumberEncrypted),
+      birthDate,
+      age: birthDate ? calculateAge(birthDate) : null,
+      calculatedAge: birthDate ? calculateAge(birthDate) : null,
+      phone: borrower.phoneEncrypted ? encryption.decrypt(borrower.phoneEncrypted) : "",
+      email: borrower.emailEncrypted ? encryption.decrypt(borrower.emailEncrypted) : "",
+      address: borrower.addressEncrypted ? encryption.decrypt(borrower.addressEncrypted) : "",
+      maritalStatus: borrower.maritalStatus ?? "SINGLE",
+      children: {numberOfChildren: borrower.numberOfChildren, childrenAges: borrower.childrenAges},
+      employment: {
+        employmentType: borrower.employmentType,
+        employerName: borrower.employerNameEncrypted ? encryption.decrypt(borrower.employerNameEncrypted) : "",
+        jobTitle: borrower.jobTitle,
+        employmentSeniorityYears: borrower.employmentSeniorityYears
+      },
+      income: {
+        monthlyNetIncome: borrower.monthlyNetIncome,
+        hasAdditionalIncome: borrower.hasAdditionalIncome,
+        additionalIncomeType: borrower.additionalIncomeType,
+        additionalIncomeAmount: borrower.additionalIncomeAmount,
+        additionalIncomeDescription: borrower.additionalIncomeDescriptionEncrypted ? encryption.decrypt(borrower.additionalIncomeDescriptionEncrypted) : null
+      },
+      liabilities: {
+        monthlyLiabilities: borrower.monthlyLiabilities,
+        existingMortgageBalance: borrower.existingMortgageBalance,
+        existingMortgageMonthlyPayment: borrower.existingMortgageMonthlyPayment
+      }
+    };
+  });
+  const primary = publicBorrowers[0];
+  const totalMonthlyIncome = publicBorrowers.reduce((sum, borrower) => sum + borrower.income.monthlyNetIncome + borrower.income.additionalIncomeAmount, 0);
+  const totalMonthlyPayments = publicBorrowers.reduce((sum, borrower) => sum + borrower.liabilities.monthlyLiabilities + borrower.liabilities.existingMortgageMonthlyPayment, 0);
   return {
     id: client.id,
     publicCaseNumber: client.publicCaseNumber,
     advisorId: client.advisorId,
     status: client.status,
-    firstName: encryption.decrypt(client.firstNameEncrypted),
-    lastName: encryption.decrypt(client.lastNameEncrypted),
-    identityNumber: encryption.decrypt(client.identityNumberEncrypted),
-    phone: encryption.decrypt(client.phoneEncrypted),
-    email: encryption.decrypt(client.emailEncrypted),
-    address: client.addressEncrypted ? encryption.decrypt(client.addressEncrypted) : "",
+    firstName: primary?.firstName ?? encryption.decrypt(client.firstNameEncrypted),
+    lastName: primary?.lastName ?? encryption.decrypt(client.lastNameEncrypted),
+    identityNumber: primary?.identityNumber ?? encryption.decrypt(client.identityNumberEncrypted),
+    phone: primary?.phone ?? encryption.decrypt(client.phoneEncrypted),
+    email: primary?.email ?? encryption.decrypt(client.emailEncrypted),
+    address: primary?.address ?? (client.addressEncrypted ? encryption.decrypt(client.addressEncrypted) : ""),
     notes: client.notesEncrypted ? encryption.decrypt(client.notesEncrypted) : "",
-    maritalStatus: client.maritalStatus,
-    numberOfChildren: client.numberOfChildren,
-    childrenAges: client.childrenAges,
-    borrowerCount: client.borrowerCount,
-    birthDate: details?.birthDate ? details.birthDate.toISOString().slice(0, 10) : "",
-    employmentType: details?.employmentType ?? "",
-    employerName: details?.employerNameEncrypted ? encryption.decrypt(details.employerNameEncrypted) : "",
-    jobTitle: details?.jobTitle ?? "",
-    employmentSeniorityYears: seniorityYears,
-    monthlyNetIncome: details?.monthlyNetIncome ?? 0,
-    hasAdditionalIncome: details?.hasAdditionalIncome ?? false,
-    additionalIncomeType: details?.additionalIncomeType ?? null,
-    additionalIncomeAmount: details?.additionalIncomeAmount ?? 0,
-    additionalIncomeDescription: details?.additionalIncomeDescriptionEncrypted ? encryption.decrypt(details.additionalIncomeDescriptionEncrypted) : null,
+    numberOfBorrowers: client.numberOfBorrowers,
+    borrowerRelationship: client.borrowerRelationship,
+    borrowerRelationshipOther: client.borrowerRelationshipOtherEncrypted ? encryption.decrypt(client.borrowerRelationshipOtherEncrypted) : null,
+    household: {numberOfChildren: client.householdChildrenCount, childrenAges: client.householdChildrenAges},
+    borrowers: publicBorrowers,
+    maritalStatus: primary?.maritalStatus ?? client.maritalStatus,
+    numberOfChildren: primary?.children.numberOfChildren ?? client.numberOfChildren,
+    childrenAges: primary?.children.childrenAges ?? client.childrenAges,
+    borrowerCount: client.numberOfBorrowers,
+    birthDate: primary?.birthDate ?? "",
+    employmentType: primary?.employment.employmentType ?? "",
+    employerName: primary?.employment.employerName ?? "",
+    jobTitle: primary?.employment.jobTitle ?? "",
+    employmentSeniorityYears: primary?.employment.employmentSeniorityYears ?? 0,
+    monthlyNetIncome: primary?.income.monthlyNetIncome ?? 0,
+    hasAdditionalIncome: primary?.income.hasAdditionalIncome ?? false,
+    additionalIncomeType: primary?.income.additionalIncomeType ?? null,
+    additionalIncomeAmount: primary?.income.additionalIncomeAmount ?? 0,
+    additionalIncomeDescription: primary?.income.additionalIncomeDescription ?? null,
     monthlyLiabilities: details?.monthlyLiabilities ?? 0,
     existingMortgageMonthlyPayment: details?.existingMortgageMonthlyPayment ?? 0,
     dealType: details?.dealType ?? "",
@@ -133,9 +204,21 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
     financingPercentage: details?.financingPercentage ?? 0,
     latestSubmissionStatus: details?.latestSubmissionStatus ?? null,
     offerCount: details?.offerCount ?? 0,
+    totalMonthlyIncome,
+    totalMonthlyPayments,
     createdAt: client.createdAt,
     updatedAt: client.updatedAt
   };
+}
+
+function snapshotSourceWithAges(source: NonNullable<Awaited<ReturnType<AppStore["getSnapshotSource"]>>>, encryption: EncryptionService) {
+  const borrowerAges = source.borrowerBirthDatesEncrypted.map((encryptedBirthDate, index) => {
+    const birthDate = encryptedBirthDate
+      ? encryption.decrypt(encryptedBirthDate)
+      : source.borrowerBirthDates[index]?.toISOString().slice(0, 10) ?? "";
+    return calculateAge(birthDate);
+  }).filter((age): age is number => age !== null);
+  return {...source, borrowerAges};
 }
 
 function detectMime(file: Express.Multer.File): string | null {
@@ -385,7 +468,7 @@ export function createApp(services: AppServices) {
     const available = new Map((await services.store.listLenders()).map((lender) => [lender.id, lender]));
     const source = await services.store.getSnapshotSource(request.authorizedClientId!);
     if (!source) { response.status(409).json({error: "CLIENT_FINANCIAL_DATA_INCOMPLETE"}); return; }
-    const snapshot = buildAnonymousSubmissionSnapshot(source);
+    const snapshot = buildAnonymousSubmissionSnapshot(snapshotSourceWithAges(source, services.encryption));
     const pdf = await createAnonymousPdf(snapshot);
     const results: Array<{lenderId: number; status: string}> = [];
     for (const lenderId of input.lenderIds) {
@@ -674,7 +757,7 @@ export function createApp(services: AppServices) {
     const {question} = z.object({question: z.string().trim().min(3).max(2000)}).parse(request.body);
     const source = await services.store.getSnapshotSource(request.authorizedClientId!);
     if (!source) { response.status(409).json({error: "CLIENT_FINANCIAL_DATA_INCOMPLETE"}); return; }
-    const context = JSON.stringify(buildAnonymousSubmissionSnapshot(source));
+    const context = JSON.stringify(buildAnonymousSubmissionSnapshot(snapshotSourceWithAges(source, services.encryption)));
     const started = Date.now();
     try {
       const answer = await services.gemini.analyze(context, question);

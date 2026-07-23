@@ -58,7 +58,7 @@ test("advisor-to-lender financing workflow", async ({browser, page, request}) =>
     await page.getByLabel("גיל ילד 1").fill("3");
     await page.getByLabel("גיל ילד 2").fill("7");
     await page.getByLabel("גיל ילד 3").fill("10");
-    await page.getByLabel("מספר לווים בתיק").fill("2");
+    await page.getByLabel("מספר לווים בתיק").fill("1");
     await page.getByRole("button", {name: "הבא"}).click();
     await page.getByLabel("סוג תעסוקה").selectOption("SALARIED");
     await page.getByLabel("שם המעסיק או העסק").fill("E2E Employer");

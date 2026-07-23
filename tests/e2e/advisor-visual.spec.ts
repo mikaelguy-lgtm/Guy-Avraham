@@ -60,7 +60,7 @@ test("advisor visual journey is Hebrew, RTL and responsive", async ({page, reque
     await page.getByLabel("גיל ילד 1").fill("2");
     await page.getByLabel("גיל ילד 2").fill("6");
     await page.getByLabel("גיל ילד 3").fill("9");
-    await page.getByLabel("מספר לווים בתיק").fill("2");
+    await page.getByLabel("מספר לווים בתיק").fill("1");
     await page.getByRole("button", {name: "הבא"}).click();
     await capture(page, "advisor-wizard-step-2.png");
     await page.getByLabel("סוג תעסוקה").selectOption("SALARIED");
