@@ -8,16 +8,17 @@ const borrower = {
   maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []},
   employment: {employmentType: "SALARIED", employerName: "חברה בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6},
   income: {monthlyNetIncome: 20_000, hasAdditionalIncome: true, additionalIncomeType: "RENTAL_INCOME", additionalIncomeAmount: 2_500, additionalIncomeDescription: null},
-  liabilities: {monthlyLiabilities: 1_500, existingMortgageBalance: 400_000, existingMortgageMonthlyPayment: 4_000}
+  liabilities: []
 } as const;
 
 const completeInput = {
   numberOfBorrowers: 2, borrowerRelationship: "MARRIED", borrowerRelationshipOther: null,
   household: {numberOfChildren: 2, childrenAges: [4, 8]},
   borrowers: [borrower, {...borrower, order: 2, isPrimary: false, firstName: "נועם", identityNumber: "987654321", email: "noam@example.com"}],
-  property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", region: "CENTER", address: "רחוב הנכס 2, תל אביב", value: 2_000_000},
-  loanRequest: {dealType: "SECOND_HAND_PURCHASE", requestedAmount: 1_250_000, requestedTermMonths: 240},
-  notes: "תיק מלא לבדיקה", status: "ACTIVE"
+  householdLiabilities: [{type: "MORTGAGE", otherTypeDescription: null, currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "משכנתה קיימת"}],
+  property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", address: "רחוב הנכס 2, תל אביב", value: 2_000_000},
+  loanPurpose: "SECOND_HAND_PURCHASE", loanRequest: {requestedAmount: 1_250_000},
+  dealDetails: "תיק מלא לבדיקה", status: "ACTIVE"
 } as const;
 
 describe("client input validation", () => {
@@ -40,17 +41,38 @@ describe("client input validation", () => {
     const invalidBorrower = {...borrower, income: {...borrower.income, additionalIncomeType: null}};
     expect(() => clientInputSchema.parse({...completeInput, borrowers: [invalidBorrower, completeInput.borrowers[1]]})).toThrow(/סוג הכנסה נוספת/);
     const withoutAdditional = {...borrower, income: {monthlyNetIncome: 20_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null}};
-    expect(clientInputSchema.parse({numberOfBorrowers: 1, borrowerRelationship: null, borrowerRelationshipOther: null, household: {numberOfChildren: 0, childrenAges: []}, borrowers: [{...withoutAdditional, children: {numberOfChildren: 1, childrenAges: [5]}}], property: completeInput.property, loanRequest: completeInput.loanRequest, notes: completeInput.notes}).borrowers[0].income.additionalIncomeAmount).toBe(0);
+    expect(clientInputSchema.parse({numberOfBorrowers: 1, borrowerRelationship: null, borrowerRelationshipOther: null, household: {numberOfChildren: 0, childrenAges: []}, householdLiabilities: [], borrowers: [{...withoutAdditional, children: {numberOfChildren: 1, childrenAges: [5]}, liabilities: completeInput.householdLiabilities}], property: completeInput.property, loanPurpose: completeInput.loanPurpose, loanRequest: completeInput.loanRequest, dealDetails: completeInput.dealDetails}).borrowers[0].income.additionalIncomeAmount).toBe(0);
   });
 
   it("supports common-law shared children and partner-specific children", () => {
-    expect(clientInputSchema.parse({...completeInput, borrowerRelationship: "COMMON_LAW"}).household.numberOfChildren).toBe(2);
+    expect(clientInputSchema.parse({...completeInput, borrowerRelationship: "COMMON_LAW", householdLiabilities: [], borrowers: completeInput.borrowers.map((item, index) => ({...item, liabilities: index === 0 ? completeInput.householdLiabilities : []}))}).household.numberOfChildren).toBe(2);
     const partners = {
       ...completeInput,
       borrowerRelationship: "PARTNERS" as const,
       household: {numberOfChildren: 0, childrenAges: []},
-      borrowers: completeInput.borrowers.map((item, index) => ({...item, children: {numberOfChildren: 1, childrenAges: [index + 4]}}))
+      householdLiabilities: [],
+      borrowers: completeInput.borrowers.map((item, index) => ({...item, children: {numberOfChildren: 1, childrenAges: [index + 4]}, liabilities: index === 0 ? completeInput.householdLiabilities : []}))
     };
     expect(clientInputSchema.parse(partners).borrowers.map((item) => item.children.childrenAges)).toEqual([[4], [5]]);
+  });
+
+  it.each(["LOAN", "MORTGAGE", "ALIMONY"])("accepts a complete %s liability", (type) => {
+    const payload = {...completeInput, householdLiabilities: [{...completeInput.householdLiabilities[0], type}]};
+    expect(clientInputSchema.parse(payload).householdLiabilities[0].type).toBe(type);
+  });
+
+  it("requires a description for another financial entity", () => {
+    const payload = {...completeInput, householdLiabilities: [{...completeInput.householdLiabilities[0], type: "OTHER_FINANCIAL_ENTITY", otherTypeDescription: null}]};
+    expect(() => clientInputSchema.parse(payload)).toThrow(/שם הגוף/);
+  });
+
+  it("keeps married liabilities at household scope and partner liabilities separate", () => {
+    expect(clientInputSchema.parse(completeInput).borrowers.every((item) => item.liabilities.length === 0)).toBe(true);
+    const partners = {...completeInput, borrowerRelationship: "PARTNERS", household: {numberOfChildren: 0, childrenAges: []}, householdLiabilities: [], borrowers: completeInput.borrowers.map((item, index) => ({...item, children: {numberOfChildren: 0, childrenAges: []}, liabilities: [{...completeInput.householdLiabilities[0], notes: `לווה ${index + 1}`}]}))};
+    expect(clientInputSchema.parse(partners).borrowers.map((item) => item.liabilities.length)).toEqual([1, 1]);
+  });
+
+  it("accepts bridge financing without region or requested term", () => {
+    expect(clientInputSchema.parse({...completeInput, loanPurpose: "BRIDGE_FINANCING"}).loanPurpose).toBe("BRIDGE_FINANCING");
   });
 });

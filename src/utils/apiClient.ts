@@ -1,7 +1,7 @@
 import { createUserWithEmailAndPassword, deleteUser, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import {requireFrontendConfig} from "../config/frontend";
-import type { AdvisorAdminRecord, Client, ClientList, ClientSubmission, CurrentUser, DocumentRecord, IdentityRequest, Lender, LoanOffer, NotificationRecord } from "../types";
+import type { AdvisorAdminRecord, Client, ClientList, ClientSubmission, CurrentUser, DocumentRecord, IdentityRequest, Lender, LoanOffer, MissingRequiredDocument, NotificationRecord } from "../types";
 import type { AdvisorRegistrationInput } from "../domain/advisorRegistration";
 
 const API_URL = requireFrontendConfig().apiBaseUrl;
@@ -15,15 +15,16 @@ export class ApiError extends Error {
     readonly fieldErrors: Record<string, string> = {},
     readonly accountCreated = false,
     readonly retryAfterSeconds?: number,
-    readonly publicMessage?: string
+    readonly publicMessage?: string,
+    readonly missingDocuments: MissingRequiredDocument[] = []
   ) {
     super(code);
   }
 }
 
 async function parseError(response: Response): Promise<ApiError> {
-  const body = await response.json().catch(() => ({})) as {error?: string; message?: string; requestId?: string; fields?: string[]; fieldErrors?: Record<string, string>; accountCreated?: boolean; retryAfterSeconds?: number};
-  return new ApiError(body.error || `HTTP_${response.status}`, response.status, body.requestId ?? response.headers.get("x-request-id") ?? undefined, body.fields ?? [], body.fieldErrors ?? {}, body.accountCreated === true, body.retryAfterSeconds, body.message);
+  const body = await response.json().catch(() => ({})) as {error?: string; message?: string; requestId?: string; fields?: string[]; fieldErrors?: Record<string, string>; accountCreated?: boolean; retryAfterSeconds?: number; missingDocuments?: MissingRequiredDocument[]};
+  return new ApiError(body.error || `HTTP_${response.status}`, response.status, body.requestId ?? response.headers.get("x-request-id") ?? undefined, body.fields ?? [], body.fieldErrors ?? {}, body.accountCreated === true, body.retryAfterSeconds, body.message, body.missingDocuments ?? []);
 }
 
 async function publicFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -94,10 +95,14 @@ export const api = {
   updateClient: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}`, {method: "PATCH", body: JSON.stringify(data)}),
   deleteClient: (id: number) => authFetch<void>(`/api/clients/${id}`, {method: "DELETE"}),
   documents: (clientId: number) => authFetch<DocumentRecord[]>(`/api/clients/${clientId}/documents`),
-  uploadDocument: (clientId: number, file: File, documentType: string) => {
+  uploadDocument: (clientId: number, file: File, documentType: string, metadata: {borrowerId?: number | null; customTitle?: string; description?: string} = {}) => {
     const body = new FormData(); body.append("file", file); body.append("documentType", documentType);
+    if (metadata.borrowerId) body.append("borrowerId", String(metadata.borrowerId));
+    if (metadata.customTitle) body.append("customTitle", metadata.customTitle);
+    if (metadata.description) body.append("description", metadata.description);
     return authFetch<DocumentRecord>(`/api/clients/${clientId}/documents`, {method: "POST", body});
   },
+  documentRequirements: (clientId: number) => authFetch<{missingDocuments: MissingRequiredDocument[]}>(`/api/clients/${clientId}/documents/requirements`),
   downloadDocument: (documentId: number) => authBlob(`/api/documents/${documentId}/download`),
   deleteDocument: (documentId: number) => authFetch<void>(`/api/documents/${documentId}`, {method: "DELETE"}),
   lenders: () => authFetch<Lender[]>("/api/lenders"),

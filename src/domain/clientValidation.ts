@@ -4,9 +4,9 @@ import {
   BORROWER_RELATIONSHIPS,
   DEAL_TYPES,
   EMPLOYMENT_TYPES,
+  LIABILITY_TYPES,
   MARITAL_STATUSES,
   MAX_BORROWERS,
-  PROPERTY_REGIONS,
   PROPERTY_TYPES
 } from "./clientFields.js";
 import { validateAdultBirthDate } from "../utils/age.js";
@@ -20,12 +20,30 @@ const requiredInteger = (message: string, minimum: number, maximum: number) => z
   (value) => value === "" || value === null || value === undefined ? undefined : value,
   z.coerce.number({error: message}).int("יש להזין מספר שלם").min(minimum, message).max(maximum, "המספר חורג מהטווח המותר")
 );
+
 const childrenSchema = z.object({
   numberOfChildren: requiredInteger("יש להזין את מספר הילדים", 0, 20),
   childrenAges: z.array(z.coerce.number().int("יש להזין גיל שלם").min(0, "גיל ילד אינו יכול להיות שלילי").max(120, "יש להזין גיל ילד תקין"), {error: "יש להזין גיל עבור כל ילד"})
 }).strict().superRefine((input, context) => {
-  if (input.childrenAges.length !== input.numberOfChildren) {
-    context.addIssue({code: "custom", path: ["childrenAges"], message: "יש להזין גיל עבור כל ילד"});
+  if (input.childrenAges.length !== input.numberOfChildren) context.addIssue({code: "custom", path: ["childrenAges"], message: "יש להזין גיל עבור כל ילד"});
+});
+
+export const liabilityInputSchema = z.object({
+  type: z.enum(LIABILITY_TYPES, {error: "יש לבחור סוג התחייבות"}),
+  otherTypeDescription: z.string().trim().max(300, "שם הגוף ארוך מדי").nullable(),
+  currentBalance: requiredNumber("יש להזין יתרה נוכחית", 100_000_000),
+  monthlyPayment: requiredNumber("יש להזין החזר חודשי", 10_000_000),
+  endDate: z.string({error: "יש להזין תאריך סיום התחייבות"}).date("יש להזין תאריך סיום תקין"),
+  notes: requiredText("יש להזין הערות להתחייבות", 1000)
+}).strict().superRefine((input, context) => {
+  if (input.type === "OTHER_FINANCIAL_ENTITY" && !input.otherTypeDescription?.trim()) {
+    context.addIssue({code: "custom", path: ["otherTypeDescription"], message: "יש להזין את שם הגוף או סוג ההתחייבות"});
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const endDate = new Date(`${input.endDate}T00:00:00`);
+  if (!Number.isNaN(endDate.getTime()) && endDate < today) {
+    context.addIssue({code: "custom", path: ["endDate"], message: "תאריך סיום ההתחייבות אינו יכול להיות בעבר"});
   }
 });
 
@@ -54,26 +72,16 @@ const borrowerSchema = z.object({
     additionalIncomeAmount: requiredNumber("יש להזין סכום הכנסה נוספת", 10_000_000),
     additionalIncomeDescription: z.string().trim().max(500, "התיאור ארוך מדי").nullable()
   }).strict(),
-  liabilities: z.object({
-    monthlyLiabilities: requiredNumber("יש להזין התחייבויות חודשיות", 10_000_000),
-    existingMortgageBalance: requiredNumber("יש להזין יתרת משכנתה קיימת", 100_000_000),
-    existingMortgageMonthlyPayment: requiredNumber("יש להזין החזר משכנתה חודשי", 10_000_000)
-  }).strict()
+  liabilities: z.array(liabilityInputSchema).max(100, "מספר ההתחייבויות חורג מהמותר")
 }).strict().superRefine((input, context) => {
   const birthDateError = validateAdultBirthDate(input.dateOfBirth);
   if (birthDateError) context.addIssue({code: "custom", path: ["dateOfBirth"], message: birthDateError});
   if (!input.income.hasAdditionalIncome && (input.income.additionalIncomeType !== null || input.income.additionalIncomeAmount !== 0 || input.income.additionalIncomeDescription !== null)) {
     context.addIssue({code: "custom", path: ["income", "hasAdditionalIncome"], message: "כאשר אין הכנסה נוספת יש להשאיר את הפרטים הנוספים ריקים"});
   }
-  if (input.income.hasAdditionalIncome && !input.income.additionalIncomeType) {
-    context.addIssue({code: "custom", path: ["income", "additionalIncomeType"], message: "יש לבחור סוג הכנסה נוספת"});
-  }
-  if (input.income.hasAdditionalIncome && input.income.additionalIncomeAmount <= 0) {
-    context.addIssue({code: "custom", path: ["income", "additionalIncomeAmount"], message: "יש להזין סכום הכנסה נוספת גדול מאפס"});
-  }
-  if (input.income.additionalIncomeType === "OTHER" && !input.income.additionalIncomeDescription?.trim()) {
-    context.addIssue({code: "custom", path: ["income", "additionalIncomeDescription"], message: "יש לתאר את ההכנסה הנוספת"});
-  }
+  if (input.income.hasAdditionalIncome && !input.income.additionalIncomeType) context.addIssue({code: "custom", path: ["income", "additionalIncomeType"], message: "יש לבחור סוג הכנסה נוספת"});
+  if (input.income.hasAdditionalIncome && input.income.additionalIncomeAmount <= 0) context.addIssue({code: "custom", path: ["income", "additionalIncomeAmount"], message: "יש להזין סכום הכנסה נוספת גדול מאפס"});
+  if (input.income.additionalIncomeType === "OTHER" && !input.income.additionalIncomeDescription?.trim()) context.addIssue({code: "custom", path: ["income", "additionalIncomeDescription"], message: "יש לתאר את ההכנסה הנוספת"});
 });
 
 export const clientInputSchema = z.object({
@@ -82,58 +90,41 @@ export const clientInputSchema = z.object({
   borrowerRelationshipOther: z.string().trim().max(300, "התיאור ארוך מדי").nullable(),
   household: childrenSchema,
   borrowers: z.array(borrowerSchema).min(1, "יש להזין לפחות לווה אחד").max(MAX_BORROWERS, `ניתן להזין עד ${MAX_BORROWERS} לווים`),
+  householdLiabilities: z.array(liabilityInputSchema).max(100, "מספר ההתחייבויות חורג מהמותר"),
   property: z.object({
     propertyType: z.enum(PROPERTY_TYPES, {error: "יש לבחור סוג נכס"}),
     propertyTypeOtherDescription: z.string().trim().max(500, "התיאור ארוך מדי").nullable(),
     city: requiredText("יש להזין את עיר הנכס", 100),
-    region: z.enum(PROPERTY_REGIONS, {error: "יש לבחור אזור"}),
     address: requiredText("יש להזין כתובת נכס", 300),
     value: requiredNumber("יש להזין שווי נכס", 100_000_000).pipe(z.number().positive("שווי הנכס חייב להיות גדול מאפס"))
   }).strict(),
+  loanPurpose: z.enum(DEAL_TYPES, {error: "יש לבחור מטרת הלוואה"}),
   loanRequest: z.object({
-    dealType: z.enum(DEAL_TYPES, {error: "יש לבחור סוג עסקה"}),
-    requestedAmount: requiredNumber("יש להזין סכום מימון מבוקש", 100_000_000).pipe(z.number().positive("סכום המימון חייב להיות גדול מאפס")),
-    requestedTermMonths: requiredInteger("יש להזין תקופת הלוואה בחודשים", 1, 600)
+    requestedAmount: requiredNumber("יש להזין סכום מימון מבוקש", 100_000_000).pipe(z.number().positive("סכום המימון חייב להיות גדול מאפס"))
   }).strict(),
-  notes: requiredText("יש להזין הערות מקצועיות", 2000),
+  dealDetails: requiredText("יש להזין פירוט עסקה", 5000),
   status: z.literal("ACTIVE").optional().default("ACTIVE")
 }).strict().superRefine((input, context) => {
-  if (input.borrowers.length !== input.numberOfBorrowers) {
-    context.addIssue({code: "custom", path: ["borrowers"], message: "מספר הלווים אינו תואם לפרטים שהוזנו"});
-  }
-  if (input.numberOfBorrowers === 1 && input.borrowerRelationship !== null) {
-    context.addIssue({code: "custom", path: ["borrowerRelationship"], message: "אין לבחור קשר בתיק עם לווה יחיד"});
-  }
-  if (input.numberOfBorrowers > 1 && !input.borrowerRelationship) {
-    context.addIssue({code: "custom", path: ["borrowerRelationship"], message: "יש לבחור את הקשר בין הלווים"});
-  }
-  if (input.borrowerRelationship === "OTHER" && !input.borrowerRelationshipOther?.trim()) {
-    context.addIssue({code: "custom", path: ["borrowerRelationshipOther"], message: "יש לתאר את הקשר בין הלווים"});
-  }
-  const sharedHousehold = input.borrowerRelationship === "MARRIED" || input.borrowerRelationship === "COMMON_LAW";
-  if (sharedHousehold) {
-    input.borrowers.forEach((borrower, index) => {
-      if (borrower.children.numberOfChildren !== 0 || borrower.children.childrenAges.length !== 0) {
-        context.addIssue({code: "custom", path: ["borrowers", index, "children"], message: "בתיק זוגי פרטי הילדים נשמרים פעם אחת ברמת משק הבית"});
-      }
-    });
-  } else if (input.household.numberOfChildren !== 0 || input.household.childrenAges.length !== 0) {
-    context.addIssue({code: "custom", path: ["household"], message: "פרטי משק בית משותף מותרים רק לבני זוג"});
-  }
+  if (input.borrowers.length !== input.numberOfBorrowers) context.addIssue({code: "custom", path: ["borrowers"], message: "מספר הלווים אינו תואם לפרטים שהוזנו"});
+  if (input.numberOfBorrowers === 1 && input.borrowerRelationship !== null) context.addIssue({code: "custom", path: ["borrowerRelationship"], message: "אין לבחור קשר בתיק עם לווה יחיד"});
+  if (input.numberOfBorrowers > 1 && !input.borrowerRelationship) context.addIssue({code: "custom", path: ["borrowerRelationship"], message: "יש לבחור את הקשר בין הלווים"});
+  if (input.borrowerRelationship === "OTHER" && !input.borrowerRelationshipOther?.trim()) context.addIssue({code: "custom", path: ["borrowerRelationshipOther"], message: "יש לתאר את הקשר בין הלווים"});
+  const sharedChildren = input.borrowerRelationship === "MARRIED" || input.borrowerRelationship === "COMMON_LAW";
+  if (sharedChildren) input.borrowers.forEach((borrower, index) => {
+    if (borrower.children.numberOfChildren !== 0 || borrower.children.childrenAges.length !== 0) context.addIssue({code: "custom", path: ["borrowers", index, "children"], message: "נתוני הילדים המשותפים נשמרים פעם אחת ברמת משק הבית"});
+  });
+  else if (input.household.numberOfChildren !== 0 || input.household.childrenAges.length !== 0) context.addIssue({code: "custom", path: ["household"], message: "נתוני משק בית משותף מותרים רק לזוג"});
   const identities = new Set<string>();
   input.borrowers.forEach((borrower, index) => {
-    if (borrower.order !== index + 1) context.addIssue({code: "custom", path: ["borrowers", index, "order"], message: "סדר הלווים אינו תקין"});
-    if (borrower.isPrimary !== (index === 0)) context.addIssue({code: "custom", path: ["borrowers", index, "isPrimary"], message: index === 0 ? "הלווה הראשון חייב להיות הלווה הראשי" : "רק הלווה הראשון יכול להיות הלווה הראשי"});
-    const normalized = borrower.identityNumber.replace(/\D/g, "");
-    if (identities.has(normalized)) {
-      context.addIssue({code: "custom", path: ["borrowers", index, "identityNumber"], message: "מספר תעודת הזהות כבר קיים בתיק"});
-    }
-    identities.add(normalized);
+    if (identities.has(borrower.identityNumber)) context.addIssue({code: "custom", path: ["borrowers", index, "identityNumber"], message: "מספר תעודת הזהות כבר קיים בתיק"});
+    identities.add(borrower.identityNumber);
   });
-  if (input.property.propertyType === "OTHER" && !input.property.propertyTypeOtherDescription?.trim()) {
-    context.addIssue({code: "custom", path: ["property", "propertyTypeOtherDescription"], message: "יש לתאר את סוג הנכס"});
-  }
+  if (input.borrowers.filter((borrower) => borrower.isPrimary).length !== 1 || !input.borrowers[0]?.isPrimary) context.addIssue({code: "custom", path: ["borrowers"], message: "יש להגדיר לווה ראשי אחד בלבד"});
+  if (input.borrowerRelationship === "MARRIED") {
+    input.borrowers.forEach((borrower, index) => {
+      if (borrower.liabilities.length) context.addIssue({code: "custom", path: ["borrowers", index, "liabilities"], message: "בתיק נשוי ההתחייבויות נשמרות פעם אחת ברמת משק הבית"});
+    });
+  } else if (input.householdLiabilities.length) context.addIssue({code: "custom", path: ["householdLiabilities"], message: "התחייבויות משותפות מותרות רק בתיק נשוי"});
 });
 
 export type ClientInput = z.infer<typeof clientInputSchema>;
-export type BorrowerInput = ClientInput["borrowers"][number];

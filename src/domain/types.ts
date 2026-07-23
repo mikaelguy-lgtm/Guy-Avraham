@@ -29,20 +29,20 @@ export interface AdvisorAccount extends DatabaseUser {
 
 export interface AnonymousSubmissionSnapshot {
   publicCaseNumber: string;
-  dealType: string;
+  loanPurpose: string;
   propertyType: string;
-  propertyRegion: string;
+  propertyCity: string;
   propertyValue: number;
   requestedAmount: number;
-  financingPercentage: number;
   numberOfBorrowers: number;
   borrowerRelationship: "COUPLE" | "FAMILY" | "PARTNERS" | "OTHER" | null;
   borrowerAges: number[];
   employmentTypes: string[];
   totalMonthlyIncome: number;
+  liabilityCount: number;
+  totalLiabilityBalance: number;
   totalMonthlyPayments: number;
-  existingMortgageBalance: number;
-  requestedTermMonths: number;
+  liabilityTypeBreakdown: Record<string, number>;
 }
 
 export const IDENTITY_FIELDS = [

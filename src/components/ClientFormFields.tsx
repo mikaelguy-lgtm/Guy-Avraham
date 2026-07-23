@@ -1,163 +1,53 @@
-import { ArrowDown, ArrowUp } from "lucide-react";
-import type { BorrowerFormState, ClientFormErrors, ClientFormState } from "../utils/clientForm";
-import {
-  additionalIncomeTypeOptions,
-  borrowerRelationshipOptions,
-  dealTypeOptions,
-  employmentTypeOptions,
-  isSharedHousehold,
-  maritalStatusOptions,
-  propertyRegionOptions,
-  propertyTypeOptions
-} from "../utils/clientForm";
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import type { BorrowerFormState, ClientFormErrors, ClientFormState, LiabilityFormState } from "../utils/clientForm";
+import { additionalIncomeTypeOptions, borrowerRelationshipOptions, emptyLiabilityForm, employmentTypeOptions, isSharedHousehold, liabilityTypeOptions, loanPurposeOptions, maritalStatusOptions, propertyTypeOptions, usesHouseholdLiabilities } from "../utils/clientForm";
 import { calculateAge } from "../utils/age";
-import { calculateTotalMonthlyIncome, calculateTotalMonthlyPayments } from "../utils/clientCalculations";
+import { calculateRemainingCommitmentPeriod } from "../utils/commitmentPeriod";
 import { formatCurrency } from "../utils/formatters";
 
 interface Props {
-  form: ClientFormState;
-  errors: ClientFormErrors;
-  step: 1 | 2 | 3;
+  form: ClientFormState; errors: ClientFormErrors; step: 1 | 2 | 3;
   onChange: <Key extends keyof ClientFormState>(key: Key, value: ClientFormState[Key]) => void;
   onBorrowerChange: <Key extends keyof BorrowerFormState>(index: number, key: Key, value: BorrowerFormState[Key]) => void;
   onMoveBorrower?: (from: number, to: number) => void;
 }
 
-const requiredMark = <b aria-label="שדה חובה">*</b>;
+const requiredMark = <b className="required-mark" aria-hidden="true">*</b>;
 
 export default function ClientFormFields({form, errors, step, onChange, onBorrowerChange, onMoveBorrower}: Props) {
-  const globalField = (key: keyof ClientFormState, label: string, placeholder: string, options: {type?: string; min?: number; max?: number; hint?: string} = {}) => <label className="form-field">
-    <span>{label}{requiredMark}</span>
-    <input type={options.type ?? "text"} min={options.min} max={options.max} aria-label={label} placeholder={placeholder}
-      value={String(form[key])} onChange={(event) => onChange(key, event.target.value as never)} aria-invalid={Boolean(errors[String(key)])} />
-    {options.hint && <small>{options.hint}</small>}
-    {errors[String(key)] && <em role="alert">{errors[String(key)]}</em>}
-  </label>;
+  const input = (index: number, key: keyof BorrowerFormState, label: string, placeholder: string, type = "text") => <label className="form-field"><span>{label}{requiredMark}</span><input type={type} aria-label={`${label} - לווה ${index + 1}`} placeholder={placeholder} value={String(form.borrowers[index][key] ?? "")} onChange={(event) => onBorrowerChange(index, key, event.target.value as never)} aria-invalid={Boolean(errors[`borrowers.${index}.${String(key)}`])} />{errors[`borrowers.${index}.${String(key)}`] && <em role="alert">{errors[`borrowers.${index}.${String(key)}`]}</em>}</label>;
+  const select = (index: number, key: keyof BorrowerFormState, label: string, options: readonly (readonly [string, string])[]) => <label className="form-field"><span>{label}{requiredMark}</span><select aria-label={`${label} - לווה ${index + 1}`} value={String(form.borrowers[index][key] ?? "")} onChange={(event) => onBorrowerChange(index, key, event.target.value as never)} aria-invalid={Boolean(errors[`borrowers.${index}.${String(key)}`])}><option value="">בחירה</option>{options.map(([value, text]) => <option value={value} key={value}>{text}</option>)}</select>{errors[`borrowers.${index}.${String(key)}`] && <em role="alert">{errors[`borrowers.${index}.${String(key)}`]}</em>}</label>;
+  const globalInput = (key: keyof ClientFormState, label: string, placeholder: string, type = "text") => <label className="form-field"><span>{label}{requiredMark}</span><input type={type} aria-label={label} placeholder={placeholder} value={String(form[key] ?? "")} onChange={(event) => onChange(key, event.target.value as never)} aria-invalid={Boolean(errors[String(key)])} />{errors[String(key)] && <em role="alert">{errors[String(key)]}</em>}</label>;
+  const globalSelect = (key: keyof ClientFormState, label: string, options: readonly (readonly [string, string])[]) => <label className="form-field"><span>{label}{requiredMark}</span><select aria-label={label} value={String(form[key] ?? "")} onChange={(event) => onChange(key, event.target.value as never)} aria-invalid={Boolean(errors[String(key)])}><option value="">בחירה</option>{options.map(([value, text]) => <option value={value} key={value}>{text}</option>)}</select>{errors[String(key)] && <em role="alert">{errors[String(key)]}</em>}</label>;
 
-  const globalSelect = (key: keyof ClientFormState, label: string, values: ReadonlyArray<readonly [string, string]>) => <label className="form-field">
-    <span>{label}{requiredMark}</span>
-    <select aria-label={label} value={String(form[key])} onChange={(event) => onChange(key, event.target.value as never)} aria-invalid={Boolean(errors[String(key)])}>
-      <option value="">יש לבחור</option>
-      {values.map(([value, text]) => <option value={value} key={value}>{text}</option>)}
-    </select>
-    {errors[String(key)] && <em role="alert">{errors[String(key)]}</em>}
-  </label>;
+  const liabilitiesEditor = (title: string, liabilities: LiabilityFormState[], prefix: string, change: (next: LiabilityFormState[]) => void, message?: string) => <section className="liabilities-editor borrower-card">
+    <div className="borrower-card-heading"><div><span className="eyebrow">התחייבויות</span><h3>{title}</h3>{message && <p>{message}</p>}</div><button type="button" className="secondary-action" onClick={() => change([...liabilities, emptyLiabilityForm()])}><Plus size={17} />הוספת התחייבות</button></div>
+    {liabilities.length === 0 ? <p className="empty-inline">לא נוספו התחייבויות.</p> : liabilities.map((liability, liabilityIndex) => {
+      const key = `${prefix}.${liabilityIndex}`;
+      const update = (field: keyof LiabilityFormState, value: string) => change(liabilities.map((item, index) => index === liabilityIndex ? {...item, [field]: value, incompleteLegacy: false} : item));
+      const period = calculateRemainingCommitmentPeriod(liability.endDate);
+      return <article className="liability-card" key={liability.id ?? liabilityIndex}>
+        <header><h4>התחייבות {liabilityIndex + 1}</h4><button type="button" className="icon-text-button danger" onClick={() => change(liabilities.filter((_, index) => index !== liabilityIndex))}><Trash2 size={16} />מחיקה</button></header>
+        {liability.incompleteLegacy && <p className="form-message error">נדרש להשלים את פרטי ההתחייבות שהועברו מהמערכת הישנה.</p>}
+        <div className="responsive-form-grid">
+          <label className="form-field"><span>סוג התחייבות{requiredMark}</span><select aria-label={`סוג התחייבות ${liabilityIndex + 1}`} value={liability.type} onChange={(event) => update("type", event.target.value)}><option value="">בחירה</option>{liabilityTypeOptions.map(([value, text]) => <option value={value} key={value}>{text}</option>)}</select>{errors[`${key}.type`] && <em role="alert">{errors[`${key}.type`]}</em>}</label>
+          {liability.type === "OTHER_FINANCIAL_ENTITY" && <label className="form-field"><span>שם הגוף או סוג ההתחייבות{requiredMark}</span><input value={liability.otherTypeDescription} onChange={(event) => update("otherTypeDescription", event.target.value)} />{errors[`${key}.otherTypeDescription`] && <em role="alert">{errors[`${key}.otherTypeDescription`]}</em>}</label>}
+          <label className="form-field"><span>יתרה נוכחית{requiredMark}</span><input type="number" min="0" value={liability.currentBalance} onChange={(event) => update("currentBalance", event.target.value)} placeholder="הזן סכום בש״ח" />{errors[`${key}.currentBalance`] && <em role="alert">{errors[`${key}.currentBalance`]}</em>}</label>
+          <label className="form-field"><span>החזר חודשי{requiredMark}</span><input type="number" min="0" value={liability.monthlyPayment} onChange={(event) => update("monthlyPayment", event.target.value)} placeholder="הזן סכום בש״ח" />{errors[`${key}.monthlyPayment`] && <em role="alert">{errors[`${key}.monthlyPayment`]}</em>}</label>
+          <label className="form-field"><span>תאריך סיום התחייבות{requiredMark}</span><input type="date" value={liability.endDate} onChange={(event) => update("endDate", event.target.value)} />{errors[`${key}.endDate`] && <em role="alert">{errors[`${key}.endDate`]}</em>}</label>
+          <label className="form-field"><span>תקופה שנותרה</span><input readOnly value={period?.label ?? "יש להזין תאריך עתידי"} /></label>
+          <label className="form-field form-field-wide"><span>הערות{requiredMark}</span><textarea rows={3} maxLength={1000} value={liability.notes} onChange={(event) => update("notes", event.target.value)} placeholder="פרטים חשובים על ההתחייבות" />{errors[`${key}.notes`] && <em role="alert">{errors[`${key}.notes`]}</em>}</label>
+        </div>
+      </article>;
+    })}
+    <div className="form-calculation"><span>סך יתרות: <strong>{formatCurrency(liabilities.reduce((sum, item) => sum + Number(item.currentBalance || 0), 0))}</strong></span><span>סך החזרים חודשיים: <strong>{formatCurrency(liabilities.reduce((sum, item) => sum + Number(item.monthlyPayment || 0), 0))}</strong></span><span>מספר התחייבויות: <strong>{liabilities.length}</strong></span></div>
+  </section>;
 
-  const borrowerField = (index: number, key: keyof BorrowerFormState, label: string, placeholder: string, options: {type?: string; min?: number; max?: number; hint?: string} = {}) => {
-    const errorKey = `borrowers.${index}.${String(key)}`;
-    const borrower = form.borrowers[index];
-    return <label className="form-field">
-      <span>{label}{requiredMark}</span>
-      <input type={options.type ?? "text"} min={options.min} max={options.max} aria-label={`${label} - לווה ${index + 1}`} placeholder={placeholder}
-        value={String(borrower[key])} onChange={(event) => onBorrowerChange(index, key, event.target.value as never)} aria-invalid={Boolean(errors[errorKey])} />
-      {options.hint && <small>{options.hint}</small>}
-      {errors[errorKey] && <em role="alert">{errors[errorKey]}</em>}
-    </label>;
-  };
+  if (step === 1) return <fieldset><legend>פרטים אישיים</legend><div className="responsive-form-grid">{globalInput("numberOfBorrowers", "מספר לווים בתיק", "1", "number")}{Number(form.numberOfBorrowers) > 1 && globalSelect("borrowerRelationship", "מה הקשר בין הלווים?", borrowerRelationshipOptions)}{form.borrowerRelationship === "OTHER" && globalInput("borrowerRelationshipOther", "תיאור הקשר בין הלווים", "פרט את הקשר")}</div>
+    {isSharedHousehold(form.borrowerRelationship) && <section className="borrower-card household-card"><h3>נתוני משק הבית</h3><div className="responsive-form-grid">{globalInput("householdNumberOfChildren", "מספר ילדים", "0", "number")}{form.householdChildrenAges.map((age, index) => <label className="form-field" key={index}><span>ילד {index + 1} — גיל{requiredMark}</span><input type="number" min="0" value={age} onChange={(event) => onChange("householdChildrenAges", form.householdChildrenAges.map((item, ageIndex) => ageIndex === index ? event.target.value : item))} /></label>)}</div></section>}
+    <div className="borrower-stack">{form.borrowers.map((borrower, index) => <section className="borrower-card" key={index}><div className="borrower-card-heading"><div><span className="eyebrow">{index === 0 ? "לווה ראשי" : "לווה נוסף"}</span><h3>פרטי לווה {index + 1}</h3></div>{onMoveBorrower && form.borrowers.length > 1 && <div>{index > 0 && <button type="button" className="icon-action" aria-label="העברת לווה למעלה" onClick={() => onMoveBorrower(index, index - 1)}><ArrowUp /></button>}{index < form.borrowers.length - 1 && <button type="button" className="icon-action" aria-label="העברת לווה למטה" onClick={() => onMoveBorrower(index, index + 1)}><ArrowDown /></button>}</div>}</div><div className="responsive-form-grid">{input(index, "firstName", "שם פרטי", "הקלד את שם הלקוח")}{input(index, "lastName", "שם משפחה", "הקלד שם משפחה")}{input(index, "identityNumber", "מספר תעודת זהות", "9 ספרות ללא מקפים")}{input(index, "birthDate", "תאריך לידה", "", "date")}<label className="form-field"><span>גיל מחושב</span><input readOnly value={calculateAge(borrower.birthDate) ?? ""} /></label>{input(index, "phone", "טלפון", "050-0000000", "tel")}{input(index, "email", "דוא״ל", "name@example.com", "email")}{input(index, "address", "כתובת מגורים", "רחוב, מספר ועיר")}{select(index, "maritalStatus", "מצב משפחתי", maritalStatusOptions)}{!isSharedHousehold(form.borrowerRelationship) && input(index, "numberOfChildren", "מספר ילדים", "0", "number")}{!isSharedHousehold(form.borrowerRelationship) && borrower.childrenAges.map((age, childIndex) => <label className="form-field" key={childIndex}><span>ילד {childIndex + 1} — גיל{requiredMark}</span><input type="number" min="0" value={age} onChange={(event) => onBorrowerChange(index, "childrenAges", borrower.childrenAges.map((item, ageIndex) => ageIndex === childIndex ? event.target.value : item))} /></label>)}</div></section>)}</div></fieldset>;
 
-  const borrowerSelect = (index: number, key: keyof BorrowerFormState, label: string, values: ReadonlyArray<readonly [string, string]>) => {
-    const errorKey = `borrowers.${index}.${String(key)}`;
-    return <label className="form-field">
-      <span>{label}{requiredMark}</span>
-      <select aria-label={`${label} - לווה ${index + 1}`} value={String(form.borrowers[index][key])} onChange={(event) => onBorrowerChange(index, key, event.target.value as never)} aria-invalid={Boolean(errors[errorKey])}>
-        <option value="">יש לבחור</option>
-        {values.map(([value, text]) => <option value={value} key={value}>{text}</option>)}
-      </select>
-      {errors[errorKey] && <em role="alert">{errors[errorKey]}</em>}
-    </label>;
-  };
+  if (step === 2) return <fieldset><legend>הכנסות והתחייבויות</legend><div className="borrower-stack">{form.borrowers.map((borrower, index) => <section className="borrower-card" key={index}><div className="borrower-card-heading"><div><span className="eyebrow">לווה {index + 1}</span><h3>הכנסות ותעסוקה — לווה {index + 1}</h3></div></div><div className="responsive-form-grid">{select(index, "employmentType", "סוג תעסוקה", employmentTypeOptions)}{input(index, "employerName", "שם המעסיק או העסק", "שם המעסיק")}{input(index, "jobTitle", "תפקיד", "תפקיד נוכחי")}{input(index, "employmentSeniorityYears", "ותק בשנים", "0", "number")}{input(index, "monthlyNetIncome", "הכנסה חודשית נטו", "הזן סכום בש״ח", "number")}<label className="form-field"><span>האם קיימת הכנסה נוספת?{requiredMark}</span><select aria-label={`האם קיימת הכנסה נוספת - לווה ${index + 1}`} value={borrower.hasAdditionalIncome} onChange={(event) => onBorrowerChange(index, "hasAdditionalIncome", event.target.value as BorrowerFormState["hasAdditionalIncome"])}><option value="">בחירה</option><option value="yes">כן</option><option value="no">לא</option></select></label>{borrower.hasAdditionalIncome === "yes" && select(index, "additionalIncomeType", "סוג הכנסה נוספת", additionalIncomeTypeOptions)}{borrower.hasAdditionalIncome === "yes" && input(index, "additionalIncomeAmount", "סכום הכנסה נוספת חודשי", "הזן סכום בש״ח", "number")}{borrower.hasAdditionalIncome === "yes" && borrower.additionalIncomeType === "OTHER" && input(index, "additionalIncomeDescription", "תיאור הכנסה נוספת", "תאר את מקור ההכנסה")}</div>{!usesHouseholdLiabilities(form.borrowerRelationship) && liabilitiesEditor(`התחייבויות — לווה ${index + 1}`, borrower.liabilities, `borrowers.${index}.liabilities`, (next) => onBorrowerChange(index, "liabilities", next))}{usesHouseholdLiabilities(form.borrowerRelationship) && index > 0 && <p className="shared-data-note">ההתחייבויות משותפות לשני הלווים ומוזנות פעם אחת בלבד.</p>}</section>)}</div>{usesHouseholdLiabilities(form.borrowerRelationship) && liabilitiesEditor("התחייבויות משותפות למשק הבית", form.householdLiabilities, "householdLiabilities", (next) => onChange("householdLiabilities", next))}</fieldset>;
 
-  const childrenFields = (prefix: string, count: string, ages: string[], setCount: (value: string) => void, setAges: (value: string[]) => void) => <div className="responsive-form-grid children-fields">
-    <label className="form-field">
-      <span>מספר ילדים{requiredMark}</span>
-      <input type="number" min={0} max={20} aria-label={`מספר ילדים - ${prefix}`} value={count} onChange={(event) => setCount(event.target.value)} aria-invalid={Boolean(errors[`${prefix}.numberOfChildren`])} />
-      {errors[`${prefix}.numberOfChildren`] && <em role="alert">{errors[`${prefix}.numberOfChildren`]}</em>}
-    </label>
-    {ages.map((age, childIndex) => <label className="form-field" key={childIndex}>
-      <span>ילד {childIndex + 1} — גיל{requiredMark}</span>
-      <input type="number" min={0} max={120} aria-label={`גיל ילד ${childIndex + 1} - ${prefix}`} value={age} onChange={(event) => {
-        const next = [...ages]; next[childIndex] = event.target.value; setAges(next);
-      }} aria-invalid={Boolean(errors[`${prefix}.childrenAges.${childIndex}`])} />
-      {errors[`${prefix}.childrenAges.${childIndex}`] && <em role="alert">{errors[`${prefix}.childrenAges.${childIndex}`]}</em>}
-    </label>)}
-  </div>;
-
-  if (step === 1) return <fieldset>
-    <legend>פרטים אישיים של הלווים</legend>
-    <p className="fieldset-description">בחר את מספר הלווים והזן את פרטי כל לווה. הלווה הראשון מוגדר כלווה הראשי.</p>
-    <div className="responsive-form-grid borrower-setup">
-      {globalField("numberOfBorrowers", "מספר לווים בתיק", "בין 1 ל-5", {type: "number", min: 1, max: 5})}
-      {Number(form.numberOfBorrowers) > 1 && globalSelect("borrowerRelationship", "מה הקשר בין הלווים?", borrowerRelationshipOptions)}
-      {form.borrowerRelationship === "OTHER" && globalField("borrowerRelationshipOther", "תיאור הקשר", "תאר את הקשר בין הלווים")}
-    </div>
-    <div className="borrower-card-list">{form.borrowers.map((borrower, index) => <section className="borrower-card" key={index} data-testid={`borrower-personal-${index + 1}`}>
-      <header><div><span className="eyebrow">{index === 0 ? "לווה 1 — הלווה הראשי" : `לווה ${index + 1} — לווה נוסף`}</span><h3>{borrower.firstName || borrower.lastName ? `${borrower.firstName} ${borrower.lastName}` : `פרטי לווה ${index + 1}`}</h3></div>
-        {onMoveBorrower && form.borrowers.length > 1 && <div className="borrower-order-actions">
-          <button type="button" className="icon-button" aria-label={`העבר לווה ${index + 1} למעלה`} disabled={index === 0} onClick={() => onMoveBorrower(index, index - 1)}><ArrowUp size={17} /></button>
-          <button type="button" className="icon-button" aria-label={`העבר לווה ${index + 1} למטה`} disabled={index === form.borrowers.length - 1} onClick={() => onMoveBorrower(index, index + 1)}><ArrowDown size={17} /></button>
-        </div>}
-      </header>
-      {Object.keys(errors).some((key) => key.startsWith(`borrowers.${index}.`)) && <p className="borrower-error-summary" role="alert">יש להשלים את פרטי לווה {index + 1}</p>}
-      <div className="responsive-form-grid">
-        {borrowerField(index, "firstName", "שם פרטי", "הקלד שם פרטי")}
-        {borrowerField(index, "lastName", "שם משפחה", "הקלד שם משפחה")}
-        {borrowerField(index, "identityNumber", "מספר תעודת זהות", "9 ספרות ללא מקפים", {hint: "המידע נשמר מוצפן."})}
-        <div>{borrowerField(index, "birthDate", "תאריך לידה", "בחר תאריך", {type: "date"})}{borrower.birthDate && calculateAge(borrower.birthDate) !== null && <p className="calculated-age">גיל: <strong>{calculateAge(borrower.birthDate)}</strong></p>}</div>
-        {borrowerField(index, "phone", "טלפון", "לדוגמה 050-1234567", {type: "tel"})}
-        {borrowerField(index, "email", "דוא״ל", "name@example.co.il", {type: "email"})}
-        {borrowerField(index, "address", "כתובת מגורים", "רחוב, מספר ועיר")}
-        {borrowerSelect(index, "maritalStatus", "מצב משפחתי", maritalStatusOptions)}
-      </div>
-      {isSharedHousehold(form.borrowerRelationship) && index === 0 && <div className="household-card">
-        <h4>נתוני משק הבית</h4><p>מספר הילדים וגילאיהם נשמרים פעם אחת עבור שני הלווים.</p>
-        {childrenFields("household", form.householdNumberOfChildren, form.householdChildrenAges,
-          (value) => onChange("householdNumberOfChildren", value), (value) => onChange("householdChildrenAges", value))}
-      </div>}
-      {isSharedHousehold(form.borrowerRelationship) && index > 0 && <p className="shared-children-note">נתוני הילדים משותפים לשני הלווים ומוזנים תחת הלווה הראשי.</p>}
-      {!isSharedHousehold(form.borrowerRelationship) && childrenFields(`borrowers.${index}.children`, borrower.numberOfChildren, borrower.childrenAges,
-        (value) => onBorrowerChange(index, "numberOfChildren", value), (value) => onBorrowerChange(index, "childrenAges", value))}
-    </section>)}</div>
-  </fieldset>;
-
-  if (step === 2) return <fieldset>
-    <legend>הכנסות, תעסוקה והתחייבויות</legend>
-    <p className="fieldset-description">הזן תמונה פיננסית מלאה עבור כל לווה. הסיכומים בתחתית מחושבים אוטומטית לכל התיק.</p>
-    <div className="borrower-card-list">{form.borrowers.map((borrower, index) => <section className="borrower-card" key={index} data-testid={`borrower-financial-${index + 1}`}>
-      <header><div><span className="eyebrow">הכנסות והתחייבויות — לווה {index + 1}</span><h3>{`${borrower.firstName} ${borrower.lastName}`.trim() || `פרטי לווה ${index + 1}`}</h3></div></header>
-      {Object.keys(errors).some((key) => key.startsWith(`borrowers.${index}.`)) && <p className="borrower-error-summary" role="alert">יש להשלים את פרטי לווה {index + 1}</p>}
-      <div className="responsive-form-grid">
-        {borrowerSelect(index, "employmentType", "סוג תעסוקה", employmentTypeOptions)}
-        {borrowerField(index, "employerName", "שם המעסיק או העסק", "הקלד שם מעסיק או עסק")}
-        {borrowerField(index, "jobTitle", "תפקיד", "הקלד את התפקיד")}
-        {borrowerField(index, "employmentSeniorityYears", "ותק בשנים", "הזן שנות ותק", {type: "number", min: 0})}
-        {borrowerField(index, "monthlyNetIncome", "הכנסה חודשית נטו", "הזן סכום בש״ח", {type: "number", min: 0})}
-        {borrowerSelect(index, "hasAdditionalIncome", "האם קיימת הכנסה נוספת", [["yes", "כן"], ["no", "לא"]])}
-        {borrower.hasAdditionalIncome === "yes" && borrowerSelect(index, "additionalIncomeType", "סוג הכנסה נוספת", additionalIncomeTypeOptions)}
-        {borrower.hasAdditionalIncome === "yes" && borrowerField(index, "additionalIncomeAmount", "סכום הכנסה נוספת חודשי", "הזן סכום בש״ח", {type: "number", min: 0})}
-        {borrower.hasAdditionalIncome === "yes" && borrower.additionalIncomeType === "OTHER" && borrowerField(index, "additionalIncomeDescription", "תיאור הכנסה נוספת", "תאר את מקור ההכנסה")}
-        {borrowerField(index, "monthlyLiabilities", "התחייבויות חודשיות שאינן משכנתה", "הזן 0 כאשר אין", {type: "number", min: 0})}
-        {borrowerField(index, "existingMortgageBalance", "יתרת משכנתה קיימת", "הזן 0 כאשר אין", {type: "number", min: 0})}
-        {borrowerField(index, "existingMortgageMonthlyPayment", "החזר משכנתה חודשי", "הזן 0 כאשר אין", {type: "number", min: 0})}
-        <div className="form-calculation form-field-wide"><span>סך הכנסה ללווה: <strong>{formatCurrency(calculateTotalMonthlyIncome(borrower.monthlyNetIncome, borrower.hasAdditionalIncome === "yes" ? borrower.additionalIncomeAmount : 0))}</strong></span><span>סך החזרים ללווה: <strong>{formatCurrency(calculateTotalMonthlyPayments(borrower.monthlyLiabilities, borrower.existingMortgageMonthlyPayment))}</strong></span></div>
-      </div>
-    </section>)}</div>
-    <div className="form-calculation aggregate-calculation"><span>סך הכנסות בתיק: <strong>{formatCurrency(form.borrowers.reduce((sum, borrower) => sum + calculateTotalMonthlyIncome(borrower.monthlyNetIncome, borrower.hasAdditionalIncome === "yes" ? borrower.additionalIncomeAmount : 0), 0))}</strong></span><span>סך החזרים בתיק: <strong>{formatCurrency(form.borrowers.reduce((sum, borrower) => sum + calculateTotalMonthlyPayments(borrower.monthlyLiabilities, borrower.existingMortgageMonthlyPayment), 0))}</strong></span></div>
-  </fieldset>;
-
-  return <fieldset>
-    <legend>נכס ובקשת מימון משותפת</legend>
-    <p className="fieldset-description">פרטי העסקה, הנכס ובקשת המימון משותפים לכל הלווים בתיק.</p>
-    <div className="responsive-form-grid">
-      {globalSelect("dealType", "סוג העסקה", dealTypeOptions)}
-      {globalSelect("propertyType", "סוג הנכס", propertyTypeOptions)}
-      {form.propertyType === "OTHER" && globalField("propertyTypeOtherDescription", "תיאור סוג הנכס", "תאר את סוג הנכס")}
-      {globalField("propertyCity", "עיר", "הקלד את עיר הנכס")}
-      {globalSelect("propertyRegion", "אזור", propertyRegionOptions)}
-      {globalField("propertyAddress", "כתובת הנכס", "רחוב, מספר ועיר", {hint: "הכתובת המלאה לא תיכלל בתיק האנונימי."})}
-      {globalField("propertyValue", "שווי הנכס", "הזן סכום בש״ח", {type: "number", min: 0})}
-      {globalField("requestedAmount", "סכום המימון המבוקש", "הזן סכום בש״ח", {type: "number", min: 0})}
-      {globalField("requestedTermMonths", "תקופת ההלוואה בחודשים", "לדוגמה 240", {type: "number", min: 1})}
-      <label className="form-field form-field-wide"><span>הערות מקצועיות{requiredMark}</span><textarea aria-label="הערות מקצועיות" placeholder="דגשים מקצועיים חשובים לבחינת התיק" rows={5} value={form.notes} onChange={(event) => onChange("notes", event.target.value)} aria-invalid={Boolean(errors.notes)} />{errors.notes && <em role="alert">{errors.notes}</em>}</label>
-    </div>
-  </fieldset>;
+  return <fieldset><legend>נכס ובקשת מימון</legend><div className="responsive-form-grid">{globalSelect("loanPurpose", "מטרת ההלוואה", loanPurposeOptions)}{globalSelect("propertyType", "סוג הנכס", propertyTypeOptions)}{form.propertyType === "OTHER" && globalInput("propertyTypeOtherDescription", "תיאור סוג הנכס", "תאר את סוג הנכס")}{globalInput("propertyCity", "עיר", "הקלד את עיר הנכס")}{globalInput("propertyAddress", "כתובת הנכס", "רחוב, מספר ועיר")}{globalInput("propertyValue", "שווי הנכס", "הזן סכום בש״ח", "number")}{globalInput("requestedAmount", "סכום המימון המבוקש", "הזן סכום בש״ח", "number")}<label className="form-field form-field-wide"><span>פירוט עסקה{requiredMark}</span><textarea aria-label="פירוט עסקה" placeholder="פרט את מבנה העסקה, מטרת המימון, מידע חשוב והערות נוספות" rows={8} maxLength={5000} value={form.dealDetails} onChange={(event) => onChange("dealDetails", event.target.value)} aria-invalid={Boolean(errors.dealDetails)} />{errors.dealDetails && <em role="alert">{errors.dealDetails}</em>}</label></div></fieldset>;
 }

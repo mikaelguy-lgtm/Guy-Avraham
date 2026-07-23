@@ -1,11 +1,10 @@
 import type { AnonymousSubmissionSnapshot } from "../domain/types.js";
-import { calculateLoanToValue } from "../utils/clientCalculations.js";
 
 export interface SnapshotSource {
   publicCaseNumber: string;
-  dealType: string;
+  loanPurpose: string;
   propertyType: string;
-  propertyRegion: string;
+  propertyCity: string;
   propertyValue: number;
   requestedAmount: number;
   numberOfBorrowers: number;
@@ -13,21 +12,20 @@ export interface SnapshotSource {
   borrowerAges: number[];
   employmentTypes: string[];
   totalMonthlyIncome: number;
+  liabilityCount: number;
+  totalLiabilityBalance: number;
   totalMonthlyPayments: number;
-  existingMortgageBalance: number;
-  requestedTermMonths: number;
+  liabilityTypeBreakdown: Record<string, number>;
 }
 
 export function buildAnonymousSubmissionSnapshot(source: SnapshotSource): AnonymousSubmissionSnapshot {
-  const financingPercentage = calculateLoanToValue(source.requestedAmount, source.propertyValue);
   return {
     publicCaseNumber: source.publicCaseNumber,
-    dealType: source.dealType,
+    loanPurpose: source.loanPurpose,
     propertyType: source.propertyType,
-    propertyRegion: source.propertyRegion,
+    propertyCity: source.propertyCity,
     propertyValue: source.propertyValue,
     requestedAmount: source.requestedAmount,
-    financingPercentage,
     numberOfBorrowers: source.numberOfBorrowers,
     borrowerRelationship: source.borrowerRelationship === "MARRIED" || source.borrowerRelationship === "COMMON_LAW"
       ? "COUPLE"
@@ -35,8 +33,9 @@ export function buildAnonymousSubmissionSnapshot(source: SnapshotSource): Anonym
     borrowerAges: source.borrowerAges,
     employmentTypes: source.employmentTypes,
     totalMonthlyIncome: source.totalMonthlyIncome,
+    liabilityCount: source.liabilityCount,
+    totalLiabilityBalance: source.totalLiabilityBalance,
     totalMonthlyPayments: source.totalMonthlyPayments,
-    existingMortgageBalance: source.existingMortgageBalance,
-    requestedTermMonths: source.requestedTermMonths
+    liabilityTypeBreakdown: source.liabilityTypeBreakdown
   };
 }

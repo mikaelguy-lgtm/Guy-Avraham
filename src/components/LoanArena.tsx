@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Building2, CheckCircle2, Mail, Send, Sparkles } from "lucide-react";
-import type { Client, ClientSubmission, Lender, LoanOffer } from "../types";
-import { api } from "../utils/apiClient";
+import { Building2, CheckCircle2, Mail, Send, Sparkles, X } from "lucide-react";
+import type { Client, ClientSubmission, Lender, LoanOffer, MissingRequiredDocument } from "../types";
+import { ApiError, api } from "../utils/apiClient";
 import { formatCurrency, formatOfferStatus, formatSubmissionStatus } from "../utils/formatters";
 
-export default function LoanArena({clientId}: {clientId?: number}) {
+export default function LoanArena({clientId, onMissingDocuments}: {clientId?: number; onMissingDocuments?: () => void}) {
   const [clients, setClients] = useState<Client[]>([]);
   const [lenders, setLenders] = useState<Lender[]>([]);
   const [selectedClientId, setSelectedClientId] = useState(clientId ?? 0);
@@ -13,6 +13,7 @@ export default function LoanArena({clientId}: {clientId?: number}) {
   const [offers, setOffers] = useState<LoanOffer[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [missingDocuments, setMissingDocuments] = useState<MissingRequiredDocument[]>([]);
 
   useEffect(() => { void Promise.all([api.clients(), api.lenders()]).then(([clientResult, lenderResult]) => {setClients(clientResult.items); setLenders(lenderResult); if (!clientId && clientResult.items[0]) setSelectedClientId(clientResult.items[0].id);}); }, [clientId]);
   useEffect(() => { if (!selectedClientId) return; void Promise.all([api.submissions(selectedClientId), api.offers(selectedClientId)]).then(([submissionResult, offerResult]) => {setSubmissions(submissionResult); setOffers(offerResult);}); }, [selectedClientId]);
@@ -26,7 +27,11 @@ export default function LoanArena({clientId}: {clientId?: number}) {
       const failed = result.results.filter((item) => item.status !== "SENT").length;
       setMessage(failed ? `התיק נשלח, אך ${failed} משלוחים דורשים טיפול.` : "התיק נשלח בהצלחה לכל חברות המימון שנבחרו.");
       setSelectedLenders([]); setSubmissions(await api.submissions(selectedClientId));
-    } catch { setMessage("שליחת התיק נכשלה. בדוק את פרטי התיק ונסה שוב."); }
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.code === "MISSING_REQUIRED_DOCUMENTS") setMissingDocuments(caught.missingDocuments);
+      else if (caught instanceof ApiError && caught.code === "INCOMPLETE_LEGACY_LIABILITIES") setMessage(`שליחת התיק נכשלה. ${caught.publicMessage ?? "נדרש להשלים את פרטי ההתחייבויות שהועברו מהמערכת הישנה."}`);
+      else setMessage("שליחת התיק נכשלה. בדוק את פרטי התיק ונסה שוב.");
+    }
     finally { setBusy(false); }
   };
 
@@ -41,5 +46,6 @@ export default function LoanArena({clientId}: {clientId?: number}) {
     })}</div>
     {message && <p className={message.includes("נכשלה") || message.includes("דורשים") ? "form-message error" : "form-message success"} role="status">{message}</p>}
     <div className="arena-actions"><button type="button" className="primary-action large" disabled={!selectedClientId || selectedLenders.length === 0 || busy} onClick={() => void submit()}><Send size={19} />{busy ? "שולח את התיק…" : "שליחת התיק לחברות שנבחרו"}</button><small>{selectedLenders.length} חברות נבחרו</small></div>
+    {missingDocuments.length > 0 && <div className="modal-backdrop"><section className="modal content-card" role="dialog" aria-modal="true" aria-labelledby="missing-documents-title"><header className="modal-heading"><div><span className="eyebrow">מסמכי חובה</span><h2 id="missing-documents-title">לא ניתן לשלוח את התיק</h2></div><button type="button" className="icon-action" aria-label="סגירה" onClick={() => setMissingDocuments([])}><X /></button></header><p>חסרים מסמכי חובה. יש להשלים את המסמכים הבאים לפני שליחת התיק לחברות מימון:</p><ul className="missing-documents-list">{missingDocuments.map((document) => <li key={`${document.borrowerId ?? "client"}-${document.documentType}`}>{document.label}</li>)}</ul><div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setMissingDocuments([])}>סגירה</button>{onMissingDocuments && <button type="button" className="primary-action" onClick={onMissingDocuments}>מעבר למסמכים</button>}</div></section></div>}
   </section>;
 }

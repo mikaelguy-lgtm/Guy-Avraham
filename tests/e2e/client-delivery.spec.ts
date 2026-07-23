@@ -16,6 +16,7 @@ const dealTypes = [
   ["REVERSE_MORTGAGE", "משכנתה הפוכה"],
   ["TAMA", "תמ״א"],
   ["MORTGAGE_REFINANCE", "מחזור משכנתה"]
+  ,["BRIDGE_FINANCING", "גישור"]
 ] as const;
 
 async function login(page: Page): Promise<string> {
@@ -30,7 +31,7 @@ async function login(page: Page): Promise<string> {
 }
 
 test("final client module delivery verifies all required fields and deal types", async ({page, request}) => {
-  test.setTimeout(180_000);
+  test.setTimeout(360_000);
   await mkdir("output/playwright", {recursive: true});
   const consoleErrors: string[] = [];
   const failedRequests: string[] = [];
@@ -60,9 +61,9 @@ test("final client module delivery verifies all required fields and deal types",
     await page.getByLabel("כתובת מגורים").fill("רחוב הבדיקה 12, רמת גן");
     await page.getByLabel("מצב משפחתי").selectOption("MARRIED");
     await page.getByLabel("מספר ילדים").fill("2");
-    await expect(page.getByLabel(/^גיל ילד/)).toHaveCount(2);
-    await page.getByLabel("גיל ילד 1").fill("5");
-    await page.getByLabel("גיל ילד 2").fill("9");
+    await expect(page.getByLabel(/^ילד \d+ — גיל/)).toHaveCount(2);
+    await page.getByLabel("ילד 1 — גיל").fill("5");
+    await page.getByLabel("ילד 2 — גיל").fill("9");
     await page.getByLabel("מספר לווים בתיק").fill("1");
     await page.getByRole("button", {name: "הבא"}).click();
 
@@ -75,20 +76,21 @@ test("final client module delivery verifies all required fields and deal types",
     await page.getByLabel("האם קיימת הכנסה נוספת").selectOption("yes");
     await page.getByLabel("סוג הכנסה נוספת").selectOption("RENTAL_INCOME");
     await page.getByLabel("סכום הכנסה נוספת חודשי").fill("3000");
-    await page.getByLabel("התחייבויות חודשיות").fill("1500");
-    await page.getByLabel("יתרת משכנתה קיימת").fill("450000");
-    await page.getByLabel("החזר משכנתה חודשי").fill("3500");
+    await page.getByRole("button", {name: "הוספת התחייבות"}).click();
+    await page.getByLabel("סוג התחייבות 1").selectOption("MORTGAGE");
+    await page.getByLabel("יתרה נוכחית").fill("450000");
+    await page.getByLabel("החזר חודשי").fill("3500");
+    await page.getByLabel("תאריך סיום התחייבות").fill("2040-07-31");
+    await page.getByLabel("הערות").fill("משכנתה קיימת");
     await page.getByRole("button", {name: "הבא"}).click();
 
-    await page.getByLabel("סוג העסקה").selectOption("PURCHASE_FROM_CONTRACTOR");
+    await page.getByLabel("מטרת ההלוואה").selectOption("PURCHASE_FROM_CONTRACTOR");
     await page.getByLabel("סוג הנכס").selectOption("APARTMENT");
     await page.getByLabel("עיר").fill("רמת גן");
-    await page.getByLabel("אזור").selectOption("CENTER");
     await page.getByLabel("כתובת הנכס").fill("רחוב הנכס 30, רמת גן");
     await page.getByLabel("שווי הנכס").fill("2000000");
     await page.getByLabel("סכום המימון המבוקש").fill("1200000");
-    await page.getByLabel("תקופת ההלוואה בחודשים").fill("240");
-    await page.getByLabel("הערות מקצועיות").fill("בדיקת מסירה מלאה של מודול הלקוחות");
+    await page.getByLabel("פירוט עסקה").fill("בדיקת מסירה מלאה של מודול הלקוחות");
     await page.getByRole("button", {name: "יצירת תיק"}).click();
 
     await expect(page.getByRole("heading", {name: "בדיקת מסירה"})).toBeVisible();
@@ -96,9 +98,9 @@ test("final client module delivery verifies all required fields and deal types",
     publicCaseNumber = (await page.getByText(/^תיק SC-/).first().textContent())?.replace("תיק ", "") ?? "";
     expect(publicCaseNumber).toMatch(/^SC-/);
     await expect(page.getByText("23,000", {exact: false})).toBeVisible();
-    await expect(page.getByText("5,000", {exact: false})).toBeVisible();
-    await expect(page.getByText("21.74%")).toBeVisible();
-    await expect(page.getByText("60%", {exact: true}).first()).toBeVisible();
+    await expect(page.getByText("3,500", {exact: false})).toBeVisible();
+    await expect(page.getByText("יחס החזר")).toHaveCount(0);
+    await expect(page.getByText("אחוז מימון")).toHaveCount(0);
 
     await page.getByRole("button", {name: "פרטים אישיים", exact: true}).click();
     await expect(page.getByText("נשוי/אה")).toBeVisible();
@@ -107,14 +109,14 @@ test("final client module delivery verifies all required fields and deal types",
     await expect(page.getByText("שכר דירה")).toBeVisible();
     await expect(page.getByText("הכנסה ברוטו")).toHaveCount(0);
     await page.getByRole("button", {name: "התחייבויות", exact: true}).click();
-    await expect(page.getByText("יתרת משכנתה קיימת")).toBeVisible();
+    await expect(page.getByText("משכנתה", {exact: true})).toBeVisible();
     await page.getByRole("button", {name: "נכס", exact: true}).click();
     await expect(page.getByText("רחוב הנכס 30, רמת גן")).toBeVisible();
 
-    await page.getByRole("button", {name: "עריכה"}).click();
+    await page.getByRole("button", {name: "עריכה"}).first().click();
     let editor = page.getByRole("dialog");
     await editor.getByLabel("מצב משפחתי").selectOption("COMMON_LAW");
-    await editor.getByLabel("גיל ילד 1").fill("6");
+    await editor.getByLabel("ילד 1 — גיל").fill("6");
     await editor.getByRole("button", {name: "הבא"}).click();
     await editor.getByLabel("סוג הכנסה נוספת").selectOption("INVESTMENT_INCOME");
     await editor.getByLabel("סכום הכנסה נוספת חודשי").fill("4000");
@@ -123,22 +125,22 @@ test("final client module delivery verifies all required fields and deal types",
     await expect(page.getByRole("status")).toContainText("נשמרו בהצלחה");
 
     for (const [value, label] of dealTypes) {
-      await page.getByRole("button", {name: "עריכה"}).click();
+      await page.getByRole("button", {name: "עריכה"}).first().click();
       editor = page.getByRole("dialog");
       await editor.getByRole("button", {name: "הבא"}).click();
       await editor.getByRole("button", {name: "הבא"}).click();
-      await editor.getByLabel("סוג העסקה").selectOption(value);
+      await editor.getByLabel("מטרת ההלוואה").selectOption(value);
       await editor.getByRole("button", {name: "שמירת שינויים"}).click();
       await expect(page.getByRole("status")).toContainText("נשמרו בהצלחה");
       await page.reload();
-      await page.getByRole("button", {name: "נכס", exact: true}).click();
+      await page.getByRole("button", {name: "פירוט עסקה", exact: true}).click();
       await expect(page.getByText(label, {exact: true})).toBeVisible();
       await expect(page.locator("body")).not.toContainText(value);
-      await page.getByRole("button", {name: "עריכה"}).click();
+      await page.getByRole("button", {name: "עריכה"}).first().click();
       editor = page.getByRole("dialog");
       await editor.getByRole("button", {name: "הבא"}).click();
       await editor.getByRole("button", {name: "הבא"}).click();
-      await expect(editor.getByLabel("סוג העסקה")).toHaveValue(value);
+      await expect(editor.getByLabel("מטרת ההלוואה")).toHaveValue(value);
       await editor.getByRole("button", {name: "סגירת חלון עריכה"}).click();
     }
 

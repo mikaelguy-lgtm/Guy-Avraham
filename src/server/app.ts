@@ -8,6 +8,7 @@ import { allowedOrigins, type AppEnv } from "../config/env.js";
 import { IDENTITY_FIELDS, type IdentityField } from "../domain/types.js";
 import { advisorProfileSchema, advisorRegistrationApiSchema, normalizeEmail } from "../domain/advisorRegistration.js";
 import { clientInputSchema, type ClientInput } from "../domain/clientValidation.js";
+import { DOCUMENT_TYPES, REQUIRED_BORROWER_DOCUMENT_TYPES } from "../domain/clientFields.js";
 import { createAuthMiddleware, type TokenVerifier } from "../middleware/auth.js";
 import { createAnonymousPdf } from "../services/pdf.js";
 import { rateLimit, type RateLimitStore } from "../services/rateLimiter.js";
@@ -63,10 +64,19 @@ function publicAdvisorAccount(account: Awaited<ReturnType<AppStore["getAdvisorAc
   };
 }
 
-function clientMutationRecord(input: ClientInput, encryption: EncryptionService): ClientMutationRecord {
+function clientMutationRecord(input: ClientInput, encryption: EncryptionService, updatedByUserId: number): ClientMutationRecord {
   const encrypt = (value: string) => encryption.encrypt(value);
+  const liabilityRecord = (liability: ClientInput["householdLiabilities"][number]) => ({
+    liabilityType: liability.type,
+    otherTypeDescriptionEncrypted: liability.otherTypeDescription ? encrypt(liability.otherTypeDescription) : null,
+    currentBalance: liability.currentBalance,
+    monthlyPayment: liability.monthlyPayment,
+    endDate: liability.endDate,
+    notesEncrypted: encrypt(liability.notes)
+  });
   return {
-    notesEncrypted: encrypt(input.notes),
+    dealDetailsEncrypted: encrypt(input.dealDetails),
+    dealDetailsUpdatedByUserId: updatedByUserId,
     numberOfBorrowers: input.numberOfBorrowers,
     borrowerRelationship: input.borrowerRelationship,
     borrowerRelationshipOtherEncrypted: input.borrowerRelationshipOther ? encrypt(input.borrowerRelationshipOther) : null,
@@ -96,19 +106,16 @@ function clientMutationRecord(input: ClientInput, encryption: EncryptionService)
       additionalIncomeType: borrower.income.additionalIncomeType,
       additionalIncomeAmount: borrower.income.additionalIncomeAmount,
       additionalIncomeDescriptionEncrypted: borrower.income.additionalIncomeDescription ? encrypt(borrower.income.additionalIncomeDescription) : null,
-      monthlyLiabilities: borrower.liabilities.monthlyLiabilities,
-      existingMortgageBalance: borrower.liabilities.existingMortgageBalance,
-      existingMortgageMonthlyPayment: borrower.liabilities.existingMortgageMonthlyPayment
+      liabilities: borrower.liabilities.map(liabilityRecord)
     })),
-    dealType: input.loanRequest.dealType,
+    householdLiabilities: input.householdLiabilities.map(liabilityRecord),
+    loanPurpose: input.loanPurpose,
     propertyType: input.property.propertyType,
     propertyTypeOtherDescriptionEncrypted: input.property.propertyTypeOtherDescription ? encrypt(input.property.propertyTypeOtherDescription) : null,
-    propertyRegion: input.property.region,
     propertyCity: input.property.city,
     propertyAddressEncrypted: encrypt(input.property.address),
     propertyValue: input.property.value,
     requestedAmount: input.loanRequest.requestedAmount,
-    requestedTermMonths: input.loanRequest.requestedTermMonths,
     status: "ACTIVE"
   };
 }
@@ -148,16 +155,29 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
         additionalIncomeAmount: borrower.additionalIncomeAmount,
         additionalIncomeDescription: borrower.additionalIncomeDescriptionEncrypted ? encryption.decrypt(borrower.additionalIncomeDescriptionEncrypted) : null
       },
-      liabilities: {
-        monthlyLiabilities: borrower.monthlyLiabilities,
-        existingMortgageBalance: borrower.existingMortgageBalance,
-        existingMortgageMonthlyPayment: borrower.existingMortgageMonthlyPayment
-      }
+      liabilities: borrower.liabilities.map((liability) => ({
+        id: liability.id, scope: liability.scope, type: liability.liabilityType,
+        otherTypeDescription: liability.otherTypeDescriptionEncrypted ? encryption.decrypt(liability.otherTypeDescriptionEncrypted) : null,
+        currentBalance: liability.currentBalance, monthlyPayment: liability.monthlyPayment, endDate: liability.endDate,
+        notes: liability.notesEncrypted ? encryption.decrypt(liability.notesEncrypted) : "",
+        incompleteLegacy: liability.legacyStatus === "INCOMPLETE_LEGACY"
+      }))
     };
   });
   const primary = publicBorrowers[0];
+  const missingRequiredDocuments = await store.listMissingRequiredDocuments(client.id);
+  const dealDetailsUpdatedBy = client.dealDetailsUpdatedByUserId ? await store.getUserDisplayName(client.dealDetailsUpdatedByUserId) : null;
   const totalMonthlyIncome = publicBorrowers.reduce((sum, borrower) => sum + borrower.income.monthlyNetIncome + borrower.income.additionalIncomeAmount, 0);
-  const totalMonthlyPayments = publicBorrowers.reduce((sum, borrower) => sum + borrower.liabilities.monthlyLiabilities + borrower.liabilities.existingMortgageMonthlyPayment, 0);
+  const householdLiabilities = (details?.householdLiabilities ?? []).map((liability) => ({
+    id: liability.id, scope: liability.scope, type: liability.liabilityType,
+    otherTypeDescription: liability.otherTypeDescriptionEncrypted ? encryption.decrypt(liability.otherTypeDescriptionEncrypted) : null,
+    currentBalance: liability.currentBalance, monthlyPayment: liability.monthlyPayment, endDate: liability.endDate,
+    notes: liability.notesEncrypted ? encryption.decrypt(liability.notesEncrypted) : "",
+    incompleteLegacy: liability.legacyStatus === "INCOMPLETE_LEGACY"
+  }));
+  const allLiabilities = [...householdLiabilities, ...publicBorrowers.flatMap((borrower) => borrower.liabilities)];
+  const totalMonthlyPayments = allLiabilities.reduce((sum, liability) => sum + liability.monthlyPayment, 0);
+  const totalLiabilityBalance = allLiabilities.reduce((sum, liability) => sum + liability.currentBalance, 0);
   return {
     id: client.id,
     publicCaseNumber: client.publicCaseNumber,
@@ -169,12 +189,15 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
     phone: primary?.phone ?? encryption.decrypt(client.phoneEncrypted),
     email: primary?.email ?? encryption.decrypt(client.emailEncrypted),
     address: primary?.address ?? (client.addressEncrypted ? encryption.decrypt(client.addressEncrypted) : ""),
-    notes: client.notesEncrypted ? encryption.decrypt(client.notesEncrypted) : "",
+    dealDetails: client.dealDetailsEncrypted ? encryption.decrypt(client.dealDetailsEncrypted) : client.notesEncrypted ? encryption.decrypt(client.notesEncrypted) : "",
+    dealDetailsUpdatedAt: client.dealDetailsUpdatedAt,
+    dealDetailsUpdatedBy: dealDetailsUpdatedBy ?? "המערכת",
     numberOfBorrowers: client.numberOfBorrowers,
     borrowerRelationship: client.borrowerRelationship,
     borrowerRelationshipOther: client.borrowerRelationshipOtherEncrypted ? encryption.decrypt(client.borrowerRelationshipOtherEncrypted) : null,
     household: {numberOfChildren: client.householdChildrenCount, childrenAges: client.householdChildrenAges},
     borrowers: publicBorrowers,
+    householdLiabilities,
     maritalStatus: primary?.maritalStatus ?? client.maritalStatus,
     numberOfChildren: primary?.children.numberOfChildren ?? client.numberOfChildren,
     childrenAges: primary?.children.childrenAges ?? client.childrenAges,
@@ -189,23 +212,22 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
     additionalIncomeType: primary?.income.additionalIncomeType ?? null,
     additionalIncomeAmount: primary?.income.additionalIncomeAmount ?? 0,
     additionalIncomeDescription: primary?.income.additionalIncomeDescription ?? null,
-    monthlyLiabilities: details?.monthlyLiabilities ?? 0,
-    existingMortgageMonthlyPayment: details?.existingMortgageMonthlyPayment ?? 0,
-    dealType: details?.dealType ?? "",
+    loanPurpose: details?.loanPurpose ?? "",
     propertyType: details?.propertyType ?? "",
     propertyTypeOtherDescription: details?.propertyTypeOtherDescriptionEncrypted ? encryption.decrypt(details.propertyTypeOtherDescriptionEncrypted) : null,
-    propertyRegion: details?.propertyRegion ?? "",
     propertyCity: details?.propertyCity ?? "",
     propertyAddress: details?.propertyAddressEncrypted ? encryption.decrypt(details.propertyAddressEncrypted) : "",
     propertyValue: details?.propertyValue ?? 0,
-    existingMortgageBalance: details?.existingMortgageBalance ?? 0,
     requestedAmount: details?.requestedAmount ?? 0,
-    requestedTermMonths: details?.requestedTermMonths ?? 0,
     financingPercentage: details?.financingPercentage ?? 0,
     latestSubmissionStatus: details?.latestSubmissionStatus ?? null,
     offerCount: details?.offerCount ?? 0,
     totalMonthlyIncome,
     totalMonthlyPayments,
+    totalLiabilityBalance,
+    activeLiabilityCount: allLiabilities.length,
+    missingRequiredDocuments,
+    missingRequiredDocumentCount: missingRequiredDocuments.length,
     createdAt: client.createdAt,
     updatedAt: client.updatedAt
   };
@@ -219,6 +241,13 @@ function snapshotSourceWithAges(source: NonNullable<Awaited<ReturnType<AppStore[
     return calculateAge(birthDate);
   }).filter((age): age is number => age !== null);
   return {...source, borrowerAges};
+}
+
+function publicDocument(document: Awaited<ReturnType<AppStore["getDocument"]>> | NonNullable<Awaited<ReturnType<AppStore["getDocument"]>>>, encryption: EncryptionService) {
+  if (!document) return null;
+  const {descriptionEncrypted, storageKey: _storageKey, checksumSha256: _checksumSha256, ...safeDocument} = document;
+  void _storageKey; void _checksumSha256;
+  return {...safeDocument, description: descriptionEncrypted ? encryption.decrypt(descriptionEncrypted) : null};
 }
 
 function detectMime(file: Express.Multer.File): string | null {
@@ -386,7 +415,7 @@ export function createApp(services: AppServices) {
     if (!advisorId) { response.status(403).json({error: "ADVISOR_PROFILE_REQUIRED"}); return; }
     const publicCaseNumber = `SC-${randomBytes(8).toString("hex").toUpperCase()}`;
     const client = await services.store.createClient({
-      publicCaseNumber, advisorId, ...clientMutationRecord(input, services.encryption)
+      publicCaseNumber, advisorId, ...clientMutationRecord(input, services.encryption, request.user!.id)
     });
     await services.store.addAudit(request.user!.id, "CLIENT_CREATED", "client", client.id, {publicCaseNumber}, request.requestId, request.ip, request.header("user-agent"));
     response.status(201).json(await publicClient(client, services.store, services.encryption));
@@ -399,7 +428,7 @@ export function createApp(services: AppServices) {
 
   app.patch("/api/clients/:id", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientInputSchema.parse(request.body);
-    const client = await services.store.updateClient(request.authorizedClientId!, clientMutationRecord(input, services.encryption));
+    const client = await services.store.updateClient(request.authorizedClientId!, clientMutationRecord(input, services.encryption, request.user!.id));
     await services.store.addAudit(request.user!.id, "CLIENT_UPDATED", "client", request.authorizedClientId!, {fields: Object.keys(input)}, request.requestId);
     response.json(await publicClient(client, services.store, services.encryption));
   }));
@@ -411,7 +440,12 @@ export function createApp(services: AppServices) {
   }));
 
   app.get("/api/clients/:clientId/documents", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
-    response.json(await services.store.listDocuments(request.authorizedClientId!));
+    const documentRows = await services.store.listDocuments(request.authorizedClientId!);
+    response.json(documentRows.map((document) => publicDocument(document, services.encryption)));
+  }));
+
+  app.get("/api/clients/:clientId/documents/requirements", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    response.json({missingDocuments: await services.store.listMissingRequiredDocuments(request.authorizedClientId!)});
   }));
 
   app.post("/api/clients/:clientId/documents", ...authenticated, auth.requireAdvisorClientAccess, upload.single("file"), asyncRoute(async (request, response) => {
@@ -421,17 +455,33 @@ export function createApp(services: AppServices) {
     if (!detectedMime || !allowed.includes(request.file.mimetype) || detectedMime !== request.file.mimetype) {
       response.status(400).json({error: "INVALID_FILE_TYPE"}); return;
     }
+    const documentInput = z.object({
+      documentType: z.enum(DOCUMENT_TYPES, {error: "יש לבחור סוג מסמך"}),
+      borrowerId: z.preprocess((value) => value === "" || value === undefined ? null : value, z.coerce.number().int().positive().nullable()),
+      customTitle: z.preprocess((value) => value === undefined ? null : value, z.string().trim().max(255).nullable()),
+      description: z.preprocess((value) => value === undefined ? null : value, z.string().trim().max(1000).nullable())
+    }).strict().parse(request.body);
+    const borrowerRequired = REQUIRED_BORROWER_DOCUMENT_TYPES.includes(documentInput.documentType as typeof REQUIRED_BORROWER_DOCUMENT_TYPES[number]);
+    if (borrowerRequired && !documentInput.borrowerId) { response.status(400).json({error: "BORROWER_REQUIRED", message: "יש לבחור לווה למסמך הזיהוי"}); return; }
+    if (!borrowerRequired && documentInput.documentType !== "OTHER" && documentInput.borrowerId) { response.status(400).json({error: "BORROWER_NOT_ALLOWED"}); return; }
+    if (documentInput.documentType === "OTHER" && !documentInput.customTitle) { response.status(400).json({error: "CUSTOM_TITLE_REQUIRED", message: "יש להזין שם או נושא למסמך"}); return; }
+    if (documentInput.borrowerId) {
+      const details = await services.store.getClientDetails(request.authorizedClientId!);
+      if (!details?.borrowers.some((borrower) => borrower.id === documentInput.borrowerId)) { response.status(400).json({error: "INVALID_BORROWER"}); return; }
+    }
     const storageKey = `clients/${request.authorizedClientId}/${randomUUID()}`;
     const checksumSha256 = createHash("sha256").update(request.file.buffer).digest("hex");
     await services.storage.put(storageKey, request.file.buffer, detectedMime, {checksum: checksumSha256});
     const document = await services.store.createDocument({
       clientId: request.authorizedClientId!, uploadedByUserId: request.user!.id,
-      documentType: String(request.body.documentType ?? "OTHER").slice(0, 80),
+      borrowerId: documentInput.borrowerId, documentType: documentInput.documentType,
+      customTitle: documentInput.customTitle,
+      descriptionEncrypted: documentInput.description ? services.encryption.encrypt(documentInput.description) : null,
       originalFileName: request.file.originalname.slice(0, 255), storageKey, mimeType: detectedMime,
       sizeBytes: request.file.size, checksumSha256
     });
     await services.store.addAudit(request.user!.id, "DOCUMENT_UPLOADED", "document", document.id, {clientId: document.clientId, checksumSha256}, request.requestId);
-    response.status(201).json(document);
+    response.status(201).json(publicDocument(document, services.encryption));
   }));
 
   app.get("/api/documents/:documentId/download", ...authenticated, rateLimit(services.limiter, "document-download", 60, 60), asyncRoute(async (request, response) => {
@@ -465,6 +515,20 @@ export function createApp(services: AppServices) {
 
   app.post("/api/clients/:clientId/submissions", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = z.object({lenderIds: z.array(z.number().int().positive()).min(1).max(20)}).parse(request.body);
+    if (await services.store.hasIncompleteLegacyLiabilities(request.authorizedClientId!)) {
+      response.status(422).json({
+        error: "INCOMPLETE_LEGACY_LIABILITIES",
+        code: "INCOMPLETE_LEGACY_LIABILITIES",
+        message: "נדרש להשלים את פרטי ההתחייבויות שהועברו מהמערכת הישנה לפני שליחת התיק.",
+        requestId: request.requestId
+      });
+      return;
+    }
+    const missingDocuments = await services.store.listMissingRequiredDocuments(request.authorizedClientId!);
+    if (missingDocuments.length > 0) {
+      response.status(422).json({error: "MISSING_REQUIRED_DOCUMENTS", code: "MISSING_REQUIRED_DOCUMENTS", missingDocuments, requestId: request.requestId});
+      return;
+    }
     const available = new Map((await services.store.listLenders()).map((lender) => [lender.id, lender]));
     const source = await services.store.getSnapshotSource(request.authorizedClientId!);
     if (!source) { response.status(409).json({error: "CLIENT_FINANCIAL_DATA_INCOMPLETE"}); return; }

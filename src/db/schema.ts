@@ -1,6 +1,7 @@
 import {
   boolean,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -18,7 +19,7 @@ import { sql } from "drizzle-orm";
 export const userRoleEnum = pgEnum("user_role", ["SUPER_ADMIN", "ADMIN", "ADVISOR", "LENDER_ADMIN", "LENDER_UNDERWRITER"]);
 export const userStatusEnum = pgEnum("user_status", ["PENDING", "ACTIVE", "SUSPENDED", "DISABLED"]);
 export const clientStatusEnum = pgEnum("client_status", ["DRAFT", "ACTIVE", "SUBMITTED", "CLOSED", "ARCHIVED"]);
-export const documentStatusEnum = pgEnum("document_status", ["UPLOADED", "VERIFIED", "REJECTED", "DELETED"]);
+export const documentStatusEnum = pgEnum("document_status", ["UPLOADED", "VERIFIED", "REJECTED", "REPLACED", "DELETED"]);
 export const submissionStatusEnum = pgEnum("submission_status", [
   "DRAFT", "PENDING_DELIVERY", "SENT", "DELIVERED", "DELIVERY_FAILED", "OPENED", "IN_REVIEW",
   "MORE_INFO_REQUESTED", "IDENTITY_REQUESTED", "IDENTITY_APPROVED", "IDENTITY_REJECTED",
@@ -90,6 +91,9 @@ export const clients = pgTable("clients", {
   emailEncrypted: text("email_encrypted").notNull(),
   addressEncrypted: text("address_encrypted"),
   notesEncrypted: text("notes_encrypted"),
+  dealDetailsEncrypted: text("deal_details_encrypted"),
+  dealDetailsUpdatedByUserId: integer("deal_details_updated_by_user_id").references(() => users.id),
+  dealDetailsUpdatedAt: timestamp("deal_details_updated_at", {withTimezone: true}),
   maritalStatus: varchar("marital_status", {length: 30}).notNull().default("SINGLE"),
   numberOfChildren: integer("number_of_children").notNull().default(0),
   childrenAges: jsonb("children_ages").$type<number[]>().notNull().default([]),
@@ -178,13 +182,24 @@ export const liabilities = pgTable("liabilities", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull().references(() => clients.id),
   borrowerId: integer("borrower_id").references(() => borrowers.id),
+  scope: varchar("scope", {length: 20}).notNull().default("BORROWER"),
   liabilityType: varchar("liability_type", {length: 50}).notNull(),
   outstandingBalance: numeric("outstanding_balance", {precision: 14, scale: 2}).notNull(),
+  currentBalance: numeric("current_balance", {precision: 14, scale: 2}),
   monthlyPayment: numeric("monthly_payment", {precision: 14, scale: 2}).notNull(),
+  endDate: date("end_date"),
+  otherTypeDescriptionEncrypted: text("other_type_description_encrypted"),
+  notesEncrypted: text("notes_encrypted"),
+  legacyStatus: varchar("legacy_status", {length: 30}),
+  deletedAt: timestamp("deleted_at", {withTimezone: true}),
   ...timestamps
 }, (table) => [
+  index("liabilities_client_idx").on(table.clientId),
   index("liabilities_borrower_idx").on(table.borrowerId),
-  check("liabilities_amounts_check", sql`${table.outstandingBalance} >= 0 and ${table.monthlyPayment} >= 0`)
+  index("liabilities_active_idx").on(table.clientId, table.deletedAt),
+  check("liabilities_amounts_check", sql`${table.outstandingBalance} >= 0 and ${table.monthlyPayment} >= 0 and (${table.currentBalance} is null or ${table.currentBalance} >= 0)`),
+  check("liabilities_scope_check", sql`(${table.scope} = 'BORROWER' and ${table.borrowerId} is not null) or (${table.scope} = 'HOUSEHOLD' and ${table.borrowerId} is null)`),
+  check("liabilities_type_check", sql`${table.liabilityType} in ('LOAN', 'MORTGAGE', 'ALIMONY', 'OTHER_FINANCIAL_ENTITY')`)
 ]);
 
 export const properties = pgTable("properties", {
@@ -212,15 +227,18 @@ export const loanRequests = pgTable("loan_requests", {
   loanToValue: numeric("loan_to_value", {precision: 6, scale: 2}).notNull(),
   ...timestamps
 }, (table) => [
-  check("loan_requests_purpose_check", sql`${table.purpose} in ('PURCHASE_FROM_CONTRACTOR', 'BUYER_PRICE_PROGRAM', 'SECOND_HAND_PURCHASE', 'RENOVATION', 'DEBT_CONSOLIDATION', 'BUSINESS_PURPOSE', 'ANY_PURPOSE', 'SELF_CONSTRUCTION', 'FAMILY_TRANSACTION', 'KIBBUTZ_PURCHASE_OR_CONSTRUCTION', 'RECEIVER_PURCHASE', 'REVERSE_MORTGAGE', 'TAMA', 'MORTGAGE_REFINANCE')`),
+  check("loan_requests_purpose_check", sql`${table.purpose} in ('PURCHASE_FROM_CONTRACTOR', 'BUYER_PRICE_PROGRAM', 'SECOND_HAND_PURCHASE', 'RENOVATION', 'DEBT_CONSOLIDATION', 'BUSINESS_PURPOSE', 'ANY_PURPOSE', 'SELF_CONSTRUCTION', 'FAMILY_TRANSACTION', 'KIBBUTZ_PURCHASE_OR_CONSTRUCTION', 'RECEIVER_PURCHASE', 'REVERSE_MORTGAGE', 'TAMA', 'MORTGAGE_REFINANCE', 'BRIDGE_FINANCING')`),
   check("loan_requests_amounts_check", sql`${table.requestedAmount} >= 0 and ${table.requestedTermMonths} > 0 and ${table.loanToValue} >= 0`)
 ]);
 
 export const documents = pgTable("documents", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull().references(() => clients.id),
+  borrowerId: integer("borrower_id").references(() => borrowers.id),
   uploadedByUserId: integer("uploaded_by_user_id").notNull().references(() => users.id),
   documentType: varchar("document_type", {length: 80}).notNull(),
+  customTitle: varchar("custom_title", {length: 255}),
+  descriptionEncrypted: text("description_encrypted"),
   originalFileName: varchar("original_file_name", {length: 255}).notNull(),
   storageKey: varchar("storage_key", {length: 512}).notNull().unique(),
   mimeType: varchar("mime_type", {length: 100}).notNull(),
@@ -229,7 +247,11 @@ export const documents = pgTable("documents", {
   status: documentStatusEnum("status").notNull().default("UPLOADED"),
   deletedAt: timestamp("deleted_at", {withTimezone: true}),
   ...timestamps
-}, (table) => [index("documents_client_idx").on(table.clientId)]);
+}, (table) => [
+  index("documents_client_idx").on(table.clientId),
+  index("documents_borrower_idx").on(table.borrowerId),
+  index("documents_required_lookup_idx").on(table.clientId, table.borrowerId, table.documentType, table.status)
+]);
 
 export const lenderSubmissions = pgTable("lender_submissions", {
   id: serial("id").primaryKey(),

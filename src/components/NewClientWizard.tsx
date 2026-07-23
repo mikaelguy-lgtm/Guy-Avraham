@@ -40,7 +40,7 @@ export default function NewClientWizard({onCreated}: {onCreated?: (client: Clien
 
   const change = <Key extends keyof ClientFormState>(key: Key, value: ClientFormState[Key]) => {
     if (key === "borrowerRelationship" && form.borrowerRelationship && form.borrowerRelationship !== value
-      && !window.confirm("שינוי הקשר ישנה את אופן הצגת נתוני הילדים. הנתונים יישמרו בטופס ככל האפשר. להמשיך?")) return;
+      && !window.confirm("שינוי הקשר ישנה את אופן הצגת נתוני הילדים וההתחייבויות. הנתונים יועברו ככל האפשר. להמשיך?")) return;
     setForm((current) => {
       if (key === "numberOfBorrowers") {
         const count = value as string;
@@ -48,7 +48,15 @@ export default function NewClientWizard({onCreated}: {onCreated?: (client: Clien
         return {...current, numberOfBorrowers: count, borrowers, borrowerRelationship: Number(count) > 1 ? current.borrowerRelationship : "", borrowerRelationshipOther: Number(count) > 1 ? current.borrowerRelationshipOther : ""};
       }
       if (key === "borrowerRelationship" && current.borrowerRelationship && current.borrowerRelationship !== value) {
-        setRelationshipWarning("שינוי הקשר עשוי לשנות את אופן הצגת הילדים. הנתונים הקיימים נשמרו ותוכל להתאים אותם לפני השמירה.");
+        setRelationshipWarning("שינוי הקשר שינה את אופן הצגת הילדים וההתחייבויות. יש לבדוק את הנתונים לפני השמירה.");
+        const nextRelationship = value as string;
+        if (nextRelationship === "MARRIED") {
+          const householdLiabilities = current.householdLiabilities.length ? current.householdLiabilities : current.borrowers.flatMap((borrower) => borrower.liabilities);
+          return {...current, borrowerRelationship: nextRelationship, householdLiabilities, borrowers: current.borrowers.map((borrower) => ({...borrower, liabilities: []}))};
+        }
+        if (current.borrowerRelationship === "MARRIED") {
+          return {...current, borrowerRelationship: nextRelationship, householdLiabilities: [], borrowers: current.borrowers.map((borrower, index) => ({...borrower, liabilities: index === 0 ? [...borrower.liabilities, ...current.householdLiabilities] : borrower.liabilities}))};
+        }
       }
       if (key === "householdNumberOfChildren") {
         const count = value as string;

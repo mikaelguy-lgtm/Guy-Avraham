@@ -5,10 +5,10 @@ import { createAnonymousPdf } from "../../src/services/pdf";
 describe("anonymous PDF", () => {
   it("is generated only from the anonymous snapshot", async () => {
     const pdf = await createAnonymousPdf({
-      publicCaseNumber: "SC-SAFE-123", dealType: "SECOND_HAND_PURCHASE", propertyType: "APARTMENT", propertyRegion: "CENTER",
-      propertyValue: 2_000_000, requestedAmount: 1_000_000, financingPercentage: 50, numberOfBorrowers: 2,
+      publicCaseNumber: "SC-SAFE-123", loanPurpose: "SECOND_HAND_PURCHASE", propertyType: "APARTMENT", propertyCity: "תל אביב",
+      propertyValue: 2_000_000, requestedAmount: 1_000_000, numberOfBorrowers: 2,
       borrowerRelationship: "COUPLE", borrowerAges: [41, 39], employmentTypes: ["SALARIED", "SELF_EMPLOYED"],
-      totalMonthlyIncome: 35_000, totalMonthlyPayments: 5_000, existingMortgageBalance: 400_000, requestedTermMonths: 240
+      totalMonthlyIncome: 35_000, liabilityCount: 2, totalLiabilityBalance: 400_000, totalMonthlyPayments: 5_000, liabilityTypeBreakdown: {MORTGAGE: 1, LOAN: 1}
     });
     const document = await getDocument({data: new Uint8Array(pdf)}).promise;
     const page = await document.getPage(1);

@@ -43,6 +43,13 @@
       "when": 1784803107326,
       "tag": "0005_next_thor",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784822852810,
+      "tag": "0006_married_molten_man",
+      "breakpoints": true
     }
   ]
 }

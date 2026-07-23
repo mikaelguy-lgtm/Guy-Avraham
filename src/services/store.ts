@@ -26,6 +26,7 @@ import {
 } from "../db/schema.js";
 import type { AdvisorAccount, AnonymousSubmissionSnapshot, DatabaseUser, IdentityField, UserStatus } from "../domain/types.js";
 import type { AuthorizationDirectory } from "../middleware/auth.js";
+import { listMissingRequiredDocuments } from "../domain/requiredDocuments.js";
 
 export interface BorrowerMutationRecord {
   borrowerOrder: number;
@@ -51,28 +52,35 @@ export interface BorrowerMutationRecord {
   additionalIncomeType: string | null;
   additionalIncomeAmount: number;
   additionalIncomeDescriptionEncrypted: string | null;
-  monthlyLiabilities: number;
-  existingMortgageBalance: number;
-  existingMortgageMonthlyPayment: number;
+  liabilities: LiabilityMutationRecord[];
+}
+
+export interface LiabilityMutationRecord {
+  liabilityType: "LOAN" | "MORTGAGE" | "ALIMONY" | "OTHER_FINANCIAL_ENTITY";
+  otherTypeDescriptionEncrypted: string | null;
+  currentBalance: number;
+  monthlyPayment: number;
+  endDate: string;
+  notesEncrypted: string;
 }
 
 export interface ClientMutationRecord {
-  notesEncrypted: string;
+  dealDetailsEncrypted: string;
+  dealDetailsUpdatedByUserId: number;
   numberOfBorrowers: number;
   borrowerRelationship: string | null;
   borrowerRelationshipOtherEncrypted: string | null;
   householdChildrenCount: number;
   householdChildrenAges: number[];
   borrowers: BorrowerMutationRecord[];
-  dealType: string;
+  householdLiabilities: LiabilityMutationRecord[];
+  loanPurpose: string;
   propertyType: string;
   propertyTypeOtherDescriptionEncrypted: string | null;
-  propertyRegion: string;
   propertyCity: string;
   propertyAddressEncrypted: string;
   propertyValue: number;
   requestedAmount: number;
-  requestedTermMonths: number;
   status: "ACTIVE";
 }
 
@@ -93,6 +101,9 @@ export interface ClientRecord {
   emailEncrypted: string;
   addressEncrypted: string | null;
   notesEncrypted: string | null;
+  dealDetailsEncrypted: string | null;
+  dealDetailsUpdatedByUserId: number | null;
+  dealDetailsUpdatedAt: Date | null;
   maritalStatus: string;
   numberOfChildren: number;
   childrenAges: number[];
@@ -132,9 +143,19 @@ export interface BorrowerFinancialDetails {
   additionalIncomeType: string | null;
   additionalIncomeAmount: number;
   additionalIncomeDescriptionEncrypted: string | null;
-  monthlyLiabilities: number;
-  existingMortgageBalance: number;
-  existingMortgageMonthlyPayment: number;
+  liabilities: LiabilityFinancialDetails[];
+}
+
+export interface LiabilityFinancialDetails {
+  id: number;
+  scope: string;
+  liabilityType: string;
+  otherTypeDescriptionEncrypted: string | null;
+  currentBalance: number;
+  monthlyPayment: number;
+  endDate: string | null;
+  notesEncrypted: string | null;
+  legacyStatus: string | null;
 }
 
 export interface ClientFinancialDetails {
@@ -150,18 +171,14 @@ export interface ClientFinancialDetails {
   additionalIncomeType: string | null;
   additionalIncomeAmount: number;
   additionalIncomeDescriptionEncrypted: string | null;
-  monthlyLiabilities: number;
-  existingMortgageMonthlyPayment: number;
-  dealType: string;
+  householdLiabilities: LiabilityFinancialDetails[];
+  loanPurpose: string;
   propertyType: string;
-  propertyRegion: string;
   propertyCity: string;
   propertyAddressEncrypted: string | null;
   propertyTypeOtherDescriptionEncrypted: string | null;
   propertyValue: number;
-  existingMortgageBalance: number;
   requestedAmount: number;
-  requestedTermMonths: number;
   financingPercentage: number;
   latestSubmissionStatus: string | null;
   offerCount: number;
@@ -170,6 +187,11 @@ export interface ClientFinancialDetails {
 export interface DocumentRecord {
   id: number;
   clientId: number;
+  borrowerId: number | null;
+  uploadedByUserId: number;
+  documentType: string;
+  customTitle: string | null;
+  descriptionEncrypted: string | null;
   storageKey: string;
   originalFileName: string;
   mimeType: string;
@@ -191,6 +213,7 @@ export interface InviteValidation {
 
 export interface AppStore extends AuthorizationDirectory {
   findUserByEmail(email: string): Promise<DatabaseUser | null>;
+  getUserDisplayName(userId: number): Promise<string | null>;
   createAdvisorAccount(values: {firebaseUid: string; email: string; firstName: string; lastName: string; phoneEncrypted: string; businessName: string; businessPhoneEncrypted: string; businessEmail: string}): Promise<AdvisorAccount>;
   activateVerifiedAdvisor(userId: number): Promise<AdvisorAccount | null>;
   recordLogin(userId: number): Promise<void>;
@@ -205,18 +228,20 @@ export interface AppStore extends AuthorizationDirectory {
   getClientDetails(id: number): Promise<ClientFinancialDetails | null>;
   updateClient(id: number, record: ClientMutationRecord): Promise<ClientRecord | null>;
   softDeleteClient(id: number): Promise<void>;
-  createDocument(values: Omit<DocumentRecord, "id" | "status" | "deletedAt"> & {uploadedByUserId: number; documentType: string}): Promise<DocumentRecord>;
+  createDocument(values: Omit<DocumentRecord, "id" | "status" | "deletedAt">): Promise<DocumentRecord>;
   getDocument(id: number): Promise<DocumentRecord | null>;
   listDocuments(clientId: number): Promise<DocumentRecord[]>;
+  listMissingRequiredDocuments(clientId: number): Promise<Array<{documentType: string; borrowerId: number | null; borrowerOrder: number | null; label: string}>>;
+  hasIncompleteLegacyLiabilities(clientId: number): Promise<boolean>;
   softDeleteDocument(id: number): Promise<void>;
   listLenders(): Promise<Array<{id: number; name: string; contactEmail: string}>>;
   listClientSubmissions(clientId: number): Promise<Array<{id: number; lenderId: number; lenderName: string; status: string; updatedAt: Date}>>;
   getSnapshotSource(clientId: number): Promise<{
-    publicCaseNumber: string; dealType: string; propertyType: string; propertyRegion: string; propertyValue: number;
+    publicCaseNumber: string; loanPurpose: string; propertyType: string; propertyCity: string; propertyValue: number;
     requestedAmount: number; numberOfBorrowers: number; borrowerRelationship: string | null;
     employmentTypes: string[]; borrowerBirthDatesEncrypted: Array<string | null>; borrowerBirthDates: Array<Date | null>;
-    totalMonthlyIncome: number; totalMonthlyPayments: number;
-    existingMortgageBalance: number; requestedTermMonths: number;
+    totalMonthlyIncome: number; liabilityCount: number; totalLiabilityBalance: number; totalMonthlyPayments: number;
+    liabilityTypeBreakdown: Record<string, number>;
   } | null>;
   createSubmission(values: {clientId: number; lenderId: number; createdByUserId: number; snapshot: AnonymousSubmissionSnapshot; pdfStorageKey: string; tokenHash: string; expiresAt: Date}): Promise<{id: number}>;
   revokeSubmissionInvites(submissionId: number): Promise<void>;
@@ -252,6 +277,11 @@ export interface AppStore extends AuthorizationDirectory {
 }
 
 export class PostgresStore implements AppStore {
+  async getUserDisplayName(userId: number): Promise<string | null> {
+    const [user] = await db.select({firstName: users.firstName, lastName: users.lastName}).from(users).where(eq(users.id, userId)).limit(1);
+    return user ? `${user.firstName} ${user.lastName}`.trim() : null;
+  }
+
   async findUserByFirebaseUid(uid: string): Promise<DatabaseUser | null> {
     const [row] = await db.select({
       id: users.id, firebaseUid: users.firebaseUid, email: users.email, firstName: users.firstName, lastName: users.lastName,
@@ -370,7 +400,6 @@ export class PostgresStore implements AppStore {
   async createClient(record: CreateClientRecord): Promise<ClientRecord> {
     return db.transaction(async (transaction) => {
       const primary = record.borrowers[0];
-      const existingMortgageBalance = record.borrowers.reduce((sum, borrower) => sum + borrower.existingMortgageBalance, 0);
       const [client] = await transaction.insert(clients).values({
         publicCaseNumber: record.publicCaseNumber,
         advisorId: record.advisorId,
@@ -380,7 +409,10 @@ export class PostgresStore implements AppStore {
         phoneEncrypted: primary.phoneEncrypted,
         emailEncrypted: primary.emailEncrypted,
         addressEncrypted: primary.addressEncrypted,
-        notesEncrypted: record.notesEncrypted,
+        notesEncrypted: record.dealDetailsEncrypted,
+        dealDetailsEncrypted: record.dealDetailsEncrypted,
+        dealDetailsUpdatedByUserId: record.dealDetailsUpdatedByUserId,
+        dealDetailsUpdatedAt: new Date(),
         maritalStatus: primary.maritalStatus,
         numberOfChildren: primary.numberOfChildren,
         childrenAges: primary.childrenAges,
@@ -420,20 +452,28 @@ export class PostgresStore implements AppStore {
           additionalIncomeAmount: String(borrowerRecord.additionalIncomeAmount),
           additionalIncomeDescriptionEncrypted: borrowerRecord.additionalIncomeDescriptionEncrypted
         });
-        await transaction.insert(liabilities).values([
-          {clientId: client.id, borrowerId: borrower.id, liabilityType: "OTHER", outstandingBalance: "0", monthlyPayment: String(borrowerRecord.monthlyLiabilities)},
-          {clientId: client.id, borrowerId: borrower.id, liabilityType: "MORTGAGE", outstandingBalance: String(borrowerRecord.existingMortgageBalance), monthlyPayment: String(borrowerRecord.existingMortgageMonthlyPayment)}
-        ]);
+        if (borrowerRecord.liabilities.length > 0) await transaction.insert(liabilities).values(borrowerRecord.liabilities.map((liability) => ({
+          clientId: client.id, borrowerId: borrower.id, scope: "BORROWER", liabilityType: liability.liabilityType,
+          outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+          monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+          otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
+        })));
       }
+      if (record.householdLiabilities.length > 0) await transaction.insert(liabilities).values(record.householdLiabilities.map((liability) => ({
+        clientId: client.id, borrowerId: null, scope: "HOUSEHOLD", liabilityType: liability.liabilityType,
+        outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+        monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+        otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
+      })));
       await transaction.insert(properties).values({
-        clientId: client.id, propertyType: record.propertyType, region: record.propertyRegion, city: record.propertyCity,
+        clientId: client.id, propertyType: record.propertyType, region: "LEGACY_UNUSED", city: record.propertyCity,
         addressEncrypted: record.propertyAddressEncrypted, estimatedValue: String(record.propertyValue),
-        existingMortgageBalance: String(existingMortgageBalance),
+        existingMortgageBalance: "0",
         propertyTypeOtherDescriptionEncrypted: record.propertyTypeOtherDescriptionEncrypted
       });
       await transaction.insert(loanRequests).values({
-        clientId: client.id, purpose: record.dealType, requestedAmount: String(record.requestedAmount),
-        requestedTermMonths: record.requestedTermMonths,
+        clientId: client.id, purpose: record.loanPurpose, requestedAmount: String(record.requestedAmount),
+        requestedTermMonths: 1,
         loanToValue: String(record.propertyValue > 0 ? (record.requestedAmount / record.propertyValue) * 100 : 0)
       });
       return client;
@@ -476,23 +516,30 @@ export class PostgresStore implements AppStore {
     const [property] = await db.select().from(properties).where(eq(properties.clientId, id)).limit(1);
     const [loan] = await db.select().from(loanRequests).where(eq(loanRequests.clientId, id)).limit(1);
     if (borrowerRows.length === 0 || !property || !loan) return null;
-    const liabilityRows = await db.select({borrowerId: liabilities.borrowerId, type: liabilities.liabilityType, outstandingBalance: liabilities.outstandingBalance, monthlyPayment: liabilities.monthlyPayment})
-      .from(liabilities).where(eq(liabilities.clientId, id));
+    const liabilityRows = await db.select({
+      id: liabilities.id, borrowerId: liabilities.borrowerId, scope: liabilities.scope, liabilityType: liabilities.liabilityType,
+      outstandingBalance: liabilities.outstandingBalance, currentBalance: liabilities.currentBalance, monthlyPayment: liabilities.monthlyPayment,
+      endDate: liabilities.endDate, otherTypeDescriptionEncrypted: liabilities.otherTypeDescriptionEncrypted,
+      notesEncrypted: liabilities.notesEncrypted, legacyStatus: liabilities.legacyStatus
+    }).from(liabilities).where(and(eq(liabilities.clientId, id), isNull(liabilities.deletedAt)));
     const [latestSubmission] = await db.select({status: lenderSubmissions.status}).from(lenderSubmissions)
       .where(eq(lenderSubmissions.clientId, id)).orderBy(desc(lenderSubmissions.updatedAt)).limit(1);
     const [offersCount] = await db.select({value: sql<number>`count(*)::int`}).from(loanOffers)
       .innerJoin(lenderSubmissions, eq(lenderSubmissions.id, loanOffers.submissionId))
       .where(eq(lenderSubmissions.clientId, id));
     const borrowerDetails = borrowerRows.map((borrower) => {
-      const ownLiabilities = liabilityRows.filter((row) => row.borrowerId === borrower.id || (row.borrowerId === null && borrower.isPrimary));
+      const ownLiabilities = liabilityRows.filter((row) => row.scope === "BORROWER" && row.borrowerId === borrower.id);
       return {
         ...borrower,
         jobTitle: borrower.jobTitle ?? "",
         monthlyNetIncome: Number(borrower.monthlyNetIncome),
         additionalIncomeAmount: Number(borrower.additionalIncomeAmount),
-        monthlyLiabilities: ownLiabilities.filter((row) => row.type !== "MORTGAGE").reduce((sum, row) => sum + Number(row.monthlyPayment), 0),
-        existingMortgageBalance: ownLiabilities.filter((row) => row.type === "MORTGAGE").reduce((sum, row) => sum + Number(row.outstandingBalance), 0),
-        existingMortgageMonthlyPayment: ownLiabilities.filter((row) => row.type === "MORTGAGE").reduce((sum, row) => sum + Number(row.monthlyPayment), 0)
+        liabilities: ownLiabilities.map((row) => ({
+          id: row.id, scope: row.scope, liabilityType: row.liabilityType,
+          otherTypeDescriptionEncrypted: row.otherTypeDescriptionEncrypted,
+          currentBalance: Number(row.currentBalance ?? row.outstandingBalance), monthlyPayment: Number(row.monthlyPayment),
+          endDate: row.endDate, notesEncrypted: row.notesEncrypted, legacyStatus: row.legacyStatus
+        }))
       };
     });
     const primary = borrowerDetails[0];
@@ -509,18 +556,19 @@ export class PostgresStore implements AppStore {
       additionalIncomeType: primary.additionalIncomeType,
       additionalIncomeAmount: primary.additionalIncomeAmount,
       additionalIncomeDescriptionEncrypted: primary.additionalIncomeDescriptionEncrypted,
-      monthlyLiabilities: borrowerDetails.reduce((sum, borrower) => sum + borrower.monthlyLiabilities, 0),
-      existingMortgageMonthlyPayment: borrowerDetails.reduce((sum, borrower) => sum + borrower.existingMortgageMonthlyPayment, 0),
-      dealType: loan.purpose,
+      householdLiabilities: liabilityRows.filter((row) => row.scope === "HOUSEHOLD").map((row) => ({
+        id: row.id, scope: row.scope, liabilityType: row.liabilityType,
+        otherTypeDescriptionEncrypted: row.otherTypeDescriptionEncrypted,
+        currentBalance: Number(row.currentBalance ?? row.outstandingBalance), monthlyPayment: Number(row.monthlyPayment),
+        endDate: row.endDate, notesEncrypted: row.notesEncrypted, legacyStatus: row.legacyStatus
+      })),
+      loanPurpose: loan.purpose,
       propertyType: property.propertyType,
-      propertyRegion: property.region,
       propertyCity: property.city ?? "",
       propertyAddressEncrypted: property.addressEncrypted,
       propertyTypeOtherDescriptionEncrypted: property.propertyTypeOtherDescriptionEncrypted,
       propertyValue: Number(property.estimatedValue),
-      existingMortgageBalance: Number(property.existingMortgageBalance),
       requestedAmount: Number(loan.requestedAmount),
-      requestedTermMonths: loan.requestedTermMonths,
       financingPercentage: Number(loan.loanToValue),
       latestSubmissionStatus: latestSubmission?.status ?? null,
       offerCount: offersCount?.value ?? 0
@@ -530,11 +578,12 @@ export class PostgresStore implements AppStore {
   async updateClient(id: number, record: ClientMutationRecord): Promise<ClientRecord | null> {
     return db.transaction(async (transaction) => {
       const primary = record.borrowers[0];
-      const existingMortgageBalance = record.borrowers.reduce((sum, borrower) => sum + borrower.existingMortgageBalance, 0);
       const [client] = await transaction.update(clients).set({
         firstNameEncrypted: primary.firstNameEncrypted, lastNameEncrypted: primary.lastNameEncrypted,
         identityNumberEncrypted: primary.identityNumberEncrypted, phoneEncrypted: primary.phoneEncrypted,
-        emailEncrypted: primary.emailEncrypted, addressEncrypted: primary.addressEncrypted, notesEncrypted: record.notesEncrypted,
+        emailEncrypted: primary.emailEncrypted, addressEncrypted: primary.addressEncrypted,
+        notesEncrypted: record.dealDetailsEncrypted, dealDetailsEncrypted: record.dealDetailsEncrypted,
+        dealDetailsUpdatedByUserId: record.dealDetailsUpdatedByUserId, dealDetailsUpdatedAt: new Date(),
         maritalStatus: primary.maritalStatus, numberOfChildren: primary.numberOfChildren, childrenAges: primary.childrenAges,
         borrowerCount: record.numberOfBorrowers, numberOfBorrowers: record.numberOfBorrowers,
         borrowerRelationship: record.borrowerRelationship,
@@ -550,6 +599,9 @@ export class PostgresStore implements AppStore {
       const [property] = await transaction.select({id: properties.id}).from(properties).where(eq(properties.clientId, id)).limit(1);
       const [loan] = await transaction.select({id: loanRequests.id}).from(loanRequests).where(eq(loanRequests.clientId, id)).limit(1);
       if (!property || !loan) throw new Error("CLIENT_FINANCIAL_DATA_INCOMPLETE");
+
+      await transaction.update(liabilities).set({deletedAt: new Date(), updatedAt: new Date()})
+        .where(and(eq(liabilities.clientId, id), isNull(liabilities.deletedAt)));
 
       const retainedBorrowerIds: number[] = [];
       await transaction.update(borrowers).set({
@@ -605,12 +657,19 @@ export class PostgresStore implements AppStore {
         };
         if (employment) await transaction.update(employmentRecords).set(employmentValues).where(eq(employmentRecords.id, employment.id));
         else await transaction.insert(employmentRecords).values({borrowerId, ...employmentValues});
-        await transaction.delete(liabilities).where(eq(liabilities.borrowerId, borrowerId));
-        await transaction.insert(liabilities).values([
-          {clientId: id, borrowerId, liabilityType: "OTHER", outstandingBalance: "0", monthlyPayment: String(borrowerRecord.monthlyLiabilities)},
-          {clientId: id, borrowerId, liabilityType: "MORTGAGE", outstandingBalance: String(borrowerRecord.existingMortgageBalance), monthlyPayment: String(borrowerRecord.existingMortgageMonthlyPayment)}
-        ]);
+        if (borrowerRecord.liabilities.length > 0) await transaction.insert(liabilities).values(borrowerRecord.liabilities.map((liability) => ({
+          clientId: id, borrowerId, scope: "BORROWER", liabilityType: liability.liabilityType,
+          outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+          monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+          otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
+        })));
       }
+      if (record.householdLiabilities.length > 0) await transaction.insert(liabilities).values(record.householdLiabilities.map((liability) => ({
+        clientId: id, borrowerId: null, scope: "HOUSEHOLD", liabilityType: liability.liabilityType,
+        outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+        monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+        otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
+      })));
       const removedBorrowerIds = existingBorrowers.map((item) => item.id).filter((borrowerId) => !retainedBorrowerIds.includes(borrowerId));
       if (removedBorrowerIds.length > 0) {
         await transaction.delete(liabilities).where(inArray(liabilities.borrowerId, removedBorrowerIds));
@@ -620,11 +679,11 @@ export class PostgresStore implements AppStore {
       }
       await transaction.update(properties).set({
         propertyType: record.propertyType, propertyTypeOtherDescriptionEncrypted: record.propertyTypeOtherDescriptionEncrypted,
-        region: record.propertyRegion, city: record.propertyCity, addressEncrypted: record.propertyAddressEncrypted,
-        estimatedValue: String(record.propertyValue), existingMortgageBalance: String(existingMortgageBalance), updatedAt: new Date()
+        region: "LEGACY_UNUSED", city: record.propertyCity, addressEncrypted: record.propertyAddressEncrypted,
+        estimatedValue: String(record.propertyValue), existingMortgageBalance: "0", updatedAt: new Date()
       }).where(eq(properties.id, property.id));
       await transaction.update(loanRequests).set({
-        purpose: record.dealType, requestedAmount: String(record.requestedAmount), requestedTermMonths: record.requestedTermMonths,
+        purpose: record.loanPurpose, requestedAmount: String(record.requestedAmount), requestedTermMonths: 1,
         loanToValue: String(record.propertyValue > 0 ? (record.requestedAmount / record.propertyValue) * 100 : 0), updatedAt: new Date()
       }).where(eq(loanRequests.id, loan.id));
       return client;
@@ -635,7 +694,7 @@ export class PostgresStore implements AppStore {
     await db.update(clients).set({deletedAt: new Date(), status: "ARCHIVED", updatedAt: new Date()}).where(eq(clients.id, id));
   }
 
-  async createDocument(values: Omit<DocumentRecord, "id" | "status" | "deletedAt"> & {uploadedByUserId: number; documentType: string}) {
+  async createDocument(values: Omit<DocumentRecord, "id" | "status" | "deletedAt">) {
     const [row] = await db.insert(documents).values(values).returning();
     return row;
   }
@@ -647,6 +706,15 @@ export class PostgresStore implements AppStore {
 
   async listDocuments(clientId: number): Promise<DocumentRecord[]> {
     return db.select().from(documents).where(and(eq(documents.clientId, clientId), isNull(documents.deletedAt)));
+  }
+
+  async listMissingRequiredDocuments(clientId: number) {
+    const [borrowerRows, documentRows] = await Promise.all([
+      db.select({id: borrowers.id, borrowerOrder: borrowers.borrowerOrder}).from(borrowers).where(eq(borrowers.clientId, clientId)).orderBy(asc(borrowers.borrowerOrder)),
+      db.select({borrowerId: documents.borrowerId, documentType: documents.documentType, status: documents.status, deletedAt: documents.deletedAt})
+        .from(documents).where(eq(documents.clientId, clientId))
+    ]);
+    return listMissingRequiredDocuments(borrowerRows, documentRows);
   }
 
   async softDeleteDocument(id: number): Promise<void> {
@@ -683,20 +751,33 @@ export class PostgresStore implements AppStore {
     })
       .from(employmentRecords).innerJoin(borrowers, eq(borrowers.id, employmentRecords.borrowerId))
       .where(eq(borrowers.clientId, clientId)).orderBy(asc(borrowers.borrowerOrder));
-    const [liability] = await db.select({monthly: sql<string>`coalesce(sum(${liabilities.monthlyPayment}), 0)`}).from(liabilities).where(eq(liabilities.clientId, clientId));
+    const liabilityRows = await db.select({type: liabilities.liabilityType, balance: liabilities.currentBalance, legacyBalance: liabilities.outstandingBalance, monthly: liabilities.monthlyPayment})
+      .from(liabilities).where(and(eq(liabilities.clientId, clientId), isNull(liabilities.deletedAt)));
     if (!property || !loan || employmentRows.length === 0) return null;
     return {
-      publicCaseNumber: client.publicCaseNumber, dealType: loan.purpose, propertyType: property.propertyType,
-      propertyRegion: property.region, propertyValue: Number(property.estimatedValue), requestedAmount: Number(loan.requestedAmount),
+      publicCaseNumber: client.publicCaseNumber, loanPurpose: loan.purpose, propertyType: property.propertyType,
+      propertyCity: property.city ?? "", propertyValue: Number(property.estimatedValue), requestedAmount: Number(loan.requestedAmount),
       numberOfBorrowers: client.numberOfBorrowers,
       borrowerRelationship: client.borrowerRelationship,
       employmentTypes: employmentRows.map((employment) => employment.employmentType),
       borrowerBirthDatesEncrypted: employmentRows.map((employment) => employment.birthDateEncrypted),
       borrowerBirthDates: employmentRows.map((employment) => employment.birthDate),
       totalMonthlyIncome: employmentRows.reduce((sum, employment) => sum + Number(employment.monthlyNetIncome) + Number(employment.additionalIncomeAmount), 0),
-      totalMonthlyPayments: Number(liability?.monthly ?? 0), existingMortgageBalance: Number(property.existingMortgageBalance),
-      requestedTermMonths: loan.requestedTermMonths
+      liabilityCount: liabilityRows.length,
+      totalLiabilityBalance: liabilityRows.reduce((sum, liability) => sum + Number(liability.balance ?? liability.legacyBalance), 0),
+      totalMonthlyPayments: liabilityRows.reduce((sum, liability) => sum + Number(liability.monthly), 0),
+      liabilityTypeBreakdown: liabilityRows.reduce<Record<string, number>>((result, liability) => {
+        result[liability.type] = (result[liability.type] ?? 0) + 1;
+        return result;
+      }, {})
     };
+  }
+
+  async hasIncompleteLegacyLiabilities(clientId: number): Promise<boolean> {
+    const [row] = await db.select({id: liabilities.id}).from(liabilities)
+      .where(and(eq(liabilities.clientId, clientId), eq(liabilities.legacyStatus, "INCOMPLETE_LEGACY"), isNull(liabilities.deletedAt)))
+      .limit(1);
+    return Boolean(row);
   }
 
   async createSubmission(values: {clientId: number; lenderId: number; createdByUserId: number; snapshot: AnonymousSubmissionSnapshot; pdfStorageKey: string; tokenHash: string; expiresAt: Date}) {

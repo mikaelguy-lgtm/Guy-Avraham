@@ -4,7 +4,7 @@ import { formatAdditionalIncomeType, formatClientStatus, formatCurrency, formatD
 
 describe("Hebrew display formatters", () => {
   it("never exposes business enums", () => {
-    const expectedDeals = ["רכישה מקבלן", "מחיר למשתכן", "רכישה יד שנייה", "שיפוצים", "איחוד הלוואות", "מטרה עסקית", "לכל מטרה", "בנייה עצמית", "עסקה בתוך המשפחה", "רכישה או בנייה בקיבוץ", "רכישה מכונס נכסים", "משכנתה הפוכה", "תמ״א", "מחזור משכנתה"];
+    const expectedDeals = ["רכישה מקבלן", "מחיר למשתכן", "רכישה יד שנייה", "שיפוצים", "איחוד הלוואות", "מטרה עסקית", "לכל מטרה", "בנייה עצמית", "עסקה בתוך המשפחה", "רכישה או בנייה בקיבוץ", "רכישה מכונס נכסים", "משכנתה הפוכה", "תמ״א", "מחזור משכנתה", "גישור"];
     expect(DEAL_TYPES.map(formatDealType)).toEqual(expectedDeals);
     expect(formatEmploymentType("SALARIED")).toBe("שכיר");
     expect(formatEmploymentType("SELF_EMPLOYED")).toBe("עצמאי");

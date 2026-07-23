@@ -28,6 +28,10 @@ const labels: Record<string, string> = {
   REVERSE_MORTGAGE: "משכנתה הפוכה",
   TAMA: "תמ״א",
   MORTGAGE_REFINANCE: "מחזור משכנתה",
+  BRIDGE_FINANCING: "גישור",
+  LOAN: "הלוואה",
+  MORTGAGE: "משכנתה",
+  OTHER_FINANCIAL_ENTITY: "גוף פיננסי אחר",
   SALARIED: "שכיר",
   SELF_EMPLOYED: "עצמאי",
   CONTROLLING_SHAREHOLDER: "בעל שליטה",
@@ -69,6 +73,7 @@ const labels: Record<string, string> = {
   VERIFIED: "אומת",
   REJECTED: "נדחה",
   DELETED: "נמחק",
+  REPLACED: "הוחלף",
   PENDING_DELIVERY: "ממתין לשליחה",
   SENT: "נשלח",
   DELIVERED: "נמסר",
@@ -100,6 +105,11 @@ const labels: Record<string, string> = {
   INCOME: "אישור הכנסה",
   BANK_STATEMENT: "דף חשבון",
   OTHER: "אחר",
+  ID_FRONT: "תעודת זהות — צד קדמי",
+  ID_BACK: "תעודת זהות — צד אחורי",
+  ID_APPENDIX: "ספח תעודת זהות",
+  PROPERTY_RIGHTS: "נסח טאבו או אישור זכויות",
+  POWER_OF_ATTORNEY: "כתב הסמכה",
   SUBMITTED_OFFER: "הוגשה",
   UPDATED: "עודכנה",
   WITHDRAWN: "נמשכה",
@@ -111,6 +121,8 @@ export const formatUserStatus = (value: string) => labels[value] ?? "לא ידו
 export const formatClientStatus = (value: string) => labels[value] ?? "בטיפול";
 export const formatEmploymentType = (value: string) => labels[value] ?? "לא צוין";
 export const formatDealType = (value: string) => labels[value] ?? "לא צוין";
+export const formatLoanPurpose = formatDealType;
+export const formatLiabilityType = (value: string) => labels[value] ?? "התחייבות";
 export const formatPropertyType = (value: string) => labels[value] ?? "לא צוין";
 export const formatRegion = (value: string) => labels[value] ?? "לא צוין";
 export const formatMaritalStatus = (value: string) => labels[value] ?? "לא צוין";

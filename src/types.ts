@@ -52,7 +52,26 @@ export interface ClientBorrower {
   children: {numberOfChildren: number; childrenAges: number[]};
   employment: {employmentType: string; employerName: string; jobTitle: string; employmentSeniorityYears: number};
   income: {monthlyNetIncome: number; hasAdditionalIncome: boolean; additionalIncomeType: string | null; additionalIncomeAmount: number; additionalIncomeDescription: string | null};
-  liabilities: {monthlyLiabilities: number; existingMortgageBalance: number; existingMortgageMonthlyPayment: number};
+  liabilities: ClientLiability[];
+}
+
+export interface ClientLiability {
+  id: number;
+  scope: "BORROWER" | "HOUSEHOLD";
+  type: "LOAN" | "MORTGAGE" | "ALIMONY" | "OTHER_FINANCIAL_ENTITY";
+  otherTypeDescription: string | null;
+  currentBalance: number;
+  monthlyPayment: number;
+  endDate: string | null;
+  notes: string;
+  incompleteLegacy: boolean;
+}
+
+export interface MissingRequiredDocument {
+  documentType: string;
+  borrowerId: number | null;
+  borrowerOrder: number | null;
+  label: string;
 }
 
 export interface Client {
@@ -66,7 +85,9 @@ export interface Client {
   phone: string;
   email: string;
   address: string;
-  notes: string;
+  dealDetails: string;
+  dealDetailsUpdatedAt: string | null;
+  dealDetailsUpdatedBy: string;
   birthDate: string;
   maritalStatus: string;
   numberOfChildren: number;
@@ -77,6 +98,7 @@ export interface Client {
   borrowerRelationshipOther: string | null;
   household: {numberOfChildren: number; childrenAges: number[]};
   borrowers: ClientBorrower[];
+  householdLiabilities: ClientLiability[];
   employmentType: string;
   employerName: string;
   jobTitle: string;
@@ -86,23 +108,22 @@ export interface Client {
   additionalIncomeType: string | null;
   additionalIncomeAmount: number;
   additionalIncomeDescription: string | null;
-  monthlyLiabilities: number;
-  existingMortgageMonthlyPayment: number;
-  dealType: string;
+  loanPurpose: string;
   propertyType: string;
   propertyTypeOtherDescription: string | null;
-  propertyRegion: string;
   propertyCity: string;
   propertyAddress: string;
   propertyValue: number;
-  existingMortgageBalance: number;
   requestedAmount: number;
-  requestedTermMonths: number;
   financingPercentage: number;
   latestSubmissionStatus: string | null;
   offerCount: number;
   totalMonthlyIncome: number;
   totalMonthlyPayments: number;
+  totalLiabilityBalance: number;
+  activeLiabilityCount: number;
+  missingRequiredDocuments: MissingRequiredDocument[];
+  missingRequiredDocumentCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -117,6 +138,9 @@ export interface ClientList {
 export interface DocumentRecord {
   id: number;
   clientId: number;
+  borrowerId: number | null;
+  customTitle: string | null;
+  description: string | null;
   originalFileName: string;
   documentType: string;
   mimeType: string;

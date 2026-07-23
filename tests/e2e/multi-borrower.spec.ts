@@ -30,9 +30,6 @@ async function fillFinancial(page: Page, borrower: number, income: string) {
   await page.getByLabel(`ותק בשנים - לווה ${borrower}`, {exact: true}).fill("5");
   await page.getByLabel(`הכנסה חודשית נטו - לווה ${borrower}`, {exact: true}).fill(income);
   await page.getByLabel(`האם קיימת הכנסה נוספת - לווה ${borrower}`, {exact: true}).selectOption("no");
-  await page.getByLabel(`התחייבויות חודשיות שאינן משכנתה - לווה ${borrower}`, {exact: true}).fill("1000");
-  await page.getByLabel(`יתרת משכנתה קיימת - לווה ${borrower}`, {exact: true}).fill(borrower === 1 ? "300000" : "0");
-  await page.getByLabel(`החזר משכנתה חודשי - לווה ${borrower}`, {exact: true}).fill(borrower === 1 ? "3000" : "0");
 }
 
 test("creates, reorders and edits a two-borrower household", async ({page, request}) => {
@@ -42,35 +39,39 @@ test("creates, reorders and edits a two-borrower household", async ({page, reque
     await page.getByRole("link", {name: "תיק חדש"}).click();
     await page.getByLabel("מספר לווים בתיק").fill("2");
     await page.getByLabel("מה הקשר בין הלווים?").selectOption("MARRIED");
-    await page.getByLabel("מספר ילדים - household").fill("1");
-    await page.getByLabel("גיל ילד 1 - household").fill("7");
-    await expect(page.getByText("נתוני הילדים משותפים לשני הלווים ומוזנים תחת הלווה הראשי.")).toBeVisible();
+    await page.getByLabel("מספר ילדים").first().fill("1");
+    await page.getByText("ילד 1 — גיל").locator("..").getByRole("spinbutton").fill("7");
     await fillPersonal(page, 1, {firstName: "רוני", lastName: "כהן", identity: "111111118", birthDate: "1984-04-10", phone: "0501111111", email: "roni.multi@syncash.local"});
     await fillPersonal(page, 2, {firstName: "נועה", lastName: "כהן", identity: "222222226", birthDate: "1986-08-20", phone: "0502222222", email: "noa.multi@syncash.local"});
-    await expect(page.getByText(/גיל:/)).toHaveCount(2);
-    await page.getByRole("button", {name: "העבר לווה 2 למעלה"}).click();
+    await expect(page.getByLabel("גיל מחושב")).toHaveCount(2);
+    await expect(page.getByLabel("גיל מחושב").nth(0)).toHaveValue(/\d+/);
+    await expect(page.getByLabel("גיל מחושב").nth(1)).toHaveValue(/\d+/);
+    await page.getByRole("button", {name: "העברת לווה למעלה"}).click();
     await expect(page.getByLabel("שם פרטי - לווה 1", {exact: true})).toHaveValue("נועה");
-    await page.getByRole("button", {name: "העבר לווה 1 למטה"}).click();
+    await page.getByRole("button", {name: "העברת לווה למטה"}).click();
     page.once("dialog", (dialog) => dialog.accept());
     await page.getByLabel("מה הקשר בין הלווים?").selectOption("PARTNERS");
-    await expect(page.getByText(/שינוי הקשר עשוי לשנות/)).toBeVisible();
-    await expect(page.getByLabel(/מספר ילדים - borrowers/)).toHaveCount(2);
+    await expect(page.getByText(/שינוי הקשר שינה/)).toBeVisible();
     page.once("dialog", (dialog) => dialog.accept());
     await page.getByLabel("מה הקשר בין הלווים?").selectOption("MARRIED");
     await page.getByRole("button", {name: "הבא"}).click();
 
     await fillFinancial(page, 1, "22000");
     await fillFinancial(page, 2, "18000");
+    await page.getByRole("button", {name: "הוספת התחייבות"}).click();
+    await page.getByLabel("סוג התחייבות 1").selectOption("MORTGAGE");
+    await page.getByLabel("יתרה נוכחית").fill("300000");
+    await page.getByLabel("החזר חודשי").fill("3000");
+    await page.getByLabel("תאריך סיום התחייבות").fill("2040-07-31");
+    await page.getByLabel("הערות").fill("משכנתה משותפת");
     await page.getByRole("button", {name: "הבא"}).click();
-    await page.getByLabel("סוג העסקה").selectOption("SECOND_HAND_PURCHASE");
+    await page.getByLabel("מטרת ההלוואה").selectOption("SECOND_HAND_PURCHASE");
     await page.getByLabel("סוג הנכס").selectOption("APARTMENT");
     await page.getByLabel("עיר").fill("תל אביב");
-    await page.getByLabel("אזור").selectOption("CENTER");
     await page.getByLabel("כתובת הנכס").fill("רחוב הנכס 20, תל אביב");
     await page.getByLabel("שווי הנכס").fill("2000000");
     await page.getByLabel("סכום המימון המבוקש").fill("1000000");
-    await page.getByLabel("תקופת ההלוואה בחודשים").fill("240");
-    await page.getByLabel("הערות מקצועיות").fill("בדיקת תיק רב לווים");
+    await page.getByLabel("פירוט עסקה").fill("בדיקת תיק רב לווים");
     const creationResponsePromise = page.waitForResponse((response) => response.url().endsWith("/api/clients") && response.request().method() === "POST");
     await page.getByRole("button", {name: "יצירת תיק"}).click();
     const creationResponse = await creationResponsePromise;

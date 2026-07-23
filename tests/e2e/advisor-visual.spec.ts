@@ -56,10 +56,10 @@ test("advisor visual journey is Hebrew, RTL and responsive", async ({page, reque
     await page.getByLabel("כתובת מגורים").fill("רחוב החזון 4, רמת גן");
     await page.getByLabel("מצב משפחתי").selectOption("MARRIED");
     await page.getByLabel("מספר ילדים").fill("3");
-    await expect(page.getByLabel(/^גיל ילד/)).toHaveCount(3);
-    await page.getByLabel("גיל ילד 1").fill("2");
-    await page.getByLabel("גיל ילד 2").fill("6");
-    await page.getByLabel("גיל ילד 3").fill("9");
+    await expect(page.getByLabel(/^ילד \d+ — גיל/)).toHaveCount(3);
+    await page.getByLabel("ילד 1 — גיל").fill("2");
+    await page.getByLabel("ילד 2 — גיל").fill("6");
+    await page.getByLabel("ילד 3 — גיל").fill("9");
     await page.getByLabel("מספר לווים בתיק").fill("1");
     await page.getByRole("button", {name: "הבא"}).click();
     await capture(page, "advisor-wizard-step-2.png");
@@ -71,20 +71,21 @@ test("advisor visual journey is Hebrew, RTL and responsive", async ({page, reque
     await page.getByLabel("האם קיימת הכנסה נוספת").selectOption("yes");
     await page.getByLabel("סוג הכנסה נוספת").selectOption("REGULAR_BONUSES");
     await page.getByLabel("סכום הכנסה נוספת חודשי").fill("2000");
-    await page.getByLabel("התחייבויות חודשיות").fill("1200");
-    await page.getByLabel("יתרת משכנתה קיימת").fill("350000");
-    await page.getByLabel("החזר משכנתה חודשי").fill("3800");
+    await page.getByRole("button", {name: "הוספת התחייבות"}).click();
+    await page.getByLabel("סוג התחייבות 1").selectOption("MORTGAGE");
+    await page.getByLabel("יתרה נוכחית").fill("350000");
+    await page.getByLabel("החזר חודשי").fill("3800");
+    await page.getByLabel("תאריך סיום התחייבות").fill("2040-07-31");
+    await page.getByLabel("הערות").fill("משכנתה קיימת");
     await page.getByRole("button", {name: "הבא"}).click();
     await capture(page, "advisor-wizard-step-3.png");
-    await page.getByLabel("סוג העסקה").selectOption("MORTGAGE_REFINANCE");
+    await page.getByLabel("מטרת ההלוואה").selectOption("MORTGAGE_REFINANCE");
     await page.getByLabel("סוג הנכס").selectOption("APARTMENT");
     await page.getByLabel("עיר").fill("רמת גן");
-    await page.getByLabel("אזור").selectOption("CENTER");
     await page.getByLabel("כתובת הנכס").fill("רחוב הנכס 10, רמת גן");
     await page.getByLabel("שווי הנכס").fill("2500000");
     await page.getByLabel("סכום המימון המבוקש").fill("1200000");
-    await page.getByLabel("תקופת ההלוואה בחודשים").fill("300");
-    await page.getByLabel("הערות מקצועיות").fill("לקוחה בעלת הכנסה יציבה");
+    await page.getByLabel("פירוט עסקה").fill("לקוחה בעלת הכנסה יציבה");
     await page.getByRole("button", {name: "יצירת תיק"}).click();
     await expect(page.getByRole("heading", {name: "נועה כהן"})).toBeVisible();
     await expect(page).toHaveURL(/\/advisor\/clients\/\d+$/);
@@ -95,7 +96,7 @@ test("advisor visual journey is Hebrew, RTL and responsive", async ({page, reque
 
     await page.getByRole("button", {name: "מסמכים", exact: true}).click();
     await capture(page, "advisor-documents.png");
-    await page.getByRole("button", {name: "חברות מימון", exact: true}).click();
+    await page.getByRole("button", {name: /שליחה לחברות מימון/}).click();
     await capture(page, "advisor-financing-arena.png");
 
     for (const viewport of [{width: 390, height: 844, file: "advisor-mobile-390.png"}, {width: 430, height: 900}, {width: 768, height: 1024, file: "advisor-tablet-768.png"}, {width: 1024, height: 900}, {width: 1440, height: 1000, file: "advisor-desktop-1440.png"}, {width: 1920, height: 1080}]) {

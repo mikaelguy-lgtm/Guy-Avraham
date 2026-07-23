@@ -70,12 +70,13 @@ const completeClientInput = {
   numberOfBorrowers: 2, borrowerRelationship: "MARRIED", borrowerRelationshipOther: null,
   household: {numberOfChildren: 2, childrenAges: [4, 8]},
   borrowers: [
-    {order: 1, isPrimary: true, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", phone: "0501234567", email: "dana@example.com", address: "רחוב הדוגמה 1", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SALARIED", employerName: "חברה בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6}, income: {monthlyNetIncome: 20_000, hasAdditionalIncome: true, additionalIncomeType: "RENTAL_INCOME", additionalIncomeAmount: 2_500, additionalIncomeDescription: null}, liabilities: {monthlyLiabilities: 1_500, existingMortgageBalance: 400_000, existingMortgageMonthlyPayment: 4_000}},
-    {order: 2, isPrimary: false, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", phone: "0501234568", email: "noam@example.com", address: "רחוב הדוגמה 1", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SELF_EMPLOYED", employerName: "עסק", jobTitle: "בעלים", employmentSeniorityYears: 8}, income: {monthlyNetIncome: 15_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null}, liabilities: {monthlyLiabilities: 1_000, existingMortgageBalance: 0, existingMortgageMonthlyPayment: 0}}
+    {order: 1, isPrimary: true, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", phone: "0501234567", email: "dana@example.com", address: "רחוב הדוגמה 1", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SALARIED", employerName: "חברה בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6}, income: {monthlyNetIncome: 20_000, hasAdditionalIncome: true, additionalIncomeType: "RENTAL_INCOME", additionalIncomeAmount: 2_500, additionalIncomeDescription: null}, liabilities: []},
+    {order: 2, isPrimary: false, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", phone: "0501234568", email: "noam@example.com", address: "רחוב הדוגמה 1", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SELF_EMPLOYED", employerName: "עסק", jobTitle: "בעלים", employmentSeniorityYears: 8}, income: {monthlyNetIncome: 15_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null}, liabilities: []}
   ],
-  property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", region: "CENTER", address: "רחוב הנכס 2", value: 2_000_000},
-  loanRequest: {dealType: "SECOND_HAND_PURCHASE", requestedAmount: 1_250_000, requestedTermMonths: 240},
-  notes: "תיק מלא לבדיקה", status: "ACTIVE"
+  householdLiabilities: [{type: "LOAN", otherTypeDescription: null, currentBalance: 120_000, monthlyPayment: 1_500, endDate: "2035-07-31", notes: "הלוואה בנקאית"}, {type: "MORTGAGE", otherTypeDescription: null, currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "משכנתה קיימת"}],
+  property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", address: "רחוב הנכס 2", value: 2_000_000},
+  loanPurpose: "SECOND_HAND_PURCHASE", loanRequest: {requestedAmount: 1_250_000},
+  dealDetails: "תיק מלא לבדיקה", status: "ACTIVE"
 };
 
 describe("HTTP authentication and authorization", () => {
@@ -298,8 +299,8 @@ describe("complete nested client create and update", () => {
       .set("authorization", "Bearer advisor").send(completeClientInput).expect(201);
     expect(createClient).toHaveBeenCalledWith(expect.objectContaining({
       numberOfBorrowers: 2, householdChildrenCount: 2, householdChildrenAges: [4, 8],
-      dealType: "SECOND_HAND_PURCHASE", borrowers: expect.arrayContaining([
-        expect.objectContaining({hasAdditionalIncome: true, additionalIncomeType: "RENTAL_INCOME", additionalIncomeAmount: 2_500, monthlyLiabilities: 1_500, existingMortgageBalance: 400_000, existingMortgageMonthlyPayment: 4_000})
+      loanPurpose: "SECOND_HAND_PURCHASE", householdLiabilities: expect.arrayContaining([
+        expect.objectContaining({liabilityType: "LOAN", currentBalance: 120_000, monthlyPayment: 1_500})
       ])
     }));
     expect(createClient.mock.calls[0][0].propertyAddressEncrypted).not.toContain(completeClientInput.property.address);
@@ -311,10 +312,10 @@ describe("complete nested client create and update", () => {
     ["one age per child", {household: {numberOfChildren: 2, childrenAges: [4]}}, "household.childrenAges"],
     ["additional income type", {borrowers: [{...completeClientInput.borrowers[0], income: {...completeClientInput.borrowers[0].income, additionalIncomeType: null}}, completeClientInput.borrowers[1]]}, "borrowers.0.income.additionalIncomeType"],
     ["positive additional income amount", {borrowers: [{...completeClientInput.borrowers[0], income: {...completeClientInput.borrowers[0].income, additionalIncomeAmount: 0}}, completeClientInput.borrowers[1]]}, "borrowers.0.income.additionalIncomeAmount"],
-    ["existing mortgage balance", {borrowers: [{...completeClientInput.borrowers[0], liabilities: {...completeClientInput.borrowers[0].liabilities, existingMortgageBalance: undefined}}, completeClientInput.borrowers[1]]}, "borrowers.0.liabilities.existingMortgageBalance"],
-    ["existing mortgage monthly payment", {borrowers: [{...completeClientInput.borrowers[0], liabilities: {...completeClientInput.borrowers[0].liabilities, existingMortgageMonthlyPayment: undefined}}, completeClientInput.borrowers[1]]}, "borrowers.0.liabilities.existingMortgageMonthlyPayment"],
+    ["liability balance", {householdLiabilities: [{...completeClientInput.householdLiabilities[0], currentBalance: undefined}, completeClientInput.householdLiabilities[1]]}, "householdLiabilities.0.currentBalance"],
+    ["liability monthly payment", {householdLiabilities: [{...completeClientInput.householdLiabilities[0], monthlyPayment: undefined}, completeClientInput.householdLiabilities[1]]}, "householdLiabilities.0.monthlyPayment"],
     ["property address", {property: {...completeClientInput.property, address: undefined}}, "property.address"],
-    ["valid deal type", {loanRequest: {...completeClientInput.loanRequest, dealType: "PURCHASE"}}, "loanRequest.dealType"]
+    ["valid loan purpose", {loanPurpose: "PURCHASE"}, "loanPurpose"]
   ])("rejects a missing or invalid %s with Hebrew field errors", async (_name, change, field) => {
     const response = await request(app()).post("/api/clients").set("authorization", "Bearer advisor")
       .send({...completeClientInput, ...change}).expect(400);
@@ -339,9 +340,9 @@ describe("multi-borrower client create and update", () => {
     const response = await request(app({createClient})).post("/api/clients")
       .set("authorization", "Bearer advisor").send(completeClientInput).expect(201);
     const record = createClient.mock.calls[0][0];
-    expect(record).toEqual(expect.objectContaining({numberOfBorrowers: 2, borrowerRelationship: "MARRIED", householdChildrenCount: 2, dealType: "SECOND_HAND_PURCHASE"}));
+    expect(record).toEqual(expect.objectContaining({numberOfBorrowers: 2, borrowerRelationship: "MARRIED", householdChildrenCount: 2, loanPurpose: "SECOND_HAND_PURCHASE"}));
     expect(record.borrowers).toHaveLength(2);
-    expect(record.borrowers[0]).toEqual(expect.objectContaining({borrowerOrder: 1, isPrimary: true, employmentType: "SALARIED", monthlyLiabilities: 1_500}));
+    expect(record.borrowers[0]).toEqual(expect.objectContaining({borrowerOrder: 1, isPrimary: true, employmentType: "SALARIED", liabilities: []}));
     expect(record.borrowers[1]).toEqual(expect.objectContaining({borrowerOrder: 2, isPrimary: false, employmentType: "SELF_EMPLOYED"}));
     expect(record.borrowers[0].identityNumberEncrypted).not.toContain("123456789");
     expect(record.propertyAddressEncrypted).not.toContain(completeClientInput.property.address);
@@ -361,9 +362,9 @@ describe("multi-borrower client create and update", () => {
   });
 
   it.each([
-    ["one borrower", {...completeClientInput, numberOfBorrowers: 1, borrowerRelationship: null, household: {numberOfChildren: 0, childrenAges: []}, borrowers: [{...completeClientInput.borrowers[0], children: {numberOfChildren: 2, childrenAges: [4, 8]}}]}],
-    ["common law", {...completeClientInput, borrowerRelationship: "COMMON_LAW"}],
-    ["family with separate children", {...completeClientInput, borrowerRelationship: "FAMILY", household: {numberOfChildren: 0, childrenAges: []}, borrowers: completeClientInput.borrowers.map((borrower, index) => ({...borrower, children: {numberOfChildren: 1, childrenAges: [index + 5]}}))}]
+    ["one borrower", {...completeClientInput, numberOfBorrowers: 1, borrowerRelationship: null, household: {numberOfChildren: 0, childrenAges: []}, householdLiabilities: [], borrowers: [{...completeClientInput.borrowers[0], children: {numberOfChildren: 2, childrenAges: [4, 8]}, liabilities: completeClientInput.householdLiabilities}]}],
+    ["common law", {...completeClientInput, borrowerRelationship: "COMMON_LAW", householdLiabilities: [], borrowers: completeClientInput.borrowers.map((borrower, index) => ({...borrower, liabilities: index === 0 ? completeClientInput.householdLiabilities : []}))}],
+    ["family with separate children", {...completeClientInput, borrowerRelationship: "FAMILY", household: {numberOfChildren: 0, childrenAges: []}, householdLiabilities: [], borrowers: completeClientInput.borrowers.map((borrower, index) => ({...borrower, children: {numberOfChildren: 1, childrenAges: [index + 5]}, liabilities: index === 0 ? completeClientInput.householdLiabilities : []}))}]
   ])("creates %s structure", async (_name, payload) => {
     const existing = await makeStore().getClient(1);
     const createClient = vi.fn().mockResolvedValue(existing);
@@ -385,9 +386,10 @@ describe("multi-borrower client create and update", () => {
 
 describe("documents", () => {
   it("rejects an upload without a file", async () => { await request(app()).post("/api/clients/1/documents").set("authorization", "Bearer advisor").expect(400); });
-  it("accepts a real PDF signature", async () => { await request(app()).post("/api/clients/1/documents").set("authorization", "Bearer advisor").attach("file", Buffer.from("%PDF-1.7\ncontent"), {filename: "file.pdf", contentType: "application/pdf"}).expect(201); });
+  it("accepts a real PDF signature", async () => { await request(app()).post("/api/clients/1/documents").set("authorization", "Bearer advisor").field("documentType", "ID_FRONT").field("borrowerId", "1").attach("file", Buffer.from("%PDF-1.7\ncontent"), {filename: "file.pdf", contentType: "application/pdf"}).expect(201); });
   it("rejects a fake MIME type", async () => { await request(app()).post("/api/clients/1/documents").set("authorization", "Bearer advisor").attach("file", Buffer.from("not a pdf"), {filename: "file.pdf", contentType: "application/pdf"}).expect(400); });
   it("blocks document download by another advisor", async () => { await request(app()).get("/api/documents/1/download").set("authorization", "Bearer advisor2").expect(403); });
+  it("requires a custom title for another document", async () => { await request(app()).post("/api/clients/1/documents").set("authorization", "Bearer advisor").field("documentType", "OTHER").attach("file", Buffer.from("%PDF-1.7\ncontent"), {filename: "file.pdf", contentType: "application/pdf"}).expect(400); });
 });
 
 describe("lender isolation", () => {
@@ -455,7 +457,7 @@ describe("invites", () => {
 });
 
 describe("submission delivery", () => {
-  const snapshotSource = {publicCaseNumber: "SC-1", dealType: "SECOND_HAND_PURCHASE", propertyType: "APARTMENT", propertyRegion: "CENTER", propertyValue: 2_000_000, requestedAmount: 1_000_000, numberOfBorrowers: 2, borrowerRelationship: "MARRIED", employmentTypes: ["SALARIED", "SELF_EMPLOYED"], borrowerBirthDatesEncrypted: [null, null], borrowerBirthDates: [new Date("1985-06-15"), new Date("1987-08-20")], totalMonthlyIncome: 50_000, totalMonthlyPayments: 6_000, existingMortgageBalance: 400_000, requestedTermMonths: 240};
+  const snapshotSource = {publicCaseNumber: "SC-1", loanPurpose: "SECOND_HAND_PURCHASE", propertyType: "APARTMENT", propertyCity: "תל אביב", propertyValue: 2_000_000, requestedAmount: 1_000_000, numberOfBorrowers: 2, borrowerRelationship: "MARRIED", employmentTypes: ["SALARIED", "SELF_EMPLOYED"], borrowerBirthDatesEncrypted: [null, null], borrowerBirthDates: [new Date("1985-06-15"), new Date("1987-08-20")], totalMonthlyIncome: 50_000, liabilityCount: 1, totalLiabilityBalance: 400_000, totalMonthlyPayments: 6_000, liabilityTypeBreakdown: {MORTGAGE: 1}};
 
   it("marks a successful SMTP delivery as SENT without creating an automatic response", async () => {
     const markSent = vi.fn().mockResolvedValue(undefined);
@@ -481,5 +483,28 @@ describe("submission delivery", () => {
     }, email)).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(201);
     expect(response.body.results).toEqual([{lenderId: 100, status: "DELIVERY_FAILED"}]);
     expect(markFailed).toHaveBeenCalledWith(51, "lender@test", "Email delivery failed");
+  });
+
+  it("returns 422 and creates no submission or email when required documents are missing", async () => {
+    const createSubmission = vi.fn(); const send = vi.fn();
+    const response = await request(app({
+      listMissingRequiredDocuments: async () => [{documentType: "ID_BACK", borrowerId: 2, borrowerOrder: 2, label: "תעודת זהות — צד אחורי — לווה 2"}],
+      createSubmission
+    }, {verify: vi.fn(), send})).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(422);
+    expect(response.body).toEqual(expect.objectContaining({code: "MISSING_REQUIRED_DOCUMENTS", missingDocuments: [expect.objectContaining({documentType: "ID_BACK", borrowerId: 2})]}));
+    expect(createSubmission).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 and creates no side effects for incomplete legacy liabilities", async () => {
+    const createSubmission = vi.fn(); const send = vi.fn();
+    const response = await request(app({
+      hasIncompleteLegacyLiabilities: async () => true,
+      createSubmission
+    }, {verify: vi.fn(), send})).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(422);
+    expect(response.body).toEqual(expect.objectContaining({
+      code: "INCOMPLETE_LEGACY_LIABILITIES",
+      message: expect.stringContaining("ההתחייבויות")
+    }));
+    expect(createSubmission).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
   });
 });

@@ -27,6 +27,7 @@ async function latestInvitation(request: APIRequestContext, publicCaseNumber: st
 }
 
 test("advisor-to-lender financing workflow", async ({browser, page, request}) => {
+  test.setTimeout(180_000);
   const advisorEmail = process.env.E2E_ADVISOR_EMAIL;
   const advisorPassword = process.env.E2E_ADVISOR_PASSWORD;
   const lenderEmail = process.env.E2E_LENDER_EMAIL;
@@ -54,10 +55,10 @@ test("advisor-to-lender financing workflow", async ({browser, page, request}) =>
     await page.getByLabel("כתובת מגורים").fill("רחוב בדיקה 1, תל אביב");
     await page.getByLabel("מצב משפחתי").selectOption("MARRIED");
     await page.getByLabel("מספר ילדים").fill("3");
-    await expect(page.getByLabel(/^גיל ילד/)).toHaveCount(3);
-    await page.getByLabel("גיל ילד 1").fill("3");
-    await page.getByLabel("גיל ילד 2").fill("7");
-    await page.getByLabel("גיל ילד 3").fill("10");
+    await expect(page.getByLabel(/^ילד \d+ — גיל/)).toHaveCount(3);
+    await page.getByLabel("ילד 1 — גיל").fill("3");
+    await page.getByLabel("ילד 2 — גיל").fill("7");
+    await page.getByLabel("ילד 3 — גיל").fill("10");
     await page.getByLabel("מספר לווים בתיק").fill("1");
     await page.getByRole("button", {name: "הבא"}).click();
     await page.getByLabel("סוג תעסוקה").selectOption("SALARIED");
@@ -68,19 +69,20 @@ test("advisor-to-lender financing workflow", async ({browser, page, request}) =>
     await page.getByLabel("האם קיימת הכנסה נוספת").selectOption("yes");
     await page.getByLabel("סוג הכנסה נוספת").selectOption("RENTAL_INCOME");
     await page.getByLabel("סכום הכנסה נוספת חודשי").fill("2500");
-    await page.getByLabel("התחייבויות חודשיות").fill("1500");
-    await page.getByLabel("יתרת משכנתה קיימת").fill("400000");
-    await page.getByLabel("החזר משכנתה חודשי").fill("4000");
+    await page.getByRole("button", {name: "הוספת התחייבות"}).click();
+    await page.getByLabel("סוג התחייבות 1").selectOption("MORTGAGE");
+    await page.getByLabel("יתרה נוכחית").fill("400000");
+    await page.getByLabel("החזר חודשי").fill("4000");
+    await page.getByLabel("תאריך סיום התחייבות").fill("2040-07-31");
+    await page.getByLabel("הערות").fill("משכנתה קיימת");
     await page.getByRole("button", {name: "הבא"}).click();
-    await page.getByLabel("סוג העסקה").selectOption("SECOND_HAND_PURCHASE");
+    await page.getByLabel("מטרת ההלוואה").selectOption("SECOND_HAND_PURCHASE");
     await page.getByLabel("סוג הנכס").selectOption("APARTMENT");
     await page.getByLabel("עיר").fill("תל אביב");
-    await page.getByLabel("אזור").selectOption("CENTER");
     await page.getByLabel("כתובת הנכס").fill("רחוב הנכס 2, תל אביב");
     await page.getByLabel("שווי הנכס").fill("2000000");
     await page.getByLabel("סכום המימון המבוקש").fill("1000000");
-    await page.getByLabel("תקופת ההלוואה בחודשים").fill("240");
-    await page.getByLabel("הערות מקצועיות").fill("תיק E2E מלא");
+    await page.getByLabel("פירוט עסקה").fill("תיק E2E מלא");
     await page.getByRole("button", {name: "יצירת תיק"}).click();
     await expect(page.getByRole("heading", {name: "E2E Client"})).toBeVisible();
     clientId = Number(new URL(page.url()).pathname.split("/").at(-1));
@@ -92,37 +94,46 @@ test("advisor-to-lender financing workflow", async ({browser, page, request}) =>
     await editor.getByLabel("שם פרטי").fill("E2E Updated");
     await editor.getByRole("button", {name: "הבא"}).click();
     await editor.getByRole("button", {name: "הבא"}).click();
-    await editor.getByLabel("הערות מקצועיות").fill("נתון נשמר לאחר רענון");
+    await editor.getByLabel("פירוט עסקה").fill("נתון נשמר לאחר רענון");
     await editor.getByRole("button", {name: "שמירת שינויים"}).click();
     await expect(page.getByRole("status")).toContainText("נשמרו בהצלחה");
     await page.reload();
     await expect(page.getByRole("heading", {name: "E2E Updated Client"})).toBeVisible();
-    await page.getByRole("button", {name: "נכס", exact: true}).click();
+    await page.getByRole("button", {name: "פירוט עסקה", exact: true}).click();
     await expect(page.getByText("נתון נשמר לאחר רענון")).toBeVisible();
 
-    await page.getByRole("button", {name: "מסמכים", exact: true}).click();
+    await page.getByRole("button", {name: /שליחה לחברות מימון/}).click();
+    await page.locator('.lender-card input[type="checkbox"]').first().check();
+    await page.getByRole("button", {name: "שליחת התיק לחברות שנבחרו"}).click();
+    await expect(page.getByRole("heading", {name: "לא ניתן לשלוח את התיק"})).toBeVisible();
+    await expect(page.getByText("כתב הסמכה", {exact: true})).toBeVisible();
+    await page.getByRole("button", {name: "מעבר למסמכים"}).click();
     const pdf = Buffer.from("%PDF-1.7\nE2E document");
     const expectedChecksum = createHash("sha256").update(pdf).digest("hex");
-    await page.getByLabel("בחירת מסמך").setInputFiles({name: "e2e.pdf", mimeType: "application/pdf", buffer: pdf});
-    await page.getByRole("button", {name: "העלאה"}).click();
-    await expect(page.getByText("e2e.pdf")).toBeVisible();
+    const requiredInputs = page.locator(".document-check-row.missing input[type=file]");
+    await expect(requiredInputs).toHaveCount(5);
+    for (let index = 0; index < 5; index += 1) {
+      await requiredInputs.nth(0).setInputFiles({name: `e2e-${index}.pdf`, mimeType: "application/pdf", buffer: pdf});
+      await expect(requiredInputs).toHaveCount(4 - index);
+    }
+    await expect(page.getByText("5 מתוך 5 מסמכי חובה הועלו")).toBeVisible();
 
     await page.reload();
     await page.getByRole("button", {name: "מסמכים", exact: true}).click();
-    await page.getByRole("button", {name: "צפייה"}).click();
-    const previewDialog = page.getByRole("dialog", {name: "e2e.pdf"});
+    await page.getByRole("button", {name: "צפייה"}).first().click();
+    const previewDialog = page.locator(".document-preview-modal");
     await expect(previewDialog).toBeVisible();
     await expect(previewDialog.locator("iframe")).toHaveAttribute("src", /^blob:/);
-    await previewDialog.getByRole("button", {name: "סגירת תצוגת מסמך"}).click();
+    await previewDialog.getByRole("button").first().click();
     const downloadPromise = page.waitForEvent("download");
-    await page.getByRole("button", {name: "הורדה"}).click();
+    await page.getByRole("button", {name: "הורדה"}).first().click();
     const download = await downloadPromise;
     const stream = await download.createReadStream();
     const chunks: Buffer[] = [];
     for await (const chunk of stream) chunks.push(Buffer.from(chunk));
     expect(createHash("sha256").update(Buffer.concat(chunks)).digest("hex")).toBe(expectedChecksum);
 
-    await page.getByRole("button", {name: "חברות מימון", exact: true}).click();
+    await page.getByRole("button", {name: /שליחה לחברות מימון/}).click();
     await page.locator('.lender-card input[type="checkbox"]').first().check();
     await page.getByRole("button", {name: "שליחת התיק לחברות שנבחרו"}).click();
     await expect(page.getByRole("status")).toContainText("התיק נשלח בהצלחה");
@@ -140,7 +151,7 @@ test("advisor-to-lender financing workflow", async ({browser, page, request}) =>
 
     await page.reload();
     await page.getByRole("button", {name: "בקשות חשיפה", exact: true}).click();
-    await page.getByLabel("אישור טלפון").check();
+    await page.getByLabel("טלפון", {exact: true}).check();
     await page.getByRole("button", {name: "אישור השדות שנבחרו"}).click();
     await lenderPage.getByRole("button", {name: "רענון מידע מאושר"}).click();
     await expect(lenderPage.getByText("0500000000")).toBeVisible();
