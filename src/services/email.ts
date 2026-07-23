@@ -102,7 +102,7 @@ export function sanitizeMessageId(messageId: string): string {
 
 export function sanitizeSmtpFailure(error: unknown): SanitizedSmtpFailure {
   if (error instanceof SmtpServiceError && error.code === "SMTP_PASSWORD_NOT_CONFIGURED") {
-    return {code: error.code, message: "לא הוגדרה סיסמת SMTP.", status: 409};
+    return {code: "SMTP_CREDENTIAL_NOT_CONFIGURED", message: "לא הוגדרה סיסמת SMTP.", status: 409};
   }
   const details = typeof error === "object" && error !== null ? error as {code?: unknown; responseCode?: unknown} : {};
   const code = String(details.code ?? "");

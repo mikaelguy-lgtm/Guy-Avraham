@@ -1,9 +1,10 @@
 import { createUserWithEmailAndPassword, deleteUser, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
+import {requireFrontendConfig} from "../config/frontend";
 import type { AdvisorAdminRecord, Client, ClientList, ClientSubmission, CurrentUser, DocumentRecord, IdentityRequest, Lender, LoanOffer, NotificationRecord } from "../types";
 import type { AdvisorRegistrationInput } from "../domain/advisorRegistration";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const API_URL = requireFrontendConfig().apiBaseUrl;
 
 export class ApiError extends Error {
   constructor(

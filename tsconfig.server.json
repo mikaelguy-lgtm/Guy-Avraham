@@ -12,7 +12,7 @@
     "sourceMap": true,
     "types": ["node"]
   },
-  "include": ["server.ts", "src/config/**/*.ts", "src/db/**/*.ts", "src/domain/**/*.ts", "src/middleware/**/*.ts", "src/server/**/*.ts", "src/services/**/*.ts", "src/utils/audit.ts"],
+  "include": ["server.ts", "src/config/env.ts", "src/db/**/*.ts", "src/domain/**/*.ts", "src/middleware/**/*.ts", "src/server/**/*.ts", "src/services/**/*.ts", "src/utils/audit.ts"],
   "exclude": ["tests", "dist", "dist-server"]
 }
 

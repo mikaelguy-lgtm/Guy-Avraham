@@ -8,7 +8,7 @@
     "dev:web": "vite --host 0.0.0.0",
     "dev:api": "tsx watch server.ts",
     "build": "npm run build:web && npm run build:api",
-    "build:web": "vite build",
+    "build:web": "vite build && node scripts/verify-production-bundle.mjs",
     "build:api": "tsc -p tsconfig.server.json",
     "start": "node dist-server/server.js",
     "lint": "eslint . --max-warnings=0",

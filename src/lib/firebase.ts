@@ -1,14 +1,10 @@
 import { initializeApp } from 'firebase/app';
-import { connectAuthEmulator, getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import {requireFrontendConfig} from '../config/frontend';
 
-const app = initializeApp({
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
-});
+const config = requireFrontendConfig();
+const app = initializeApp(config.firebase);
 export const auth = getAuth(app);
-if (import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_URL) {
-  connectAuthEmulator(auth, import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_URL, {disableWarnings: true});
+if (import.meta.env.DEV && config.useFirebaseEmulator && config.firebaseAuthEmulatorUrl) {
+  connectAuthEmulator(auth, config.firebaseAuthEmulatorUrl, {disableWarnings: true});
 }
-export const googleAuthProvider = new GoogleAuthProvider();

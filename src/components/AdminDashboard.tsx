@@ -10,19 +10,19 @@ type SmtpForm = {
   EMAIL_FROM: string;
   EMAIL_FROM_NAME: string;
   EMAIL_REPLY_TO: string;
-  SMTP_PASSWORD: string;
+  smtpCredential: string;
 };
 
 type Toast = {kind: "success" | "error"; message: string; requestId?: string};
 
-const initialSettings: SmtpForm = {SMTP_HOST: "", SMTP_PORT: "", SMTP_SECURE: "false", SMTP_USER: "", EMAIL_FROM: "", EMAIL_FROM_NAME: "SynCash", EMAIL_REPLY_TO: "", SMTP_PASSWORD: ""};
+const initialSettings: SmtpForm = {SMTP_HOST: "", SMTP_PORT: "", SMTP_SECURE: "false", SMTP_USER: "", EMAIL_FROM: "", EMAIL_FROM_NAME: "SynCash", EMAIL_REPLY_TO: "", smtpCredential: ""};
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function errorToast(error: unknown, fallback: string): Toast {
   if (!(error instanceof ApiError)) return {kind: "error", message: fallback};
   const messages: Record<string, string> = {
     SECRET_PROVIDER_READ_ONLY: "ספק הסודות הפעיל אינו מאפשר עדכון סיסמה.",
-    SMTP_PASSWORD_NOT_CONFIGURED: "לא הוגדרה סיסמת SMTP.",
+    SMTP_CREDENTIAL_NOT_CONFIGURED: "לא הוגדרה סיסמת SMTP.",
     SMTP_AUTH_FAILED: "האימות מול שרת ה-SMTP נכשל. יש לבדוק את שם המשתמש וסיסמת האפליקציה.",
     SMTP_CONNECTION_FAILED: "לא ניתן להתחבר לשרת ה-SMTP.",
     SMTP_TLS_FAILED: "יצירת חיבור STARTTLS מאובטח נכשלה.",
@@ -69,13 +69,14 @@ export default function AdminDashboard({userEmail}: {userEmail: string}) {
     if (Object.keys(errors).length > 0) return;
     setBusy("save");
     try {
-      const result = await api.updateSmtpSettings(settings);
+      const {smtpCredential, ...nonSecretSettings} = settings;
+      const result = await api.updateSmtpSettings({...nonSecretSettings, smtpPassword: smtpCredential});
       setPasswordConfigured(result.passwordConfigured);
       setToast({kind: "success", message: "הגדרות ה-SMTP נשמרו בהצלחה."});
     } catch (error) {
       setToast(errorToast(error, "שמירת הגדרות ה-SMTP נכשלה."));
     } finally {
-      setSettings((current) => ({...current, SMTP_PASSWORD: ""}));
+      setSettings((current) => ({...current, smtpCredential: ""}));
       setBusy(null);
     }
   };
@@ -95,7 +96,7 @@ export default function AdminDashboard({userEmail}: {userEmail: string}) {
   return <main className="admin-page" dir="rtl"><nav className="breadcrumbs" aria-label="פירורי לחם"><Link to="/admin">לוח הבקרה</Link><span>›</span><Link to="/admin/settings">הגדרות מערכת</Link><span>›</span><span aria-current="page">דואר יוצא</span></nav><form className="panel form-grid" onSubmit={save} noValidate><h1>הגדרות Super Admin</h1>
     {input("SMTP_HOST")}{input("SMTP_PORT", "number")}<label>SMTP_SECURE<select aria-label="SMTP_SECURE" value={settings.SMTP_SECURE} onChange={(event) => change("SMTP_SECURE", event.target.value)}><option value="false">false</option><option value="true">true</option></select>{fieldErrors.SMTP_SECURE && <span className="field-error" role="alert">{fieldErrors.SMTP_SECURE}</span>}</label>
     {input("SMTP_USER")}{input("EMAIL_FROM", "email")}{input("EMAIL_FROM_NAME")}{input("EMAIL_REPLY_TO", "email")}
-    <label>SMTP_PASSWORD<input aria-label="SMTP_PASSWORD" autoComplete="new-password" type="password" value={settings.SMTP_PASSWORD} onChange={(event) => change("SMTP_PASSWORD", event.target.value)} /><span className="field-hint">ב-Gmail יש להשתמש בסיסמת אפליקציה. פורט 587 עם SMTP_SECURE=false מפעיל STARTTLS.</span></label>
+    <label>סיסמת SMTP<input aria-label="סיסמת SMTP" autoComplete="new-password" type="password" value={settings.smtpCredential} onChange={(event) => change("smtpCredential", event.target.value)} /><span className="field-hint">ב-Gmail יש להשתמש בסיסמת אפליקציה. פורט 587 עם SMTP_SECURE=false מפעיל STARTTLS.</span></label>
     <p>סיסמת SMTP מוגדרת: {passwordConfigured ? "כן" : "לא"}</p>
     <div className="form-actions"><button type="submit" disabled={busy !== null}>{busy === "save" ? "שומר…" : "שמירה"}</button><button type="button" disabled={busy !== null} onClick={openTestModal}>{busy === "test" ? "בודק…" : "בדיקת SMTP"}</button></div>
     {toast && <div className={`toast ${toast.kind}`} role={toast.kind === "error" ? "alert" : "status"} aria-live="polite"><strong>{toast.message}</strong>{toast.requestId && <small>מזהה בקשה: {toast.requestId}</small>}</div>}

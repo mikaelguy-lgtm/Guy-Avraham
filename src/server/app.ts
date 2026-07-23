@@ -45,7 +45,7 @@ const smtpSettingsSchema = z.object({
   EMAIL_FROM: z.string().trim().email().max(320),
   EMAIL_FROM_NAME: z.string().trim().min(1).max(200),
   EMAIL_REPLY_TO: z.string().trim().email().max(320),
-  SMTP_PASSWORD: z.string().max(500).optional()
+  smtpPassword: z.string().max(500).optional()
 }).strict();
 
 const advisorStatusSchema = z.object({status: z.enum(["ACTIVE", "SUSPENDED", "DISABLED"])}).strict();
@@ -574,7 +574,7 @@ export function createApp(services: AppServices) {
   }));
   app.patch("/api/admin/settings/email", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
     const input = smtpSettingsSchema.parse(request.body);
-    const {SMTP_PASSWORD: password, ...safeSettings} = input;
+    const {smtpPassword: password, ...safeSettings} = input;
     if (password) {
       if (!services.secrets.setSecret) { response.status(409).json({error: "SECRET_PROVIDER_READ_ONLY", requestId: request.requestId}); return; }
       await services.secrets.setSecret("syncash-smtp-password", password);

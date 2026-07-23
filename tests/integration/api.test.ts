@@ -81,7 +81,7 @@ describe("HTTP authentication and authorization", () => {
   });
   it.each(["admin", "advisor", "lender"])("blocks %s from all SMTP administration endpoints", async (token) => {
     await request(app()).patch("/api/admin/settings/email").set("authorization", `Bearer ${token}`).send(smtpSettings).expect(403);
-    await request(app()).patch("/api/admin/settings/email").set("authorization", `Bearer ${token}`).send({...smtpSettings, SMTP_PASSWORD: "not-used"}).expect(403);
+    await request(app()).patch("/api/admin/settings/email").set("authorization", `Bearer ${token}`).send({...smtpSettings, smtpPassword: "not-used"}).expect(403);
     await request(app()).post("/api/admin/settings/email/test").set("authorization", `Bearer ${token}`).send({recipientEmail: "blocked@example.test"}).expect(403);
   });
 
@@ -90,7 +90,7 @@ describe("HTTP authentication and authorization", () => {
     const addAudit = vi.fn().mockResolvedValue(undefined);
     const localSecrets = new InMemorySecretProvider();
     const response = await request(app({setSettings, addAudit}, undefined, localSecrets)).patch("/api/admin/settings/email")
-      .set("authorization", "Bearer super").send({...smtpSettings, SMTP_PASSWORD: "local-test-password"}).expect(200);
+      .set("authorization", "Bearer super").send({...smtpSettings, smtpPassword: "local-test-password"}).expect(200);
     expect(response.body).toEqual({updated: true, passwordConfigured: true});
     expect(JSON.stringify(response.body)).not.toContain("local-test-password");
     expect(setSettings).toHaveBeenCalledWith("SMTP", smtpSettings, users.super.id);
@@ -229,8 +229,8 @@ describe("SMTP administration", () => {
     const email = {test: vi.fn().mockRejectedValue(new SmtpServiceError("SMTP_PASSWORD_NOT_CONFIGURED")), reload: vi.fn()};
     const response = await request(app({addEmailLog}, email)).post("/api/admin/settings/email/test")
       .set("authorization", "Bearer super").send({recipientEmail: "super@example.test"}).expect(409);
-    expect(response.body).toEqual(expect.objectContaining({error: "SMTP_PASSWORD_NOT_CONFIGURED", requestId: expect.any(String)}));
-    expect(addEmailLog).toHaveBeenCalledWith({recipient: "super@example.test", status: "FAILED", sanitizedError: "SMTP_PASSWORD_NOT_CONFIGURED"});
+    expect(response.body).toEqual(expect.objectContaining({error: "SMTP_CREDENTIAL_NOT_CONFIGURED", requestId: expect.any(String)}));
+    expect(addEmailLog).toHaveBeenCalledWith({recipient: "super@example.test", status: "FAILED", sanitizedError: "SMTP_CREDENTIAL_NOT_CONFIGURED"});
   });
 
   it("sanitizes invalid Gmail credentials and never reports success", async () => {
@@ -268,7 +268,7 @@ describe("SMTP administration", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
       const response = await request(app({}, undefined, secretProvider)).patch("/api/admin/settings/email")
-        .set("authorization", "Bearer super").send({...smtpSettings, SMTP_PASSWORD: password}).expect(500);
+        .set("authorization", "Bearer super").send({...smtpSettings, smtpPassword: password}).expect(500);
       expect(JSON.stringify(response.body)).not.toContain(password);
       expect(JSON.stringify(consoleError.mock.calls)).not.toContain(password);
     } finally {
