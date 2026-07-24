@@ -1,5 +1,5 @@
 {
-  "id": "fcfe889b-e4a6-44b4-8b1b-07288bff5bd9",
+  "id": "f07bd510-c279-4646-a6cc-a7a1f8911b20",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -22,63 +22,48 @@
         },
         "business_name": {
           "name": "business_name",
-          "type": "text",
+          "type": "varchar(200)",
           "primaryKey": false,
           "notNull": false
         },
         "license_number": {
           "name": "license_number",
-          "type": "text",
+          "type": "varchar(100)",
           "primaryKey": false,
           "notNull": false
-        },
-        "business_phone": {
-          "name": "business_phone",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "business_email": {
-          "name": "business_email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "address": {
-          "name": "address",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "logo_storage_key": {
-          "name": "logo_storage_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "disable_gemini": {
-          "name": "disable_gemini",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "advisor_profiles_user_id_uq": {
+          "name": "advisor_profiles_user_id_uq",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "advisor_profiles_user_id_users_id_fk": {
           "name": "advisor_profiles_user_id_users_id_fk",
@@ -95,15 +80,7 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "advisor_profiles_user_id_unique": {
-          "name": "advisor_profiles_user_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -130,54 +107,42 @@
           "primaryKey": false,
           "notNull": true
         },
-        "analysis_type": {
-          "name": "analysis_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "model": {
           "name": "model",
-          "type": "text",
+          "type": "varchar(100)",
           "primaryKey": false,
           "notNull": true
         },
-        "prompt_version": {
-          "name": "prompt_version",
-          "type": "text",
+        "prompt_characters": {
+          "name": "prompt_characters",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "varchar(40)",
           "primaryKey": false,
           "notNull": true
         },
-        "token_usage": {
-          "name": "token_usage",
+        "duration_ms": {
+          "name": "duration_ms",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
-        "error_message": {
-          "name": "error_message",
+        "sanitized_error": {
+          "name": "sanitized_error",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -233,13 +198,13 @@
         },
         "action": {
           "name": "action",
-          "type": "text",
+          "type": "varchar(100)",
           "primaryKey": false,
           "notNull": true
         },
         "entity_type": {
           "name": "entity_type",
-          "type": "text",
+          "type": "varchar(80)",
           "primaryKey": false,
           "notNull": false
         },
@@ -251,13 +216,19 @@
         },
         "metadata": {
           "name": "metadata",
-          "type": "text",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "varchar(64)",
           "primaryKey": false,
           "notNull": false
         },
         "ip_address": {
           "name": "ip_address",
-          "type": "text",
+          "type": "varchar(64)",
           "primaryKey": false,
           "notNull": false
         },
@@ -269,15 +240,15 @@
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         }
       },
       "indexes": {
-        "audit_logs_actor_idx": {
-          "name": "audit_logs_actor_idx",
+        "audit_actor_idx": {
+          "name": "audit_actor_idx",
           "columns": [
             {
               "expression": "actor_user_id",
@@ -291,32 +262,11 @@
           "method": "btree",
           "with": {}
         },
-        "audit_logs_entity_idx": {
-          "name": "audit_logs_entity_idx",
+        "audit_action_idx": {
+          "name": "audit_action_idx",
           "columns": [
             {
-              "expression": "entity_type",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "entity_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "audit_logs_created_at_idx": {
-          "name": "audit_logs_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
+              "expression": "action",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -367,19 +317,12 @@
         },
         "borrower_type": {
           "name": "borrower_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'PRIMARY'"
-        },
-        "first_name": {
-          "name": "first_name",
-          "type": "text",
+          "type": "varchar(20)",
           "primaryKey": false,
           "notNull": true
         },
-        "last_name": {
-          "name": "last_name",
+        "full_name_encrypted": {
+          "name": "full_name_encrypted",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -388,68 +331,32 @@
           "name": "identity_number_encrypted",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
-        },
-        "identity_number_hash": {
-          "name": "identity_number_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "identity_number_last4": {
-          "name": "identity_number_last4",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "birth_date": {
           "name": "birth_date",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "phone_encrypted": {
-          "name": "phone_encrypted",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "email_encrypted": {
-          "name": "email_encrypted",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "relationship_to_primary": {
-          "name": "relationship_to_primary",
-          "type": "text",
+          "type": "timestamp",
           "primaryKey": false,
           "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
-        "borrowers_client_id_idx": {
-          "name": "borrowers_client_id_idx",
+        "borrowers_client_idx": {
+          "name": "borrowers_client_idx",
           "columns": [
             {
               "expression": "client_id",
@@ -495,33 +402,34 @@
           "primaryKey": true,
           "notNull": true
         },
+        "public_case_number": {
+          "name": "public_case_number",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
         "advisor_id": {
           "name": "advisor_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "case_number": {
-          "name": "case_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "client_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'DRAFT'"
         },
-        "first_name": {
-          "name": "first_name",
+        "first_name_encrypted": {
+          "name": "first_name_encrypted",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "last_name": {
-          "name": "last_name",
+        "last_name_encrypted": {
+          "name": "last_name_encrypted",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -530,56 +438,19 @@
           "name": "identity_number_encrypted",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
-        },
-        "identity_number_hash": {
-          "name": "identity_number_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "identity_number_last4": {
-          "name": "identity_number_last4",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "birth_date": {
-          "name": "birth_date",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "phone_encrypted": {
           "name": "phone_encrypted",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "email_encrypted": {
           "name": "email_encrypted",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
-        },
-        "marital_status": {
-          "name": "marital_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "number_of_children": {
-          "name": "number_of_children",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "default": 0
-        },
-        "city": {
-          "name": "city",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "address_encrypted": {
           "name": "address_encrypted",
@@ -593,30 +464,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
-        "clients_advisor_id_idx": {
-          "name": "clients_advisor_id_idx",
+        "clients_advisor_idx": {
+          "name": "clients_advisor_idx",
           "columns": [
             {
               "expression": "advisor_id",
@@ -630,56 +501,11 @@
           "method": "btree",
           "with": {}
         },
-        "clients_case_number_idx": {
-          "name": "clients_case_number_idx",
+        "clients_deleted_idx": {
+          "name": "clients_deleted_idx",
           "columns": [
             {
-              "expression": "case_number",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "clients_status_idx": {
-          "name": "clients_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "clients_identity_number_hash_idx": {
-          "name": "clients_identity_number_hash_idx",
-          "columns": [
-            {
-              "expression": "identity_number_hash",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "clients_created_at_idx": {
-          "name": "clients_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
+              "expression": "deleted_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -692,10 +518,10 @@
         }
       },
       "foreignKeys": {
-        "clients_advisor_id_users_id_fk": {
-          "name": "clients_advisor_id_users_id_fk",
+        "clients_advisor_id_advisor_profiles_id_fk": {
+          "name": "clients_advisor_id_advisor_profiles_id_fk",
           "tableFrom": "clients",
-          "tableTo": "users",
+          "tableTo": "advisor_profiles",
           "columnsFrom": [
             "advisor_id"
           ],
@@ -708,11 +534,11 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "clients_case_number_unique": {
-          "name": "clients_case_number_unique",
+        "clients_public_case_number_unique": {
+          "name": "clients_public_case_number_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "case_number"
+            "public_case_number"
           ]
         }
       },
@@ -736,33 +562,33 @@
           "primaryKey": false,
           "notNull": true
         },
-        "borrower_id": {
-          "name": "borrower_id",
+        "uploaded_by_user_id": {
+          "name": "uploaded_by_user_id",
           "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "document_type": {
-          "name": "document_type",
-          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "original_filename": {
-          "name": "original_filename",
-          "type": "text",
+        "document_type": {
+          "name": "document_type",
+          "type": "varchar(80)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "original_file_name": {
+          "name": "original_file_name",
+          "type": "varchar(255)",
           "primaryKey": false,
           "notNull": true
         },
         "storage_key": {
           "name": "storage_key",
-          "type": "text",
+          "type": "varchar(512)",
           "primaryKey": false,
           "notNull": true
         },
         "mime_type": {
           "name": "mime_type",
-          "type": "text",
+          "type": "varchar(100)",
           "primaryKey": false,
           "notNull": true
         },
@@ -772,106 +598,47 @@
           "primaryKey": false,
           "notNull": true
         },
-        "checksum": {
-          "name": "checksum",
-          "type": "text",
+        "checksum_sha256": {
+          "name": "checksum_sha256",
+          "type": "varchar(64)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "document_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'UPLOADED'"
         },
-        "uploaded_by_user_id": {
-          "name": "uploaded_by_user_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "uploaded_at": {
-          "name": "uploaded_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "verified_by_user_id": {
-          "name": "verified_by_user_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "verified_at": {
-          "name": "verified_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "rejection_reason": {
-          "name": "rejection_reason",
-          "type": "text",
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
-        "documents_client_id_idx": {
-          "name": "documents_client_id_idx",
+        "documents_client_idx": {
+          "name": "documents_client_idx",
           "columns": [
             {
               "expression": "client_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "documents_borrower_id_idx": {
-          "name": "documents_borrower_id_idx",
-          "columns": [
-            {
-              "expression": "borrower_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "documents_status_idx": {
-          "name": "documents_status_idx",
-          "columns": [
-            {
-              "expression": "status",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -897,19 +664,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "documents_borrower_id_borrowers_id_fk": {
-          "name": "documents_borrower_id_borrowers_id_fk",
-          "tableFrom": "documents",
-          "tableTo": "borrowers",
-          "columnsFrom": [
-            "borrower_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "documents_uploaded_by_user_id_users_id_fk": {
           "name": "documents_uploaded_by_user_id_users_id_fk",
           "tableFrom": "documents",
@@ -922,23 +676,18 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "documents_verified_by_user_id_users_id_fk": {
-          "name": "documents_verified_by_user_id_users_id_fk",
-          "tableFrom": "documents",
-          "tableTo": "users",
-          "columnsFrom": [
-            "verified_by_user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "documents_storage_key_unique": {
+          "name": "documents_storage_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "storage_key"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -953,76 +702,72 @@
           "primaryKey": true,
           "notNull": true
         },
-        "recipient": {
-          "name": "recipient",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "template": {
-          "name": "template",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "related_entity_type": {
-          "name": "related_entity_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "related_entity_id": {
-          "name": "related_entity_id",
+        "submission_id": {
+          "name": "submission_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
-        "provider_message_id": {
-          "name": "provider_message_id",
-          "type": "text",
+        "recipient": {
+          "name": "recipient",
+          "type": "varchar(320)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "message_id": {
+          "name": "message_id",
+          "type": "varchar(255)",
           "primaryKey": false,
           "notNull": false
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "varchar(40)",
           "primaryKey": false,
           "notNull": true
         },
-        "error_message": {
-          "name": "error_message",
+        "sanitized_error": {
+          "name": "sanitized_error",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
         "sent_at": {
           "name": "sent_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "delivered_at": {
-          "name": "delivered_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
         "failed_at": {
           "name": "failed_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "email_logs_submission_id_lender_submissions_id_fk": {
+          "name": "email_logs_submission_id_lender_submissions_id_fk",
+          "tableFrom": "email_logs",
+          "tableTo": "lender_submissions",
+          "columnsFrom": [
+            "submission_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -1047,9 +792,9 @@
         },
         "employment_type": {
           "name": "employment_type",
-          "type": "text",
+          "type": "varchar(30)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "employer_name_encrypted": {
           "name": "employer_name_encrypted",
@@ -1059,56 +804,35 @@
         },
         "job_title": {
           "name": "job_title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "start_date": {
-          "name": "start_date",
-          "type": "text",
+          "type": "varchar(150)",
           "primaryKey": false,
           "notNull": false
         },
         "monthly_net_income": {
           "name": "monthly_net_income",
-          "type": "numeric(12, 2)",
+          "type": "numeric(14, 2)",
           "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
+          "notNull": true
         },
-        "monthly_gross_income": {
-          "name": "monthly_gross_income",
-          "type": "numeric(12, 2)",
+        "start_date": {
+          "name": "start_date",
+          "type": "timestamp",
           "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
-        },
-        "additional_income": {
-          "name": "additional_income",
-          "type": "numeric(12, 2)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -1155,90 +879,68 @@
           "primaryKey": false,
           "notNull": true
         },
-        "requested_fields": {
-          "name": "requested_fields",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "reason": {
           "name": "reason",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
+        },
+        "requested_fields": {
+          "name": "requested_fields",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "approved_fields": {
+          "name": "approved_fields",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "approved_document_ids": {
+          "name": "approved_document_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "identity_request_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'PENDING'"
         },
-        "reviewed_by_user_id": {
-          "name": "reviewed_by_user_id",
+        "decided_by_user_id": {
+          "name": "decided_by_user_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
-        "reviewed_at": {
-          "name": "reviewed_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "approved_fields": {
-          "name": "approved_fields",
-          "type": "text",
+        "decided_at": {
+          "name": "decided_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         }
       },
-      "indexes": {
-        "identity_reveal_requests_sub_id_idx": {
-          "name": "identity_reveal_requests_sub_id_idx",
-          "columns": [
-            {
-              "expression": "submission_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "identity_reveal_requests_status_idx": {
-          "name": "identity_reveal_requests_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "identity_reveal_requests_submission_id_lender_submissions_id_fk": {
           "name": "identity_reveal_requests_submission_id_lender_submissions_id_fk",
@@ -1266,12 +968,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "identity_reveal_requests_reviewed_by_user_id_users_id_fk": {
-          "name": "identity_reveal_requests_reviewed_by_user_id_users_id_fk",
+        "identity_reveal_requests_decided_by_user_id_users_id_fk": {
+          "name": "identity_reveal_requests_decided_by_user_id_users_id_fk",
           "tableFrom": "identity_reveal_requests",
           "tableTo": "users",
           "columnsFrom": [
-            "reviewed_by_user_id"
+            "decided_by_user_id"
           ],
           "columnsTo": [
             "id"
@@ -1302,51 +1004,37 @@
           "primaryKey": false,
           "notNull": true
         },
-        "income_type": {
-          "name": "income_type",
-          "type": "text",
+        "source_type": {
+          "name": "source_type",
+          "type": "varchar(50)",
           "primaryKey": false,
           "notNull": true
         },
-        "description": {
-          "name": "description",
+        "monthly_amount": {
+          "name": "monthly_amount",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description_encrypted": {
+          "name": "description_encrypted",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "monthly_amount": {
-          "name": "monthly_amount",
-          "type": "numeric(12, 2)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "is_fixed": {
-          "name": "is_fixed",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": true
-        },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -1389,37 +1077,74 @@
         },
         "token_hash": {
           "name": "token_hash",
-          "type": "text",
+          "type": "varchar(64)",
           "primaryKey": false,
           "notNull": true
         },
         "expires_at": {
           "name": "expires_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
         },
         "used_at": {
           "name": "used_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "used_by_user_id": {
+          "name": "used_by_user_id",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false
         },
         "revoked_at": {
           "name": "revoked_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "invite_token_hash_uq": {
+          "name": "invite_token_hash_uq",
+          "columns": [
+            {
+              "expression": "token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "invite_submission_idx": {
+          "name": "invite_submission_idx",
+          "columns": [
+            {
+              "expression": "submission_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "lender_invite_tokens_submission_id_lender_submissions_id_fk": {
           "name": "lender_invite_tokens_submission_id_lender_submissions_id_fk",
@@ -1427,6 +1152,19 @@
           "tableTo": "lender_submissions",
           "columnsFrom": [
             "submission_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "lender_invite_tokens_used_by_user_id_users_id_fk": {
+          "name": "lender_invite_tokens_used_by_user_id_users_id_fk",
+          "tableFrom": "lender_invite_tokens",
+          "tableTo": "users",
+          "columnsFrom": [
+            "used_by_user_id"
           ],
           "columnsTo": [
             "id"
@@ -1457,15 +1195,16 @@
           "primaryKey": false,
           "notNull": true
         },
-        "lender_user_id": {
-          "name": "lender_user_id",
+        "created_by_user_id": {
+          "name": "created_by_user_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
         "response_type": {
           "name": "response_type",
-          "type": "text",
+          "type": "response_type",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -1473,46 +1212,24 @@
           "name": "message",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
-      "indexes": {
-        "lender_responses_sub_id_idx": {
-          "name": "lender_responses_sub_id_idx",
-          "columns": [
-            {
-              "expression": "submission_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "lender_responses_submission_id_lender_submissions_id_fk": {
           "name": "lender_responses_submission_id_lender_submissions_id_fk",
@@ -1527,12 +1244,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "lender_responses_lender_user_id_users_id_fk": {
-          "name": "lender_responses_lender_user_id_users_id_fk",
+        "lender_responses_created_by_user_id_users_id_fk": {
+          "name": "lender_responses_created_by_user_id_users_id_fk",
           "tableFrom": "lender_responses",
           "tableTo": "users",
           "columnsFrom": [
-            "lender_user_id"
+            "created_by_user_id"
           ],
           "columnsTo": [
             "id"
@@ -1563,104 +1280,74 @@
           "primaryKey": false,
           "notNull": true
         },
-        "advisor_id": {
-          "name": "advisor_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
         "lender_id": {
           "name": "lender_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
+        "created_by_user_id": {
+          "name": "created_by_user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "submission_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'SENT'"
+          "default": "'DRAFT'"
         },
         "anonymous_snapshot": {
           "name": "anonymous_snapshot",
-          "type": "text",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "anonymous_pdf_storage_key": {
+          "name": "anonymous_pdf_storage_key",
+          "type": "varchar(512)",
           "primaryKey": false,
           "notNull": false
         },
         "sent_at": {
           "name": "sent_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
-          "default": "now()"
+          "notNull": false
         },
         "delivered_at": {
           "name": "delivered_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
         "opened_at": {
           "name": "opened_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "identity_requested_at": {
-          "name": "identity_requested_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "identity_approved_at": {
-          "name": "identity_approved_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "identity_rejected_at": {
-          "name": "identity_rejected_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "identity_approved_by_user_id": {
-          "name": "identity_approved_by_user_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "cancelled_at": {
-          "name": "cancelled_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
-        "lender_submissions_client_id_idx": {
-          "name": "lender_submissions_client_id_idx",
+        "submissions_client_idx": {
+          "name": "submissions_client_idx",
           "columns": [
             {
               "expression": "client_id",
@@ -1674,56 +1361,11 @@
           "method": "btree",
           "with": {}
         },
-        "lender_submissions_advisor_id_idx": {
-          "name": "lender_submissions_advisor_id_idx",
-          "columns": [
-            {
-              "expression": "advisor_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "lender_submissions_lender_id_idx": {
-          "name": "lender_submissions_lender_id_idx",
+        "submissions_lender_idx": {
+          "name": "submissions_lender_idx",
           "columns": [
             {
               "expression": "lender_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "lender_submissions_status_idx": {
-          "name": "lender_submissions_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "lender_submissions_created_at_idx": {
-          "name": "lender_submissions_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1749,19 +1391,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "lender_submissions_advisor_id_users_id_fk": {
-          "name": "lender_submissions_advisor_id_users_id_fk",
-          "tableFrom": "lender_submissions",
-          "tableTo": "users",
-          "columnsFrom": [
-            "advisor_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "lender_submissions_lender_id_lenders_id_fk": {
           "name": "lender_submissions_lender_id_lenders_id_fk",
           "tableFrom": "lender_submissions",
@@ -1775,12 +1404,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "lender_submissions_identity_approved_by_user_id_users_id_fk": {
-          "name": "lender_submissions_identity_approved_by_user_id_users_id_fk",
+        "lender_submissions_created_by_user_id_users_id_fk": {
+          "name": "lender_submissions_created_by_user_id_users_id_fk",
           "tableFrom": "lender_submissions",
           "tableTo": "users",
           "columnsFrom": [
-            "identity_approved_by_user_id"
+            "created_by_user_id"
           ],
           "columnsTo": [
             "id"
@@ -1805,49 +1434,57 @@
           "primaryKey": true,
           "notNull": true
         },
-        "user_id": {
-          "name": "user_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
         "lender_id": {
           "name": "lender_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
-        "job_title": {
-          "name": "job_title",
-          "type": "text",
+        "user_id": {
+          "name": "user_id",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": false
-        },
-        "is_primary_contact": {
-          "name": "is_primary_contact",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": false
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         }
       },
       "indexes": {
-        "lender_users_user_id_idx": {
-          "name": "lender_users_user_id_idx",
+        "lender_users_lender_user_uq": {
+          "name": "lender_users_lender_user_uq",
+          "columns": [
+            {
+              "expression": "lender_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "lender_users_user_idx": {
+          "name": "lender_users_user_idx",
           "columns": [
             {
               "expression": "user_id",
@@ -1860,37 +1497,9 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "lender_users_lender_id_idx": {
-          "name": "lender_users_lender_id_idx",
-          "columns": [
-            {
-              "expression": "lender_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
-        "lender_users_user_id_users_id_fk": {
-          "name": "lender_users_user_id_users_id_fk",
-          "tableFrom": "lender_users",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "lender_users_lender_id_lenders_id_fk": {
           "name": "lender_users_lender_id_lenders_id_fk",
           "tableFrom": "lender_users",
@@ -1903,18 +1512,23 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "lender_users_user_id_users_id_fk": {
+          "name": "lender_users_user_id_users_id_fk",
+          "tableFrom": "lender_users",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "lender_users_user_id_unique": {
-          "name": "lender_users_user_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "user_id"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1931,78 +1545,56 @@
         },
         "name": {
           "name": "name",
-          "type": "text",
+          "type": "varchar(200)",
           "primaryKey": false,
           "notNull": true
         },
-        "legal_name": {
-          "name": "legal_name",
-          "type": "text",
+        "slug": {
+          "name": "slug",
+          "type": "varchar(100)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
-        "company_number": {
-          "name": "company_number",
-          "type": "text",
+        "contact_email": {
+          "name": "contact_email",
+          "type": "varchar(320)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
-        "status": {
-          "name": "status",
-          "type": "text",
+        "active": {
+          "name": "active",
+          "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "default": "'ACTIVE'"
-        },
-        "website": {
-          "name": "website",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "general_email": {
-          "name": "general_email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "phone": {
-          "name": "phone",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "logo_storage_key": {
-          "name": "logo_storage_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
+          "default": true
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "lenders_slug_unique": {
+          "name": "lenders_slug_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "slug"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -2025,74 +1617,35 @@
         },
         "liability_type": {
           "name": "liability_type",
-          "type": "text",
+          "type": "varchar(50)",
           "primaryKey": false,
           "notNull": true
         },
-        "institution": {
-          "name": "institution",
-          "type": "text",
+        "outstanding_balance": {
+          "name": "outstanding_balance",
+          "type": "numeric(14, 2)",
           "primaryKey": false,
-          "notNull": false
-        },
-        "original_amount": {
-          "name": "original_amount",
-          "type": "numeric(12, 2)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
-        },
-        "current_balance": {
-          "name": "current_balance",
-          "type": "numeric(12, 2)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
+          "notNull": true
         },
         "monthly_payment": {
           "name": "monthly_payment",
-          "type": "numeric(12, 2)",
+          "type": "numeric(14, 2)",
           "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
-        },
-        "interest_rate": {
-          "name": "interest_rate",
-          "type": "numeric(5, 2)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "end_date": {
-          "name": "end_date",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "notes": {
-          "name": "notes",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -2133,36 +1686,23 @@
           "primaryKey": false,
           "notNull": true
         },
-        "lender_id": {
-          "name": "lender_id",
+        "lender_user_id": {
+          "name": "lender_user_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true
         },
         "amount": {
           "name": "amount",
-          "type": "numeric(12, 2)",
+          "type": "numeric(14, 2)",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
+          "notNull": true
         },
         "interest_rate": {
           "name": "interest_rate",
-          "type": "numeric(5, 2)",
+          "type": "numeric(7, 4)",
           "primaryKey": false,
           "notNull": true
-        },
-        "interest_type": {
-          "name": "interest_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "linked_to_index": {
-          "name": "linked_to_index",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "term_months": {
           "name": "term_months",
@@ -2172,23 +1712,9 @@
         },
         "monthly_payment": {
           "name": "monthly_payment",
-          "type": "numeric(12, 2)",
+          "type": "numeric(14, 2)",
           "primaryKey": false,
           "notNull": false
-        },
-        "origination_fee": {
-          "name": "origination_fee",
-          "type": "numeric(12, 2)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
-        },
-        "additional_fees": {
-          "name": "additional_fees",
-          "type": "numeric(12, 2)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
         },
         "conditions": {
           "name": "conditions",
@@ -2196,93 +1722,36 @@
           "primaryKey": false,
           "notNull": false
         },
-        "valid_until": {
-          "name": "valid_until",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
-        },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "offer_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'SUBMITTED'"
         },
-        "created_by_user_id": {
-          "name": "created_by_user_id",
-          "type": "integer",
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
-      "indexes": {
-        "loan_offers_sub_id_idx": {
-          "name": "loan_offers_sub_id_idx",
-          "columns": [
-            {
-              "expression": "submission_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "loan_offers_lender_id_idx": {
-          "name": "loan_offers_lender_id_idx",
-          "columns": [
-            {
-              "expression": "lender_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "loan_offers_status_idx": {
-          "name": "loan_offers_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "loan_offers_submission_id_lender_submissions_id_fk": {
           "name": "loan_offers_submission_id_lender_submissions_id_fk",
@@ -2297,25 +1766,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "loan_offers_lender_id_lenders_id_fk": {
-          "name": "loan_offers_lender_id_lenders_id_fk",
-          "tableFrom": "loan_offers",
-          "tableTo": "lenders",
-          "columnsFrom": [
-            "lender_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "loan_offers_created_by_user_id_users_id_fk": {
-          "name": "loan_offers_created_by_user_id_users_id_fk",
+        "loan_offers_lender_user_id_users_id_fk": {
+          "name": "loan_offers_lender_user_id_users_id_fk",
           "tableFrom": "loan_offers",
           "tableTo": "users",
           "columnsFrom": [
-            "created_by_user_id"
+            "lender_user_id"
           ],
           "columnsTo": [
             "id"
@@ -2348,67 +1804,41 @@
         },
         "purpose": {
           "name": "purpose",
-          "type": "text",
+          "type": "varchar(50)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "requested_amount": {
           "name": "requested_amount",
-          "type": "numeric(12, 2)",
+          "type": "numeric(14, 2)",
           "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
+          "notNull": true
         },
         "requested_term_months": {
           "name": "requested_term_months",
           "type": "integer",
           "primaryKey": false,
-          "notNull": false
-        },
-        "requested_monthly_payment": {
-          "name": "requested_monthly_payment",
-          "type": "numeric(12, 2)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
+          "notNull": true
         },
         "loan_to_value": {
           "name": "loan_to_value",
-          "type": "numeric(5, 2)",
+          "type": "numeric(6, 2)",
           "primaryKey": false,
-          "notNull": false
-        },
-        "notes": {
-          "name": "notes",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -2451,13 +1881,13 @@
         },
         "type": {
           "name": "type",
-          "type": "text",
+          "type": "varchar(80)",
           "primaryKey": false,
           "notNull": true
         },
         "title": {
           "name": "title",
-          "type": "text",
+          "type": "varchar(200)",
           "primaryKey": false,
           "notNull": true
         },
@@ -2467,58 +1897,28 @@
           "primaryKey": false,
           "notNull": true
         },
-        "metadata": {
-          "name": "metadata",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "read_at": {
           "name": "read_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
           "default": "now()"
         }
       },
-      "indexes": {
-        "notifications_user_id_idx": {
-          "name": "notifications_user_id_idx",
-          "columns": [
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "notifications_read_at_idx": {
-          "name": "notifications_read_at_idx",
-          "columns": [
-            {
-              "expression": "read_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "notifications_user_id_users_id_fk": {
           "name": "notifications_user_id_users_id_fk",
@@ -2558,13 +1958,19 @@
         },
         "property_type": {
           "name": "property_type",
-          "type": "text",
+          "type": "varchar(50)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
+        },
+        "region": {
+          "name": "region",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
         },
         "city": {
           "name": "city",
-          "type": "text",
+          "type": "varchar(100)",
           "primaryKey": false,
           "notNull": false
         },
@@ -2576,57 +1982,30 @@
         },
         "estimated_value": {
           "name": "estimated_value",
-          "type": "numeric(12, 2)",
+          "type": "numeric(14, 2)",
           "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
-        },
-        "purchase_price": {
-          "name": "purchase_price",
-          "type": "numeric(12, 2)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'0'"
+          "notNull": true
         },
         "existing_mortgage_balance": {
           "name": "existing_mortgage_balance",
-          "type": "numeric(12, 2)",
+          "type": "numeric(14, 2)",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "'0'"
-        },
-        "ownership_percentage": {
-          "name": "ownership_percentage",
-          "type": "numeric(5, 2)",
-          "primaryKey": false,
-          "notNull": false,
-          "default": "'100.00'"
-        },
-        "registration_type": {
-          "name": "registration_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {},
@@ -2663,7 +2042,7 @@
         },
         "key": {
           "name": "key",
-          "type": "text",
+          "type": "varchar(120)",
           "primaryKey": false,
           "notNull": true
         },
@@ -2673,19 +2052,11 @@
           "primaryKey": false,
           "notNull": false
         },
-        "value_type": {
-          "name": "value_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'text'"
-        },
         "category": {
           "name": "category",
-          "type": "text",
+          "type": "varchar(60)",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'GENERAL'"
+          "notNull": true
         },
         "is_secret": {
           "name": "is_secret",
@@ -2708,16 +2079,16 @@
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         }
       },
@@ -2763,150 +2134,83 @@
         },
         "firebase_uid": {
           "name": "firebase_uid",
-          "type": "text",
+          "type": "varchar(128)",
           "primaryKey": false,
           "notNull": true
         },
         "email": {
           "name": "email",
-          "type": "text",
+          "type": "varchar(320)",
           "primaryKey": false,
           "notNull": true
         },
         "first_name": {
           "name": "first_name",
-          "type": "text",
+          "type": "varchar(100)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "last_name": {
           "name": "last_name",
-          "type": "text",
+          "type": "varchar(100)",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
-        "phone": {
-          "name": "phone",
+        "phone_encrypted": {
+          "name": "phone_encrypted",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
         "role": {
           "name": "role",
-          "type": "text",
+          "type": "user_role",
+          "typeSchema": "public",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'ADVISOR'"
+          "notNull": true
+        },
+        "role_label": {
+          "name": "role_label",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "user_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'ACTIVE'"
+          "default": "'PENDING'"
         },
-        "email_verified": {
-          "name": "email_verified",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": false,
-          "default": false
-        },
-        "last_login_at": {
-          "name": "last_login_at",
-          "type": "timestamp",
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
-        "last_activity_at": {
-          "name": "last_activity_at",
-          "type": "timestamp",
+        "last_login_at": {
+          "name": "last_login_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "timestamp",
+          "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "default": "now()"
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false
         }
       },
-      "indexes": {
-        "users_firebase_uid_idx": {
-          "name": "users_firebase_uid_idx",
-          "columns": [
-            {
-              "expression": "firebase_uid",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "users_email_idx": {
-          "name": "users_email_idx",
-          "columns": [
-            {
-              "expression": "email",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "users_role_idx": {
-          "name": "users_role_idx",
-          "columns": [
-            {
-              "expression": "role",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "users_status_idx": {
-          "name": "users_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
@@ -2937,11 +2241,7 @@
       "values": [
         "DRAFT",
         "ACTIVE",
-        "READY_FOR_SUBMISSION",
         "SUBMITTED",
-        "IN_REVIEW",
-        "APPROVED",
-        "DECLINED",
         "CLOSED",
         "ARCHIVED"
       ]
@@ -2950,12 +2250,21 @@
       "name": "document_status",
       "schema": "public",
       "values": [
-        "UPLOADING",
         "UPLOADED",
-        "PROCESSING",
         "VERIFIED",
         "REJECTED",
         "DELETED"
+      ]
+    },
+    "public.identity_request_status": {
+      "name": "identity_request_status",
+      "schema": "public",
+      "values": [
+        "PENDING",
+        "PARTIALLY_APPROVED",
+        "APPROVED",
+        "REJECTED",
+        "CANCELLED"
       ]
     },
     "public.offer_status": {
@@ -2965,9 +2274,9 @@
         "DRAFT",
         "SUBMITTED",
         "UPDATED",
+        "WITHDRAWN",
         "ACCEPTED",
         "REJECTED",
-        "WITHDRAWN",
         "EXPIRED"
       ]
     },
@@ -2975,11 +2284,10 @@
       "name": "response_type",
       "schema": "public",
       "values": [
+        "MESSAGE",
+        "MORE_INFO_REQUEST",
         "INTERESTED",
-        "NOT_INTERESTED",
-        "REQUEST_MORE_INFORMATION",
-        "REQUEST_IDENTITY_REVEAL",
-        "GENERAL_MESSAGE"
+        "DECLINED"
       ]
     },
     "public.submission_status": {
@@ -2987,8 +2295,10 @@
       "schema": "public",
       "values": [
         "DRAFT",
+        "PENDING_DELIVERY",
         "SENT",
         "DELIVERED",
+        "DELIVERY_FAILED",
         "OPENED",
         "IN_REVIEW",
         "MORE_INFO_REQUESTED",
@@ -3019,8 +2329,7 @@
         "PENDING",
         "ACTIVE",
         "SUSPENDED",
-        "DISABLED",
-        "DELETED"
+        "DISABLED"
       ]
     }
   },
