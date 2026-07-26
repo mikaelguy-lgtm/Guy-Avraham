@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request, type Response } from "@playwright/test";
 
 const dealTypes = [
   ["PURCHASE_FROM_CONTRACTOR", "רכישה מקבלן"],
@@ -30,20 +30,74 @@ async function login(page: Page): Promise<string> {
   return (await authenticatedRequest).headers().authorization ?? "";
 }
 
+const apiOrigin = "http://localhost:3000";
+
+function isApiRequest(request: Request): boolean {
+  return request.url().startsWith(`${apiOrigin}/api/`);
+}
+
+async function waitForApiIdle(activeRequests: Set<Request>): Promise<void> {
+  await expect.poll(() => activeRequests.size, {timeout: 10_000, message: "API requests should finish before navigation"}).toBe(0);
+}
+
+function waitForSuccessfulResponse(page: Page, path: string, method = "GET"): Promise<Response> {
+  return page.waitForResponse((response) => response.url() === `${apiOrigin}${path}` && response.request().method() === method)
+    .then((response) => {
+      expect(response.status(), `${method} ${path} should succeed`).toBeGreaterThanOrEqual(200);
+      expect(response.status(), `${method} ${path} should succeed`).toBeLessThan(400);
+      return response;
+    });
+}
+
+async function navigateToClientDetails(page: Page, clientId: number, activeRequests: Set<Request>, action: () => Promise<unknown>): Promise<void> {
+  await waitForApiIdle(activeRequests);
+  const clientPath = `/advisor/clients/${clientId}`;
+  const responses = [
+    waitForSuccessfulResponse(page, `/api/clients/${clientId}`),
+    waitForSuccessfulResponse(page, `/api/clients/${clientId}/submissions`),
+    waitForSuccessfulResponse(page, `/api/clients/${clientId}/offers`)
+  ];
+  await Promise.all([page.waitForURL((url) => url.pathname === clientPath), action()]);
+  await Promise.all(responses);
+  await waitForApiIdle(activeRequests);
+  await expect(page.getByRole("heading", {name: "בדיקת מסירה"})).toBeVisible();
+}
+
+async function navigateToClientEdit(page: Page, clientId: number, activeRequests: Set<Request>, action: () => Promise<unknown>): Promise<void> {
+  await waitForApiIdle(activeRequests);
+  const response = waitForSuccessfulResponse(page, `/api/clients/${clientId}`);
+  await Promise.all([page.waitForURL((url) => url.pathname === `/advisor/clients/${clientId}/edit`), action()]);
+  await response;
+  await waitForApiIdle(activeRequests);
+  await expect(page.getByRole("heading", {name: "עריכת תיק מימון"})).toBeVisible();
+}
+
 test("final client module delivery verifies all required fields and deal types", async ({page, request}) => {
   test.setTimeout(360_000);
   await mkdir("output/playwright", {recursive: true});
   const consoleErrors: string[] = [];
-  const failedRequests: string[] = [];
+  const failedRequests: Array<{method: string; url: string; errorText: string; phase: string}> = [];
+  const failedResponses: Array<{method: string; url: string; status: number; phase: string}> = [];
+  const activeApiRequests = new Set<Request>();
+  let phase = "initialization";
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
-  page.on("requestfailed", (request) => failedRequests.push(`${request.method()} ${request.url()}`));
+  page.on("request", (request) => { if (isApiRequest(request)) activeApiRequests.add(request); });
+  page.on("requestfinished", (request) => activeApiRequests.delete(request));
+  page.on("requestfailed", (request) => {
+    activeApiRequests.delete(request);
+    failedRequests.push({method: request.method(), url: request.url(), errorText: request.failure()?.errorText ?? "UNKNOWN", phase});
+  });
+  page.on("response", (response) => {
+    if (response.url().startsWith(`${apiOrigin}/api/`) && response.status() >= 400) failedResponses.push({method: response.request().method(), url: response.url(), status: response.status(), phase});
+  });
   let clientId = 0;
   let authorization = "";
   let publicCaseNumber = "";
 
   try {
+    phase = "login";
     await page.goto("/");
     authorization = await login(page);
     await page.getByRole("link", {name: "תיק חדש"}).click();
@@ -101,6 +155,7 @@ test("final client module delivery verifies all required fields and deal types",
     await expect(page.getByText("3,500", {exact: false})).toBeVisible();
     await expect(page.getByText("יחס החזר")).toHaveCount(0);
     await expect(page.getByText("אחוז מימון")).toHaveCount(0);
+    await waitForApiIdle(activeApiRequests);
 
     await page.getByRole("button", {name: "פרטים אישיים", exact: true}).click();
     await expect(page.getByText("נשוי/אה")).toBeVisible();
@@ -113,8 +168,8 @@ test("final client module delivery verifies all required fields and deal types",
     await page.getByRole("button", {name: "נכס", exact: true}).click();
     await expect(page.getByText("רחוב הנכס 30, רמת גן")).toBeVisible();
 
-    await page.getByRole("button", {name: "עריכה", exact: true}).click();
-    await expect(page.getByRole("heading", {name: "עריכת תיק מימון"})).toBeVisible();
+    phase = "open initial edit";
+    await navigateToClientEdit(page, clientId, activeApiRequests, () => page.getByRole("button", {name: "עריכה", exact: true}).click());
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await page.getByLabel("מצב משפחתי").selectOption("COMMON_LAW");
     await page.getByLabel("ילד 1 — גיל").fill("6");
@@ -122,28 +177,39 @@ test("final client module delivery verifies all required fields and deal types",
     await page.getByLabel("סוג הכנסה נוספת").selectOption("INVESTMENT_INCOME");
     await page.getByLabel("סכום הכנסה נוספת חודשי").fill("4000");
     await page.getByRole("button", {name: "הבא"}).click();
-    await page.getByRole("button", {name: "שמירת שינויים"}).click();
+    phase = "save initial edit";
+    const initialSave = waitForSuccessfulResponse(page, `/api/clients/${clientId}`, "PATCH");
+    await navigateToClientDetails(page, clientId, activeApiRequests, () => page.getByRole("button", {name: "שמירת שינויים"}).click());
+    await initialSave;
     await expect(page.getByRole("status")).toContainText("נשמרו בהצלחה");
 
     for (const [value, label] of dealTypes) {
-      await page.getByRole("button", {name: "עריכה", exact: true}).click();
+      phase = `open edit for ${value}`;
+      await navigateToClientEdit(page, clientId, activeApiRequests, () => page.getByRole("button", {name: "עריכה", exact: true}).click());
       await page.getByRole("button", {name: "הבא"}).click();
       await page.getByRole("button", {name: "הבא"}).click();
       await page.getByLabel("מטרת ההלוואה").selectOption(value);
-      await page.getByRole("button", {name: "שמירת שינויים"}).click();
+      phase = `save ${value}`;
+      const saveResponse = waitForSuccessfulResponse(page, `/api/clients/${clientId}`, "PATCH");
+      await navigateToClientDetails(page, clientId, activeApiRequests, () => page.getByRole("button", {name: "שמירת שינויים"}).click());
+      await saveResponse;
       await expect(page.getByRole("status")).toContainText("נשמרו בהצלחה");
-      await page.reload();
+      phase = `reload after saving ${value}`;
+      await navigateToClientDetails(page, clientId, activeApiRequests, () => page.reload());
       await page.getByRole("button", {name: "פירוט עסקה", exact: true}).click();
       await expect(page.getByText(label, {exact: true})).toBeVisible();
       await expect(page.locator("body")).not.toContainText(value);
-      await page.getByRole("button", {name: "עריכה", exact: true}).click();
+      phase = `reopen edit for ${value}`;
+      await navigateToClientEdit(page, clientId, activeApiRequests, () => page.getByRole("button", {name: "עריכה", exact: true}).click());
       await page.getByRole("button", {name: "הבא"}).click();
       await page.getByRole("button", {name: "הבא"}).click();
       await expect(page.getByLabel("מטרת ההלוואה")).toHaveValue(value);
-      await page.getByRole("button", {name: "ביטול וחזרה לתיק"}).click();
+      phase = `cancel edit for ${value}`;
+      await navigateToClientDetails(page, clientId, activeApiRequests, () => page.getByRole("button", {name: "ביטול וחזרה לתיק"}).click());
     }
 
-    await page.reload();
+    phase = "final reload";
+    await navigateToClientDetails(page, clientId, activeApiRequests, () => page.reload());
     await page.getByRole("button", {name: "פרטים אישיים", exact: true}).click();
     await expect(page.getByText("ידועים בציבור")).toBeVisible();
     await expect(page.getByText("6, 9")).toBeVisible();
@@ -151,6 +217,7 @@ test("final client module delivery verifies all required fields and deal types",
     await expect(page.getByText("הכנסה מהשקעות")).toBeVisible();
     await expect(page.getByText("24,000", {exact: false}).first()).toBeVisible();
     expect(consoleErrors).toEqual([]);
+    expect(failedResponses).toEqual([]);
     expect(failedRequests).toEqual([]);
     await page.screenshot({path: "output/playwright/final-client-delivery.png", fullPage: true, animations: "disabled"});
     await writeFile("output/playwright/final-delivery-result.json", JSON.stringify({clientName: "בדיקת מסירה", publicCaseNumber, verifiedDealTypes: dealTypes.map(([value]) => value)}, null, 2));
