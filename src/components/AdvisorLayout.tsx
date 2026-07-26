@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, Building2, FilePlus2, Files, LayoutDashboard, LogOut, Menu, UserRound, UsersRound, X } from "lucide-react";
+import { Bell, FilePlus2, LayoutDashboard, LogOut, Menu, UserRound, UsersRound, X } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import type { CurrentUser } from "../types";
 import { api } from "../utils/apiClient";
@@ -9,8 +9,6 @@ const navigation = [
   {to: "/advisor", label: "לוח בקרה", icon: LayoutDashboard, end: true},
   {to: "/advisor/clients", label: "לקוחות", icon: UsersRound},
   {to: "/advisor/new", label: "תיק חדש", icon: FilePlus2},
-  {to: "/advisor/arena", label: "זירת מימון", icon: Building2},
-  {to: "/advisor/documents", label: "מסמכים", icon: Files},
   {to: "/advisor/notifications", label: "התראות", icon: Bell},
   {to: "/advisor/profile", label: "פרופיל", icon: UserRound}
 ];

@@ -123,11 +123,15 @@ test("advisor-to-lender financing workflow", async ({browser, page, request}) =>
     await page.getByRole("button", {name: "צפייה"}).first().click();
     const previewDialog = page.locator(".document-preview-modal");
     await expect(previewDialog).toBeVisible();
+    await expect(previewDialog.getByRole("heading", {name: "תעודת זהות — צד קדמי"})).toBeVisible();
+    await expect(previewDialog).not.toContainText("e2e-0.pdf");
+    await expect(previewDialog.locator("iframe")).toHaveAttribute("title", "תצוגת תעודת זהות — צד קדמי");
     await expect(previewDialog.locator("iframe")).toHaveAttribute("src", /^blob:/);
     await previewDialog.getByRole("button").first().click();
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("button", {name: "הורדה"}).first().click();
     const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("תעודת זהות — צד קדמי.pdf");
     const stream = await download.createReadStream();
     const chunks: Buffer[] = [];
     for await (const chunk of stream) chunks.push(Buffer.from(chunk));

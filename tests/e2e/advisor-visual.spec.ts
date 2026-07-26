@@ -37,6 +37,8 @@ test("advisor visual journey is Hebrew, RTL and responsive", async ({page, reque
   try {
     advisorAuthorization = await login(page);
     await expect(page.getByRole("heading", {name: "ברוך הבא ללוח הבקרה"})).toBeVisible();
+    await expect(page.getByRole("link", {name: "מסמכים", exact: true})).toHaveCount(0);
+    await expect(page.getByRole("link", {name: "זירת מימון", exact: true})).toHaveCount(0);
     await assertHebrewUi(page);
     await capture(page, "advisor-dashboard.png");
 
