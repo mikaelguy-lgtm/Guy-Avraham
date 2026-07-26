@@ -10,6 +10,9 @@ import { FirebaseTokenVerifier, type TokenVerifier } from "./src/middleware/auth
 import { EncryptionService } from "./src/utils/crypto.js";
 import { createSecretProvider } from "./src/utils/secretManager.js";
 import { getAuth } from "firebase-admin/auth";
+import {DeliveryTokenService} from "./src/services/deliveryTokens.js";
+import {DeliveryEventBroker} from "./src/services/deliveryEvents.js";
+import {PostgresLenderDeliveryService} from "./src/services/lenderDelivery.js";
 
 const env = loadEnv();
 const secrets = createSecretProvider(env.SECRET_PROVIDER, {
@@ -30,6 +33,9 @@ const storage = new S3StorageService(env);
 await storage.initialize();
 const store = new PostgresStore();
 const email = new EmailService(env, secrets, async () => Object.fromEntries((await store.getSettings("SMTP")).map((setting) => [setting.key, setting.value])));
+const encryption = new EncryptionService(Buffer.from(encryptionKey, "base64"));
+const deliveryEvents = new DeliveryEventBroker();
+const delivery = new PostgresLenderDeliveryService({storage, email, encryption, tokens: new DeliveryTokenService(Buffer.from(encryptionKey, "base64")), broker: deliveryEvents, appUrl: env.APP_URL, nodeEnv: env.NODE_ENV});
 const firebaseAuth = getAuth();
 const verificationLinks = env.FIREBASE_AUTH_EMULATOR_HOST
   ? new EmulatorFirebaseVerificationLinkProvider(firebaseAuth, env.APP_URL)
@@ -39,7 +45,7 @@ const app = createApp({
   env,
   store,
   verifier,
-  encryption: new EncryptionService(Buffer.from(encryptionKey, "base64")),
+  encryption,
   storage,
   email,
   emailVerification: new AdvisorEmailVerificationService(verificationLinks, email, store),
@@ -48,8 +54,14 @@ const app = createApp({
   gemini: new GeminiService(env.GEMINI_API_KEY, env.GEMINI_MODEL),
   firebaseAccounts: {
     deleteUser: (uid) => firebaseAuth.deleteUser(uid)
-  }
+  },
+  delivery,
+  deliveryEvents
 });
+
+const runDeliveryJobs = () => delivery.processJobs().catch(() => console.error("Lender delivery jobs failed", {errorCode: "LENDER_DELIVERY_JOB_FAILED"}));
+void runDeliveryJobs();
+setInterval(() => void runDeliveryJobs(), 30_000).unref();
 
 const port = new URL(env.API_URL).port || "3000";
 app.listen(Number(port), "0.0.0.0", () => {

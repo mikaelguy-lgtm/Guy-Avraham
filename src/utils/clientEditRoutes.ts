@@ -8,6 +8,7 @@ export const clientTabs = [
   {id: "property", label: "נכס"},
   {id: "deal-details", label: "פירוט עסקה"},
   {id: "documents", label: "מסמכים"},
+  {id: "company-responses", label: "תגובות חברות"},
   {id: "offers", label: "הצעות"}
 ] as const;
 

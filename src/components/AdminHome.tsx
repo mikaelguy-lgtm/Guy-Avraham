@@ -5,6 +5,8 @@ const sections = [
   {to: "/admin/advisors", title: "יועצים", description: "ניהול יועצים והרשאות"},
   {to: "/admin/clients", title: "לקוחות", description: "סקירת לקוחות ותיקים"},
   {to: "/admin/lenders", title: "חברות מימון", description: "ניהול גופי מימון"},
+  {to: "/admin/company-submissions", title: "שליחות לחברות", description: "מעקב אחר מסירה, תגובות וגישה"},
+  {to: "/admin/business-calendar", title: "לוח ימי עסקים", description: "חגים וחריגי פעילות בישראל"},
   {to: "/admin/settings", title: "הגדרות מערכת", description: "הגדרות תפעול ואבטחה"},
   {to: "/admin/audit", title: "יומן פעילות", description: "בקרה ואירועי מערכת"}
 ];

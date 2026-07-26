@@ -1,0 +1,2 @@
+DROP INDEX "lender_contacts_email_uq";--> statement-breakpoint
+CREATE UNIQUE INDEX "lender_contacts_email_uq" ON "lender_contacts" USING btree ("lender_id","email_normalized") WHERE "lender_contacts"."deleted_at" is null;

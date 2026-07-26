@@ -1,0 +1,91 @@
+import {describe, expect, it} from "vitest";
+import type {FullCaseSnapshot} from "../../src/domain/lenderDelivery";
+import {CaseRedactionService} from "../../src/services/caseRedaction";
+import {DeliveryTokenService} from "../../src/services/deliveryTokens";
+import {IsraelBusinessCalendarService, israelDateKey} from "../../src/services/israelBusinessCalendar";
+
+const localParts = (date: Date) => Object.fromEntries(new Intl.DateTimeFormat("en-CA", {timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"}).formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+
+describe("IsraelBusinessCalendarService", () => {
+  it("recognizes Sunday through Thursday and excludes Friday and Saturday", () => {
+    const calendar = new IsraelBusinessCalendarService();
+    expect(calendar.isIsraeliBusinessDay("2026-07-26")).toBe(true);
+    expect(calendar.isIsraeliBusinessDay("2026-07-30")).toBe(true);
+    expect(calendar.isIsraeliBusinessDay("2026-07-31")).toBe(false);
+    expect(calendar.isIsraeliBusinessDay("2026-08-01")).toBe(false);
+  });
+
+  it("honors holidays and forced working day overrides", () => {
+    const calendar = new IsraelBusinessCalendarService([
+      {date: "2026-07-27", type: "HOLIDAY", title: "חג בדיקה", source: "בדיקה"},
+      {date: "2026-08-01", type: "FORCED_WORKING_DAY", title: "יום עבודה", source: "בדיקה"}
+    ]);
+    expect(calendar.isIsraeliBusinessDay("2026-07-27")).toBe(false);
+    expect(calendar.isIsraeliBusinessDay("2026-08-01")).toBe(true);
+  });
+
+  it.each([
+    ["2026-07-26T09:00:00+03:00", "2026-07-28"],
+    ["2026-07-30T09:00:00+03:00", "2026-08-03"],
+    ["2026-07-31T09:00:00+03:00", "2026-08-03"]
+  ])("calculates a two-business-day deadline for %s", (sentAt, expectedDate) => {
+    const deadline = new IsraelBusinessCalendarService().calculateResponseDeadline(new Date(sentAt));
+    expect(israelDateKey(deadline)).toBe(expectedDate);
+    expect(localParts(deadline)).toEqual(expect.objectContaining({hour: "18", minute: "00"}));
+  });
+
+  it("skips a holiday between sending and the deadline", () => {
+    const deadline = new IsraelBusinessCalendarService([{date: "2026-07-27", type: "NON_WORKING_DAY", title: "שבתון", source: "בדיקה"}]).calculateResponseDeadline(new Date("2026-07-26T09:00:00+03:00"));
+    expect(israelDateKey(deadline)).toBe("2026-07-29");
+  });
+
+  it("keeps 18:00 local through daylight-saving transitions and schedules two reminders", () => {
+    const calendar = new IsraelBusinessCalendarService();
+    const deadline = calendar.calculateResponseDeadline(new Date("2026-10-22T09:00:00+03:00"));
+    expect(localParts(deadline).hour).toBe("18");
+    const [morning, afternoon] = calendar.calculateReminderSchedule(new Date(), deadline);
+    expect(localParts(morning)).toEqual(expect.objectContaining({hour: "09", minute: "00"}));
+    expect(localParts(afternoon)).toEqual(expect.objectContaining({hour: "15", minute: "00"}));
+  });
+});
+
+const fullSnapshot: FullCaseSnapshot = {
+  publicCaseNumber: "SC-SECURE", sourceClientUpdatedAt: "2026-07-27T00:00:00.000Z", numberOfBorrowers: 2, borrowerRelationship: "MARRIED", household: {numberOfChildren: 2, childrenAges: [4, 8]},
+  borrowers: [
+    {order: 1, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", age: 41, phone: "0501234567", email: "dana@example.com", address: "רחוב סודי 1, תל אביב", residenceCity: "תל אביב", maritalStatus: "MARRIED", numberOfChildren: 2, childrenAges: [4, 8], employment: {employmentType: "SALARIED", employerName: "חברה סודית בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6, monthlyNetIncome: 20_000, hasAdditionalIncome: true, additionalIncomeType: "RENTAL_INCOME", additionalIncomeAmount: 2_500, additionalIncomeDescription: "דירה של דנה"}, liabilities: [{scope: "BORROWER", borrowerOrder: 1, type: "LOAN", otherTypeDescription: null, currentBalance: 100_000, monthlyPayment: 1_500, endDate: "2030-01-01", notes: "הלוואה של דנה 0501234567"}]},
+    {order: 2, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", age: 38, phone: "0507654321", email: "noam@example.com", address: "רחוב סודי 1, תל אביב", residenceCity: "תל אביב", maritalStatus: "MARRIED", numberOfChildren: 2, childrenAges: [4, 8], employment: {employmentType: "SELF_EMPLOYED", employerName: "עסק נועם", jobTitle: "בעלים", employmentSeniorityYears: 8, monthlyNetIncome: 15_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null}, liabilities: []}
+  ],
+  householdLiabilities: [], property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", address: "רחוב הנכס 9, תל אביב", value: 2_000_000}, loanRequest: {purpose: "SECOND_HAND_PURCHASE", requestedAmount: 1_250_000, requestedTermMonths: 240, loanToValue: 62.5}, dealDetails: "דנה לוי מבקשת מימון. dana@example.com, 123456789, רחוב הנכס 9, תל אביב, חברה סודית בע״מ", totals: {monthlyIncome: 37_500, liabilityBalance: 100_000, monthlyPayments: 1_500}, advisor: {fullName: "יועץ פרטי", businessName: "ייעוץ פרטי", phone: "0500000000", email: "advisor@example.com", website: null}, documents: []
+};
+
+describe("CaseRedactionService", () => {
+  it("removes borrower, employer, contact, address and advisor PII from every masked field", () => {
+    const result = new CaseRedactionService().redact(fullSnapshot);
+    const serialized = JSON.stringify(result.maskedSnapshot);
+    for (const prohibited of ["דנה", "נועם", "לוי", "123456789", "987654321", "0501234567", "dana@example.com", "רחוב סודי", "רחוב הנכס", "חברה סודית", "עסק נועם", "יועץ פרטי"]) expect(serialized).not.toContain(prohibited);
+    expect(serialized).toContain("לווה 1");
+    expect(serialized).toContain("SALARIED");
+    expect(serialized).toContain("1250000");
+    expect(result.redactionReport.categories).toEqual(expect.arrayContaining(["FULL_NAME", "IDENTITY_NUMBER", "EMPLOYER", "ADVISOR_DETAILS"]));
+    expect(JSON.stringify(result.redactionReport)).not.toContain("123456789");
+  });
+});
+
+describe("DeliveryTokenService", () => {
+  const service = new DeliveryTokenService(Buffer.alloc(32, 7));
+  it("derives unique personal tokens and stores/verifies only hashes", () => {
+    const first = service.deriveToken("review", "invitation-a", service.createNonce());
+    const second = service.deriveToken("review", "invitation-b", service.createNonce());
+    expect(first).not.toBe(second);
+    expect(service.verifyHash(first, service.hash(first))).toBe(true);
+    expect(service.verifyHash("wrong", service.hash(first))).toBe(false);
+    expect(service.hash(first)).not.toContain(first);
+  });
+
+  it("derives six-digit OTP values and rejects changed preview confirmations", () => {
+    expect(service.deriveOtp("INTEREST_DECISION", "submission:contact", "nonce")).toMatch(/^\d{6}$/);
+    const signed = service.signPreview(JSON.stringify({clientId: 1, companies: [2]}));
+    expect(service.verifyPreview(signed)).toContain("clientId");
+    expect(service.verifyPreview(`${signed}changed`)).toBeNull();
+  });
+});

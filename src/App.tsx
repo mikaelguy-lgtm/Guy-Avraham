@@ -26,6 +26,10 @@ import NewClientWizard from "./components/NewClientWizard";
 import AdvisorRegistrationScreen from "./components/AdvisorRegistrationScreen";
 import EmailVerificationScreen from "./components/EmailVerificationScreen";
 import AdminAdvisorsView from "./components/AdminAdvisorsView";
+import {ExternalAccessPage, ExternalPortalPage, ExternalReviewPage} from "./components/ExternalDeliveryPortal";
+import AdminFinancingCompaniesView from "./components/AdminFinancingCompaniesView";
+import AdminBusinessCalendarView from "./components/AdminBusinessCalendarView";
+import AdminCompanySubmissionsView from "./components/AdminCompanySubmissionsView";
 
 function InviteRoute({user, onAuthenticated}: {user: CurrentUser | null; onAuthenticated: (user: CurrentUser) => void}) {
   const {token = ""} = useParams();
@@ -45,6 +49,9 @@ export default function App() {
   }), []);
   if (!ready) return <main className="auth-shell"><SynCashLogo size="lg" /></main>;
   if (!user) return <Routes>
+    <Route path="/external/review/:token" element={<ExternalReviewPage />} />
+    <Route path="/external/access/:token" element={<ExternalAccessPage />} />
+    <Route path="/external/portal" element={<ExternalPortalPage />} />
     <Route path="/lender/invite/:token" element={<InviteRoute user={null} onAuthenticated={setUser} />} />
     <Route path="/register/advisor" element={<AdvisorRegistrationScreen />} />
     <Route path="/verify-email" element={<EmailVerificationScreen onAuthenticated={setUser} />} />
@@ -53,12 +60,17 @@ export default function App() {
 
   const homePath = homePathForRole(user.role);
   return <Routes>
+    <Route path="/external/review/:token" element={<ExternalReviewPage />} />
+    <Route path="/external/access/:token" element={<ExternalAccessPage />} />
+    <Route path="/external/portal" element={<ExternalPortalPage />} />
     <Route path="/lender/invite/:token" element={<InviteRoute user={user} onAuthenticated={setUser} />} />
     <Route path="/admin" element={canAccessAdmin(user.role) ? <AdminLayout user={user} /> : <Navigate to={homePath} replace />}>
       <Route index element={<AdminHome user={user} />} />
       <Route path="advisors" element={user.role === "SUPER_ADMIN" ? <AdminAdvisorsView /> : <AdminSectionPage title="יועצים" description="אין הרשאה לניהול יועצים." />} />
       <Route path="clients" element={<AdminSectionPage title="לקוחות" description="סקירת לקוחות ותיקי מימון במערכת." />} />
-      <Route path="lenders" element={<AdminSectionPage title="חברות מימון" description="ניהול חברות מימון ומשתמשי חיתום." />} />
+      <Route path="lenders" element={<AdminFinancingCompaniesView />} />
+      <Route path="company-submissions" element={<AdminCompanySubmissionsView />} />
+      <Route path="business-calendar" element={<AdminBusinessCalendarView />} />
       <Route path="settings" element={<SystemSettingsSubView user={user} />} />
       <Route path="settings/smtp" element={canAccessSmtpSettings(user.role) ? <AdminDashboard userEmail={user.email} /> : <Navigate to="/admin/settings" replace />} />
       <Route path="audit" element={user.role === "SUPER_ADMIN" ? <AdminSectionPage title="יומן פעילות" description="מעקב אחר פעולות מערכת ואירועי אבטחה." /> : <AdminSectionPage title="יומן פעילות" description="אין הרשאה לצפייה ביומן הפעילות." />} />

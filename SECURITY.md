@@ -1,5 +1,16 @@
 # Security
 
+## Secure lender delivery
+
+- Public review and full-access URLs contain random per-contact tokens; only SHA-256 hashes and encrypted derivation nonces are persisted.
+- OTP values are six digits, hashed, single-use, limited to five attempts, expire after ten minutes, and are rate-limited for resend.
+- Full data is encrypted in `case_versions.full_snapshot_encrypted`; the public masked snapshot is produced server-side by deterministic redaction.
+- MinIO remains private. Every PDF, document, and ZIP request revalidates the review token or portal session before streaming bytes.
+- Portal sessions use `HttpOnly`, production `Secure`, scoped cookies, CSRF protection, absolute expiry, and a 30-minute idle timeout.
+- External responses use `no-store`, `noindex`, `no-referrer`, frame denial, request IDs, Zod validation and Redis rate limits.
+- Email messages never attach PDFs or documents. Outbox and audit records exclude raw tokens, OTP values, full IP addresses and PII payloads.
+- Advisor routes require Firebase `ADVISOR` ownership; administration routes require `ADMIN` or `SUPER_ADMIN`.
+
 ## Controls
 
 - Firebase Admin verifies bearer tokens and checks revocation.

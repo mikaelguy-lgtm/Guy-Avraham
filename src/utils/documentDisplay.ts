@@ -1,5 +1,5 @@
-import type {DocumentRecord} from "../types";
-import {formatDocumentType} from "./formatters";
+import type {DocumentRecord} from "../types.js";
+import {formatDocumentType} from "./formatters.js";
 
 type DisplayableDocument = Pick<DocumentRecord, "customTitle" | "documentType">;
 type DownloadableDocument = DisplayableDocument & Pick<DocumentRecord, "mimeType">;

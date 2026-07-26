@@ -12,6 +12,7 @@ import {
   identityRevealRequests,
   incomeSources,
   lenderInviteTokens,
+  lenderContacts,
   lenderResponses,
   lenderSubmissions,
   lenderUsers,
@@ -897,7 +898,10 @@ export class PostgresStore implements AppStore {
   }
 
   async listLenders() {
-    return db.select({id: lenders.id, name: lenders.name, contactEmail: lenders.contactEmail}).from(lenders).where(eq(lenders.active, true));
+    return db.select({id: lenders.id, name: lenders.name, contactEmail: sql<string>`coalesce(max(${lenderContacts.email}) filter (where ${lenderContacts.active} = true and ${lenderContacts.deletedAt} is null), ${lenders.contactEmail})`})
+      .from(lenders).leftJoin(lenderContacts, eq(lenderContacts.lenderId, lenders.id))
+      .where(and(eq(lenders.active, true), isNull(lenders.deletedAt))).groupBy(lenders.id)
+      .having(sql`coalesce(max(${lenderContacts.email}) filter (where ${lenderContacts.active} = true and ${lenderContacts.deletedAt} is null), ${lenders.contactEmail}) is not null`);
   }
 
   async listClientSubmissions(clientId: number) {
@@ -991,14 +995,15 @@ export class PostgresStore implements AppStore {
       .from(lenderSubmissions).innerJoin(clients, eq(clients.id, lenderSubmissions.clientId))
       .innerJoin(lenders, eq(lenders.id, lenderSubmissions.lenderId))
       .where(and(eq(lenderSubmissions.id, submissionId), eq(clients.advisorId, advisorId))).limit(1);
-    if (!row) return null;
+    if (!row?.recipient) return null;
+    const delivery = {recipient: row.recipient, publicCaseNumber: row.publicCaseNumber};
     await db.transaction(async (transaction) => {
       await transaction.update(lenderInviteTokens).set({revokedAt: new Date()})
         .where(and(eq(lenderInviteTokens.submissionId, submissionId), isNull(lenderInviteTokens.revokedAt)));
       await transaction.insert(lenderInviteTokens).values({submissionId, tokenHash, expiresAt});
       await transaction.update(lenderSubmissions).set({status: "PENDING_DELIVERY", updatedAt: new Date()}).where(eq(lenderSubmissions.id, submissionId));
     });
-    return row;
+    return delivery;
   }
 
   async validateInvite(tokenHash: string): Promise<InviteValidation | null> {

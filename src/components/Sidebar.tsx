@@ -5,6 +5,8 @@ const links = [
   {to: "/admin/advisors", label: "יועצים"},
   {to: "/admin/clients", label: "לקוחות"},
   {to: "/admin/lenders", label: "חברות מימון"},
+  {to: "/admin/company-submissions", label: "שליחות לחברות"},
+  {to: "/admin/business-calendar", label: "לוח ימי עסקים"},
   {to: "/admin/settings", label: "הגדרות מערכת"},
   {to: "/admin/audit", label: "יומן פעילות"}
 ];

@@ -116,6 +116,25 @@ const labels: Record<string, string> = {
   ACCEPTED: "התקבלה"
 };
 
+const deliveryEventLabels: Record<string, string> = {
+  SUBMISSION_CREATED: "נוצרה שליחה", EMAIL_QUEUED: "הודעה הוכנסה לתור", EMAIL_SENT: "הודעה נשלחה לשרת הדואר", EMAIL_FAILED: "שליחת הודעה נכשלה",
+  REVIEW_LINK_OPENED: "קישור הבדיקה נפתח", MASKED_PDF_VIEWED: "נצפה PDF מוסווה", MASKED_PDF_DOWNLOADED: "הורד PDF מוסווה", REMINDER_SENT: "נשלחה תזכורת",
+  INTEREST_DECISION_STARTED: "החל תהליך בחירת מעוניינים", OTP_SENT: "נשלח קוד חד־פעמי", OTP_FAILED: "אימות הקוד נכשל", OTP_VERIFIED: "הקוד אומת",
+  COMPANY_INTERESTED: "החברה מעוניינת", COMPANY_NOT_INTERESTED: "החברה אינה מעוניינת", COMPANY_RESPONSE_EXPIRED: "מועד התגובה פג", FULL_ACCESS_GRANTED: "נפתחה גישה מלאה",
+  FULL_ACCESS_OPENED: "הפורטל המלא נפתח", FULL_PDF_VIEWED: "נצפה PDF מלא", FULL_PDF_DOWNLOADED: "הורד PDF מלא", DOCUMENT_VIEWED: "נצפה מסמך", DOCUMENT_DOWNLOADED: "הורד מסמך",
+  FULL_CASE_ZIP_DOWNLOADED: "הורד תיק מלא", FULL_ACCESS_EXPIRED: "הגישה המלאה פגה", ADMIN_ACCESS_EXTENDED: "מנהל האריך את הגישה", ADMIN_ACCESS_REVOKED: "מנהל ביטל את הגישה", INVITATION_CANCELLED: "ההזמנה בוטלה"
+};
+
+const deliveryStatusLabels: Record<string, string> = {PENDING: "ממתין", QUEUED: "בתור לשליחה", PARTIALLY_SENT: "נשלח חלקית", SENT: "נשלח לשרת הדואר", FAILED: "שליחה נכשלה"};
+const decisionStatusLabels: Record<string, string> = {PENDING: "ממתינה לתגובה", PENDING_VERIFICATION: "ממתינה לאימות", INTERESTED: "מעוניינת", NOT_INTERESTED: "לא מעוניינת", EXPIRED: "פג תוקף", CANCELLED: "בוטלה"};
+const accessStatusLabels: Record<string, string> = {NONE: "ללא גישה", ACTIVE: "גישה מלאה פעילה", EXPIRED: "הגישה פגה", REVOKED: "הגישה בוטלה"};
+const invitationStatusLabels: Record<string, string> = {QUEUED: "בתור לשליחה", SENT: "נשלח", FAILED: "נכשל", OPENED: "נפתח", CLOSED: "נסגר", EXPIRED: "פג תוקף"};
+export const formatDeliveryStatus = (value: string) => deliveryStatusLabels[value] ?? "מצב לא ידוע";
+export const formatDecisionStatus = (value: string) => decisionStatusLabels[value] ?? "מצב לא ידוע";
+export const formatAccessStatus = (value: string) => accessStatusLabels[value] ?? "מצב לא ידוע";
+export const formatInvitationStatus = (value: string) => invitationStatusLabels[value] ?? "מצב לא ידוע";
+export const formatDeliveryEvent = (value: string) => deliveryEventLabels[value] ?? "אירוע מערכת";
+
 export const formatUserRole = (value: UserRole | string) => labels[value] ?? "משתמש מערכת";
 export const formatUserStatus = (value: string) => labels[value] ?? "לא ידוע";
 export const formatClientStatus = (value: string) => labels[value] ?? "בטיפול";

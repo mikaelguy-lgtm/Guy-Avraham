@@ -28,6 +28,15 @@ export const submissionStatusEnum = pgEnum("submission_status", [
 export const responseTypeEnum = pgEnum("response_type", ["MESSAGE", "MORE_INFO_REQUEST", "INTERESTED", "DECLINED"]);
 export const offerStatusEnum = pgEnum("offer_status", ["DRAFT", "SUBMITTED", "UPDATED", "WITHDRAWN", "ACCEPTED", "REJECTED", "EXPIRED"]);
 export const identityRequestStatusEnum = pgEnum("identity_request_status", ["PENDING", "PARTIALLY_APPROVED", "APPROVED", "REJECTED", "CANCELLED"]);
+export const businessCalendarExceptionTypeEnum = pgEnum("business_calendar_exception_type", ["HOLIDAY", "NON_WORKING_DAY", "FORCED_WORKING_DAY"]);
+export const caseVersionStatusEnum = pgEnum("case_version_status", ["CREATING", "READY", "FAILED", "ARCHIVED"]);
+export const companyDeliveryStatusEnum = pgEnum("company_delivery_status", ["PENDING", "QUEUED", "PARTIALLY_SENT", "SENT", "FAILED"]);
+export const companyDecisionStatusEnum = pgEnum("company_decision_status", ["PENDING", "PENDING_VERIFICATION", "INTERESTED", "NOT_INTERESTED", "EXPIRED", "CANCELLED"]);
+export const companyAccessStatusEnum = pgEnum("company_access_status", ["NONE", "ACTIVE", "EXPIRED", "REVOKED"]);
+export const contactInvitationStatusEnum = pgEnum("contact_invitation_status", ["PENDING", "QUEUED", "SENT", "FAILED", "OPENED", "CLOSED", "EXPIRED"]);
+export const otpPurposeEnum = pgEnum("otp_purpose", ["INTEREST_DECISION", "PORTAL_ACCESS"]);
+export const outboxStatusEnum = pgEnum("outbox_status", ["PENDING", "PROCESSING", "SENT", "FAILED", "CANCELLED"]);
+export const submissionActorTypeEnum = pgEnum("submission_actor_type", ["ADVISOR", "ADMIN", "COMPANY_CONTACT", "SYSTEM"]);
 
 const timestamps = {
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow(),
@@ -64,8 +73,17 @@ export const lenders = pgTable("lenders", {
   id: serial("id").primaryKey(),
   name: varchar("name", {length: 200}).notNull(),
   slug: varchar("slug", {length: 100}).notNull().unique(),
-  contactEmail: varchar("contact_email", {length: 320}).notNull(),
+  contactEmail: varchar("contact_email", {length: 320}),
+  legalName: varchar("legal_name", {length: 250}),
+  companyNumber: varchar("company_number", {length: 50}),
+  logoStorageKey: varchar("logo_storage_key", {length: 512}),
+  phone: varchar("phone", {length: 50}),
+  address: text("address"),
+  website: varchar("website", {length: 500}),
+  activityAreas: jsonb("activity_areas").$type<string[]>().notNull().default([]),
+  adminNotesEncrypted: text("admin_notes_encrypted"),
   active: boolean("active").notNull().default(true),
+  deletedAt: timestamp("deleted_at", {withTimezone: true}),
   ...timestamps
 });
 
@@ -375,3 +393,205 @@ export const systemSettings = pgTable("system_settings", {
   updatedByUserId: integer("updated_by_user_id").references(() => users.id),
   ...timestamps
 });
+
+export const lenderContacts = pgTable("lender_contacts", {
+  id: serial("id").primaryKey(),
+  lenderId: integer("lender_id").notNull().references(() => lenders.id),
+  firstName: varchar("first_name", {length: 100}).notNull(),
+  lastName: varchar("last_name", {length: 100}).notNull(),
+  roleTitle: varchar("role_title", {length: 150}).notNull(),
+  email: varchar("email", {length: 320}).notNull(),
+  emailNormalized: varchar("email_normalized", {length: 320}).notNull(),
+  phone: varchar("phone", {length: 50}),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  active: boolean("active").notNull().default(true),
+  deletedAt: timestamp("deleted_at", {withTimezone: true}),
+  ...timestamps
+}, (table) => [
+  uniqueIndex("lender_contacts_email_uq").on(table.lenderId, table.emailNormalized).where(sql`${table.deletedAt} is null`),
+  index("lender_contacts_active_idx").on(table.lenderId, table.active, table.deletedAt)
+]);
+
+export const businessCalendarExceptions = pgTable("business_calendar_exceptions", {
+  id: serial("id").primaryKey(),
+  exceptionDate: date("exception_date").notNull(),
+  type: businessCalendarExceptionTypeEnum("type").notNull(),
+  title: varchar("title", {length: 200}).notNull(),
+  source: varchar("source", {length: 200}).notNull(),
+  createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+  ...timestamps
+}, (table) => [uniqueIndex("business_calendar_date_uq").on(table.exceptionDate)]);
+
+export const deliveryBatches = pgTable("delivery_batches", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  advisorId: integer("advisor_id").notNull().references(() => advisorProfiles.id),
+  idempotencyKey: varchar("idempotency_key", {length: 100}).notNull(),
+  createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+  ...timestamps
+}, (table) => [uniqueIndex("delivery_batches_advisor_idempotency_uq").on(table.advisorId, table.idempotencyKey)]);
+
+export const caseVersions = pgTable("case_versions", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  versionNumber: integer("version_number").notNull(),
+  advisorId: integer("advisor_id").notNull().references(() => advisorProfiles.id),
+  createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+  sourceClientUpdatedAt: timestamp("source_client_updated_at", {withTimezone: true}).notNull(),
+  fullSnapshotEncrypted: text("full_snapshot_encrypted").notNull(),
+  maskedSnapshot: jsonb("masked_snapshot").notNull(),
+  maskedPdfObjectKey: varchar("masked_pdf_object_key", {length: 512}).notNull(),
+  fullPdfObjectKey: varchar("full_pdf_object_key", {length: 512}).notNull(),
+  redactionReport: jsonb("redaction_report").notNull(),
+  contentHash: varchar("content_hash", {length: 64}).notNull(),
+  status: caseVersionStatusEnum("status").notNull().default("CREATING"),
+  createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
+}, (table) => [
+  uniqueIndex("case_versions_client_version_uq").on(table.clientId, table.versionNumber),
+  index("case_versions_client_idx").on(table.clientId)
+]);
+
+export const caseVersionDocuments = pgTable("case_version_documents", {
+  id: serial("id").primaryKey(),
+  caseVersionId: integer("case_version_id").notNull().references(() => caseVersions.id),
+  documentId: integer("document_id").notNull().references(() => documents.id),
+  immutableObjectKey: varchar("immutable_object_key", {length: 512}).notNull().unique(),
+  documentType: varchar("document_type", {length: 80}).notNull(),
+  customTitle: varchar("custom_title", {length: 255}),
+  borrowerId: integer("borrower_id").references(() => borrowers.id),
+  mimeType: varchar("mime_type", {length: 100}).notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  checksumSha256: varchar("checksum_sha256", {length: 64}).notNull(),
+  createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
+}, (table) => [
+  uniqueIndex("case_version_documents_version_document_uq").on(table.caseVersionId, table.documentId),
+  index("case_version_documents_version_idx").on(table.caseVersionId)
+]);
+
+export const companySubmissions = pgTable("company_submissions", {
+  id: serial("id").primaryKey(),
+  publicId: varchar("public_id", {length: 64}).notNull().unique(),
+  caseVersionId: integer("case_version_id").notNull().references(() => caseVersions.id),
+  companyId: integer("company_id").notNull().references(() => lenders.id),
+  advisorId: integer("advisor_id").notNull().references(() => advisorProfiles.id),
+  batchId: integer("batch_id").notNull().references(() => deliveryBatches.id),
+  deliveryStatus: companyDeliveryStatusEnum("delivery_status").notNull().default("PENDING"),
+  decisionStatus: companyDecisionStatusEnum("decision_status").notNull().default("PENDING"),
+  accessStatus: companyAccessStatusEnum("access_status").notNull().default("NONE"),
+  responseDeadlineAt: timestamp("response_deadline_at", {withTimezone: true}).notNull(),
+  decisionContactId: integer("decision_contact_id").references(() => lenderContacts.id),
+  decisionAt: timestamp("decision_at", {withTimezone: true}),
+  fullAccessStartsAt: timestamp("full_access_starts_at", {withTimezone: true}),
+  fullAccessExpiresAt: timestamp("full_access_expires_at", {withTimezone: true}),
+  cancelledAt: timestamp("cancelled_at", {withTimezone: true}),
+  cancellationReason: varchar("cancellation_reason", {length: 500}),
+  ...timestamps
+}, (table) => [
+  uniqueIndex("company_submissions_version_company_uq").on(table.caseVersionId, table.companyId),
+  index("company_submissions_client_status_idx").on(table.advisorId, table.decisionStatus),
+  index("company_submissions_deadline_idx").on(table.decisionStatus, table.responseDeadlineAt)
+]);
+
+export const submissionContactInvitations = pgTable("submission_contact_invitations", {
+  id: serial("id").primaryKey(),
+  publicId: varchar("public_id", {length: 64}).notNull().unique(),
+  companySubmissionId: integer("company_submission_id").notNull().references(() => companySubmissions.id),
+  contactId: integer("contact_id").notNull().references(() => lenderContacts.id),
+  tokenHash: varchar("token_hash", {length: 64}).notNull().unique(),
+  tokenNonce: varchar("token_nonce", {length: 100}).notNull(),
+  tokenExpiresAt: timestamp("token_expires_at", {withTimezone: true}).notNull(),
+  status: contactInvitationStatusEnum("status").notNull().default("PENDING"),
+  emailQueuedAt: timestamp("email_queued_at", {withTimezone: true}),
+  emailSentAt: timestamp("email_sent_at", {withTimezone: true}),
+  emailFailedAt: timestamp("email_failed_at", {withTimezone: true}),
+  emailFailureReason: varchar("email_failure_reason", {length: 200}),
+  openedAt: timestamp("opened_at", {withTimezone: true}),
+  lastOpenedAt: timestamp("last_opened_at", {withTimezone: true}),
+  openCount: integer("open_count").notNull().default(0),
+  maskedPdfViewedAt: timestamp("masked_pdf_viewed_at", {withTimezone: true}),
+  maskedPdfDownloadedAt: timestamp("masked_pdf_downloaded_at", {withTimezone: true}),
+  reminderOneSentAt: timestamp("reminder_one_sent_at", {withTimezone: true}),
+  reminderTwoSentAt: timestamp("reminder_two_sent_at", {withTimezone: true}),
+  closedAt: timestamp("closed_at", {withTimezone: true}),
+  closedReason: varchar("closed_reason", {length: 100}),
+  ...timestamps
+}, (table) => [
+  uniqueIndex("submission_contact_invitation_uq").on(table.companySubmissionId, table.contactId),
+  index("submission_contact_token_idx").on(table.tokenHash)
+]);
+
+export const companyPortalAccessGrants = pgTable("company_portal_access_grants", {
+  id: serial("id").primaryKey(),
+  companySubmissionId: integer("company_submission_id").notNull().references(() => companySubmissions.id),
+  contactId: integer("contact_id").notNull().references(() => lenderContacts.id),
+  accessTokenHash: varchar("access_token_hash", {length: 64}).notNull().unique(),
+  tokenNonce: varchar("token_nonce", {length: 100}).notNull(),
+  expiresAt: timestamp("expires_at", {withTimezone: true}).notNull(),
+  revokedAt: timestamp("revoked_at", {withTimezone: true}),
+  firstAuthenticatedAt: timestamp("first_authenticated_at", {withTimezone: true}),
+  lastAuthenticatedAt: timestamp("last_authenticated_at", {withTimezone: true}),
+  ...timestamps
+}, (table) => [uniqueIndex("company_portal_grant_contact_uq").on(table.companySubmissionId, table.contactId)]);
+
+export const otpChallenges = pgTable("otp_challenges", {
+  id: serial("id").primaryKey(),
+  purpose: otpPurposeEnum("purpose").notNull(),
+  companySubmissionId: integer("company_submission_id").notNull().references(() => companySubmissions.id),
+  contactId: integer("contact_id").notNull().references(() => lenderContacts.id),
+  invitationId: integer("invitation_id").references(() => submissionContactInvitations.id),
+  accessGrantId: integer("access_grant_id").references(() => companyPortalAccessGrants.id),
+  codeHash: varchar("code_hash", {length: 64}).notNull(),
+  codeNonce: varchar("code_nonce", {length: 100}).notNull(),
+  expiresAt: timestamp("expires_at", {withTimezone: true}).notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  maxAttempts: integer("max_attempts").notNull().default(5),
+  usedAt: timestamp("used_at", {withTimezone: true}),
+  cancelledAt: timestamp("cancelled_at", {withTimezone: true}),
+  lastSentAt: timestamp("last_sent_at", {withTimezone: true}).notNull(),
+  ...timestamps
+}, (table) => [index("otp_challenges_active_idx").on(table.companySubmissionId, table.contactId, table.purpose, table.expiresAt)]);
+
+export const externalPortalSessions = pgTable("external_portal_sessions", {
+  id: serial("id").primaryKey(),
+  accessGrantId: integer("access_grant_id").notNull().references(() => companyPortalAccessGrants.id),
+  sessionTokenHash: varchar("session_token_hash", {length: 64}).notNull().unique(),
+  expiresAt: timestamp("expires_at", {withTimezone: true}).notNull(),
+  idleExpiresAt: timestamp("idle_expires_at", {withTimezone: true}).notNull(),
+  lastSeenAt: timestamp("last_seen_at", {withTimezone: true}).notNull(),
+  revokedAt: timestamp("revoked_at", {withTimezone: true}),
+  createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
+}, (table) => [index("external_portal_sessions_grant_idx").on(table.accessGrantId)]);
+
+export const submissionEvents = pgTable("submission_events", {
+  id: serial("id").primaryKey(),
+  companySubmissionId: integer("company_submission_id").notNull().references(() => companySubmissions.id),
+  contactInvitationId: integer("contact_invitation_id").references(() => submissionContactInvitations.id),
+  contactId: integer("contact_id").references(() => lenderContacts.id),
+  actorType: submissionActorTypeEnum("actor_type").notNull(),
+  actorId: integer("actor_id"),
+  eventType: varchar("event_type", {length: 100}).notNull(),
+  metadataSafe: jsonb("metadata_safe").notNull().default({}),
+  ipHash: varchar("ip_hash", {length: 64}),
+  userAgentSummary: varchar("user_agent_summary", {length: 255}),
+  requestId: varchar("request_id", {length: 64}),
+  createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
+}, (table) => [index("submission_events_submission_idx").on(table.companySubmissionId, table.createdAt)]);
+
+export const emailOutbox = pgTable("email_outbox", {
+  id: serial("id").primaryKey(),
+  idempotencyKey: varchar("idempotency_key", {length: 160}).notNull().unique(),
+  template: varchar("template", {length: 100}).notNull(),
+  recipient: varchar("recipient", {length: 320}).notNull(),
+  payload: jsonb("payload").notNull(),
+  status: outboxStatusEnum("status").notNull().default("PENDING"),
+  attempts: integer("attempts").notNull().default(0),
+  availableAt: timestamp("available_at", {withTimezone: true}).notNull().defaultNow(),
+  lockedAt: timestamp("locked_at", {withTimezone: true}),
+  sentAt: timestamp("sent_at", {withTimezone: true}),
+  messageId: varchar("message_id", {length: 255}),
+  sanitizedError: varchar("sanitized_error", {length: 200}),
+  companySubmissionId: integer("company_submission_id").references(() => companySubmissions.id),
+  invitationId: integer("invitation_id").references(() => submissionContactInvitations.id),
+  createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", {withTimezone: true}).notNull().defaultNow()
+}, (table) => [index("email_outbox_pending_idx").on(table.status, table.availableAt)]);

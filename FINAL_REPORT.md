@@ -422,3 +422,45 @@ docker compose ps         PASS — 7/7 healthy
 ```
 
 `npm ci` דיווח על 15 חולשות Moderate בתלויות צד שלישי אך הסתיים בהצלחה; לא הופעל `npm audit fix --force` כדי להימנע משדרוגים שוברים שאינם חלק מהשינוי. כתובת הבדיקה המקומית: `http://localhost:5173`.
+
+## 15. מסירת תיק מאובטחת לחברות מימון
+
+### מימוש
+
+- הורחבה טבלת `lenders` ונוספו אנשי קשר מרובים, לוח ימי עסקים ישראלי, Batch, גרסאות תיק immutable, מסמכי גרסה, Submission ברמת חברה, הזמנות אישיות, Access Grants, OTP, Sessions, Timeline ו־Email Outbox.
+- Migration לא הרסנית: `drizzle/0007_right_retro_girl.sql`; `drizzle/0008_mysterious_loners.sql` מסנכרנת את האינדקס הייחודי החלקי של מיילי אנשי הקשר. טבלאות Legacy, הצעות ובקשות חשיפה נשמרו.
+- Snapshot מלא נשמר מוצפן; Snapshot מוסווה ו־PDF מוסווה נוצרים בשרת באמצעות הסוואה דטרמיניסטית של שמות, זהויות, טלפונים, מיילים, כתובות, מעסיקים, פרטי יועץ וטקסטים חופשיים.
+- מסמכי הגרסה מועתקים לנתיב MinIO פרטי ו־immutable. אין URL ציבורי קבוע ואין קבצים מצורפים למייל.
+- לכל איש קשר נוצר קישור אישי שונה. החלטת `INTERESTED` נעשית סופית רק אחרי OTP; החלטת `NOT_INTERESTED` או OTP ראשון שהושלם קובעים Transactionally עבור החברה כולה.
+- לאחר התעניינות נוצרת גישה אישית לכל איש קשר לשבעה ימים. הכניסה דורשת OTP ו־Session `HttpOnly` עם idle timeout של 30 דקות.
+- הפורטל המלא כולל פרטי לווים, הכנסות, התחייבויות, נכס, פירוט עסקה, פרטי יועץ, PDF מלא, מסמכים ו־ZIP; אין בו הגשת הצעה.
+- מועד תגובה מחושב לשעה 18:00 ביום העסקים הישראלי השני, עם חריגי מנהל ותזכורות 09:00 ו־15:00 ביום הפקיעה.
+- SSE מאומת מעדכן את היועץ בעל התיק ואת המנהלים. Worker עם PostgreSQL advisory lock מטפל ב־Outbox, עד שלושה retries, תזכורות, פקיעות וניקוי Sessions/OTP.
+
+### ממשקים ו־Routes
+
+- יועץ: `/api/advisor/financing-companies`, `/api/clients/:clientId/delivery/preview`, `/api/clients/:clientId/delivery/send`, `/api/clients/:clientId/company-responses`.
+- ציבורי: `/api/external/review/:token/*`, `/api/external/access/:token/*`, `/api/external/portal/*`.
+- מנהל: `/api/admin/financing-companies/*`, `/api/admin/business-calendar/*`, `/api/admin/company-submissions/*`, כולל צפייה מאובטחת ב־PDF מוסווה ומלא.
+- UI: בחירת חברות ותצוגה מקדימה בכרטיס הלקוח, כרטיסיית „תגובות חברות”, ניהול חברות/לוח עסקים/שליחות באדמין, ועמודי `/external/review/:token`, `/external/access/:token`, `/external/portal`.
+
+### אימות
+
+```text
+npm run db:generate       PASS — no schema changes pending
+npm run db:migrate        PASS — inside API container
+npm run db:check          PASS — database syncash
+npm run typecheck         PASS
+npm run lint              PASS
+npm run test:unit         PASS — 82/82
+npm run test:integration  PASS — 80/80
+npm run test:e2e #1       PASS — 10/10
+npm run test:e2e #2       PASS — 10/10
+npm run test:e2e #3       PASS — 10/10
+npm run build             PASS — production bundle safety scan passed
+docker compose ps         PASS — 7/7 healthy
+```
+
+Playwright אימת חברה עם שני אנשי קשר, שני מיילים ללא Attachments, קישורים שונים, PDF מוסווה ללא PII, OTP, החלטה ראשונה שהושלמה, סגירת קישור מתחרה, פורטל מלא, PDF מלא, מסמך יחיד, ZIP, Timeline ו־Admin. `npm audit fix` בטוח עודכן ללא `--force`; נותרו Advisories בשרשרת Firebase/Google tooling וב־React Router RSC שאינו בשימוש ב־SPA. תיקון מלא שלהם דורש שינוי breaking ולכן לא הופעל אוטומטית.
+
+כתובות מקומיות: מנהל `http://localhost:5173/admin`, יועץ `http://localhost:5173/advisor`. קישורי בדיקה מוסווים ופורטל מלא הם אישיים וקצרי־תוקף ונלקחים ממייל Mailpit ב־`http://localhost:8025`; הם אינם מתועדים או מודפסים.

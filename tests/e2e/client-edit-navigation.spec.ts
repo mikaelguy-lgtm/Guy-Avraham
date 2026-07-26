@@ -74,7 +74,7 @@ test("focused and full client editing use accessible full-page routes", async ({
     await expect(page.getByText("2,100,000", {exact: false}).first()).toBeVisible();
 
     await page.getByRole("button", {name: "פירוט עסקה", exact: true}).click();
-    await page.getByRole("button", {name: "עריכת פירוט עסקה"}).click();
+    await page.getByRole("button", {name: "עריכת סעיף פירוט העסקה"}).click();
     await page.getByLabel("פירוט עסקה").fill("פירוט עסקה מעודכן במסלול ממוקד");
     await page.getByRole("button", {name: "שמירת שינויים"}).click();
     await expect(page).toHaveURL(new RegExp(`tab=deal-details`));
@@ -101,6 +101,6 @@ test("focused and full client editing use accessible full-page routes", async ({
       await expect(page.getByRole("dialog")).toHaveCount(0);
     }
   } finally {
-    await request.delete(`http://localhost:3000/api/clients/${client.id}`, {headers: {authorization}});
+    await request.delete(`http://localhost:3000/api/clients/${client.id}`, {headers: {authorization}}).catch(() => undefined);
   }
 });

@@ -195,3 +195,128 @@ export interface NotificationRecord {
   readAt: string | null;
   createdAt: string;
 }
+
+export interface DeliveryCompany {
+  id: number;
+  name: string;
+  logoUrl: string | null;
+  activityAreas: string[];
+  activeContactCount: number;
+  lastSentAt: string | null;
+  alreadySentCurrentVersion: boolean;
+}
+
+export interface DeliveryPreview {
+  maskedSnapshot: Record<string, unknown>;
+  maskedPdfBase64: string;
+  companies: DeliveryCompany[];
+  selectedCompanyCount: number;
+  selectedContactCount: number;
+  responseDeadlineAt: string;
+  previewConfirmation: string;
+}
+
+export interface CompanyResponse {
+  publicId: string;
+  companyId: number;
+  companyName: string;
+  versionNumber: number;
+  deliveryStatus: string;
+  decisionStatus: string;
+  accessStatus: string;
+  sentAt: string;
+  responseDeadlineAt: string;
+  decisionAt: string | null;
+  fullAccessExpiresAt: string | null;
+  contactCount: number;
+  openedCount: number;
+  viewedCount: number;
+  downloadedCount: number;
+  decisionContact: {name: string; role: string; email: string; phone: string | null} | null;
+  lastActionAt: string | null;
+  timeline?: Array<{type: string; actorType?: string; metadata?: Record<string, unknown>; createdAt: string; requestId?: string}>;
+  publicCaseNumber?: string;
+  clientName?: string;
+  advisorName?: string;
+  maskedSnapshot?: Record<string, unknown>;
+  invitations?: Array<{publicId: string; status: string; contactName: string; contactRole: string; contactEmail: string; emailSentAt: string | null; emailFailedAt: string | null; openedAt: string | null; openCount: number; maskedPdfViewedAt: string | null; maskedPdfDownloadedAt: string | null; reminderOneSentAt: string | null; reminderTwoSentAt: string | null; closedAt: string | null}>;
+}
+
+export interface FinancingCompanyContact {
+  id: number;
+  firstName: string;
+  lastName: string;
+  roleTitle: string;
+  email: string;
+  phone: string | null;
+  isPrimary: boolean;
+  active: boolean;
+}
+
+export interface FinancingCompanyAdmin {
+  id: number;
+  name: string;
+  legalName: string | null;
+  companyNumber: string | null;
+  phone: string | null;
+  address: string | null;
+  website: string | null;
+  activityAreas: string[];
+  active: boolean;
+  adminNotes: string | null;
+  contacts: FinancingCompanyContact[];
+  activeContactCount: number;
+  lastSentAt: string | null;
+  submissionCount: number;
+  interestedCount: number;
+  notInterestedCount: number;
+  expiredCount: number;
+}
+
+export interface BusinessCalendarExceptionRecord {
+  id: number;
+  date: string;
+  type: "HOLIDAY" | "NON_WORKING_DAY" | "FORCED_WORKING_DAY";
+  title: string;
+  source: string;
+}
+
+export interface ExternalReview {
+  companyName: string;
+  publicCaseNumber: string;
+  versionNumber: number;
+  sentAt: string;
+  responseDeadlineAt: string;
+  deliveryStatus: string;
+  decisionStatus: string;
+  maskedSnapshot: Record<string, unknown>;
+  closed: boolean;
+  message: string | null;
+  csrfToken: string;
+}
+
+export interface ExternalAccess {
+  companyName: string;
+  publicCaseNumber: string;
+  versionNumber: number;
+  expiresAt: string;
+  requiresOtp: boolean;
+  csrfToken: string;
+}
+
+export interface ExternalPortalCase {
+  companyName: string;
+  versionNumber: number;
+  accessExpiresAt: string;
+  snapshot: Record<string, unknown>;
+  csrfToken: string;
+}
+
+export interface ExternalPortalDocument {
+  publicId: string;
+  displayName: string;
+  documentType: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+}

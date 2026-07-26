@@ -1,7 +1,7 @@
 import { createUserWithEmailAndPassword, deleteUser, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import {requireFrontendConfig} from "../config/frontend";
-import type { AdvisorAdminRecord, Client, ClientList, ClientSubmission, CurrentUser, DocumentRecord, IdentityRequest, Lender, LoanOffer, MissingRequiredDocument, NotificationRecord } from "../types";
+import type { AdvisorAdminRecord, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryCompany, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LoanOffer, MissingRequiredDocument, NotificationRecord } from "../types";
 import type { AdvisorRegistrationInput } from "../domain/advisorRegistration";
 
 const API_URL = requireFrontendConfig().apiBaseUrl;
@@ -37,6 +37,22 @@ async function publicFetch<T>(path: string, options: RequestInit = {}): Promise<
   return response.json() as Promise<T>;
 }
 
+async function externalFetch<T>(path: string, options: RequestInit = {}, csrfToken?: string): Promise<T> {
+  const headers = new Headers(options.headers);
+  if (!(options.body instanceof FormData)) headers.set("content-type", "application/json");
+  if (csrfToken) headers.set("x-csrf-token", csrfToken);
+  const response = await fetch(`${API_URL}${path}`, {...options, credentials: "include", headers});
+  if (!response.ok) throw await parseError(response);
+  if (response.status === 204) return undefined as T;
+  return response.json() as Promise<T>;
+}
+
+async function externalBlob(path: string): Promise<Blob> {
+  const response = await fetch(`${API_URL}${path}`, {credentials: "include"});
+  if (!response.ok) throw await parseError(response);
+  return response.blob();
+}
+
 export async function authFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const user = auth.currentUser;
   if (!user) throw new Error("AUTH_REQUIRED");
@@ -60,6 +76,23 @@ async function authBlob(path: string): Promise<Blob> {
   const response = await fetch(`${API_URL}${path}`, {headers: {authorization: `Bearer ${await user.getIdToken()}`}});
   if (!response.ok) throw await parseError(response);
   return response.blob();
+}
+
+export async function subscribeDeliveryEvents(signal: AbortSignal, onEvent: () => void): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) return;
+  const response = await fetch(`${API_URL}/api/delivery/events`, {headers: {authorization: `Bearer ${await user.getIdToken()}`}, signal});
+  if (!response.ok || !response.body) throw await parseError(response);
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  while (!signal.aborted) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += value;
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) if (frame.split("\n").some((line) => line.startsWith("data:"))) onEvent();
+  }
 }
 
 export const api = {
@@ -134,5 +167,41 @@ export const api = {
   adminAdvisors: () => authFetch<AdvisorAdminRecord[]>("/api/admin/advisors"),
   updateAdvisorStatus: (id: number, status: "ACTIVE" | "SUSPENDED" | "DISABLED") => authFetch<AdvisorAdminRecord>(`/api/admin/advisors/${id}/status`, {method: "PATCH", body: JSON.stringify({status})}),
   adminResendAdvisorVerification: (id: number) => authFetch<{success: true; verificationEmailSent: true}>(`/api/admin/advisors/${id}/resend-verification`, {method: "POST"}),
+  deliveryCompanies: (clientId: number) => authFetch<DeliveryCompany[]>(`/api/advisor/financing-companies?clientId=${clientId}`),
+  deliveryPreview: (clientId: number, companyIds: number[]) => authFetch<DeliveryPreview>(`/api/clients/${clientId}/delivery/preview`, {method: "POST", body: JSON.stringify({companyIds})}),
+  deliverySend: (clientId: number, values: {companyIds: number[]; idempotencyKey: string; previewConfirmation: string}) => authFetch<Record<string, unknown>>(`/api/clients/${clientId}/delivery/send`, {method: "POST", body: JSON.stringify(values)}),
+  companyResponses: (clientId: number) => authFetch<CompanyResponse[]>(`/api/clients/${clientId}/company-responses`),
+  companyResponse: (clientId: number, publicId: string) => authFetch<CompanyResponse>(`/api/clients/${clientId}/company-responses/${encodeURIComponent(publicId)}`),
+  adminFinancingCompanies: () => authFetch<FinancingCompanyAdmin[]>("/api/admin/financing-companies"),
+  createFinancingCompany: (values: Record<string, unknown>) => authFetch<FinancingCompanyAdmin>("/api/admin/financing-companies", {method: "POST", body: JSON.stringify(values)}),
+  updateFinancingCompany: (id: number, values: Record<string, unknown>) => authFetch<FinancingCompanyAdmin>(`/api/admin/financing-companies/${id}`, {method: "PATCH", body: JSON.stringify(values)}),
+  deleteFinancingCompany: (id: number) => authFetch<void>(`/api/admin/financing-companies/${id}`, {method: "DELETE"}),
+  uploadFinancingCompanyLogo: (id: number, file: File) => {const body = new FormData(); body.append("file", file); return authFetch<FinancingCompanyAdmin>(`/api/admin/financing-companies/${id}/logo`, {method: "POST", body});},
+  createFinancingContact: (companyId: number, values: Record<string, unknown>) => authFetch(`/api/admin/financing-companies/${companyId}/contacts`, {method: "POST", body: JSON.stringify(values)}),
+  updateFinancingContact: (companyId: number, contactId: number, values: Record<string, unknown>) => authFetch(`/api/admin/financing-companies/${companyId}/contacts/${contactId}`, {method: "PATCH", body: JSON.stringify(values)}),
+  deleteFinancingContact: (companyId: number, contactId: number) => authFetch<void>(`/api/admin/financing-companies/${companyId}/contacts/${contactId}`, {method: "DELETE"}),
+  businessCalendar: () => authFetch<BusinessCalendarExceptionRecord[]>("/api/admin/business-calendar"),
+  createBusinessCalendarException: (values: Record<string, unknown>) => authFetch<BusinessCalendarExceptionRecord>("/api/admin/business-calendar", {method: "POST", body: JSON.stringify(values)}),
+  updateBusinessCalendarException: (id: number, values: Record<string, unknown>) => authFetch<BusinessCalendarExceptionRecord>(`/api/admin/business-calendar/${id}`, {method: "PATCH", body: JSON.stringify(values)}),
+  deleteBusinessCalendarException: (id: number) => authFetch<void>(`/api/admin/business-calendar/${id}`, {method: "DELETE"}),
+  adminCompanySubmissions: () => authFetch<CompanyResponse[]>("/api/admin/company-submissions"),
+  adminCompanySubmission: (publicId: string) => authFetch<CompanyResponse>(`/api/admin/company-submissions/${encodeURIComponent(publicId)}`),
+  adminCompanySubmissionPdf: (publicId: string, kind: "masked-pdf" | "full-pdf") => authBlob(`/api/admin/company-submissions/${encodeURIComponent(publicId)}/${kind}`),
+  adminCompanySubmissionAction: (publicId: string, action: string, values: Record<string, unknown> = {}) => authFetch<CompanyResponse>(`/api/admin/company-submissions/${encodeURIComponent(publicId)}/${action}`, {method: "POST", body: JSON.stringify(values)}),
+  externalReview: (token: string) => externalFetch<ExternalReview>(`/api/external/review/${encodeURIComponent(token)}`),
+  externalMaskedPdf: (token: string, download = false) => externalBlob(`/api/external/review/${encodeURIComponent(token)}/masked-pdf${download ? "?download=1" : ""}`),
+  externalNotInterested: (token: string, csrfToken: string) => externalFetch<{decisionStatus: string}>(`/api/external/review/${encodeURIComponent(token)}/not-interested`, {method: "POST", body: "{}"}, csrfToken),
+  externalStartInterest: (token: string, csrfToken: string) => externalFetch<{status: string; expiresAt: string}>(`/api/external/review/${encodeURIComponent(token)}/interested/start`, {method: "POST", body: "{}"}, csrfToken),
+  externalResendInterest: (token: string, csrfToken: string) => externalFetch<{status: string; expiresAt: string}>(`/api/external/review/${encodeURIComponent(token)}/interested/resend-code`, {method: "POST", body: "{}"}, csrfToken),
+  externalVerifyInterest: (token: string, code: string, csrfToken: string) => externalFetch<{decisionStatus: string; accessStatus: string; fullAccessExpiresAt: string}>(`/api/external/review/${encodeURIComponent(token)}/interested/verify`, {method: "POST", body: JSON.stringify({code})}, csrfToken),
+  externalAccess: (token: string) => externalFetch<ExternalAccess>(`/api/external/access/${encodeURIComponent(token)}`),
+  externalSendAccessCode: (token: string, csrfToken: string) => externalFetch<{status: string; expiresAt: string}>(`/api/external/access/${encodeURIComponent(token)}/send-code`, {method: "POST", body: "{}"}, csrfToken),
+  externalVerifyAccessCode: (token: string, code: string, csrfToken: string) => externalFetch<{authenticated: true; expiresAt: string}>(`/api/external/access/${encodeURIComponent(token)}/verify-code`, {method: "POST", body: JSON.stringify({code})}, csrfToken),
+  externalPortalCase: () => externalFetch<ExternalPortalCase>("/api/external/portal/case"),
+  externalPortalDocuments: () => externalFetch<ExternalPortalDocument[]>("/api/external/portal/documents"),
+  externalPortalPdf: () => externalBlob("/api/external/portal/full-pdf"),
+  externalPortalDocument: (publicId: string, download = false) => externalBlob(`/api/external/portal/documents/${encodeURIComponent(publicId)}/${download ? "download" : "view"}`),
+  externalPortalZip: () => externalBlob("/api/external/portal/download-all"),
+  externalPortalLogout: (csrfToken: string) => externalFetch<void>("/api/external/portal/logout", {method: "POST", body: "{}"}, csrfToken),
   testEmailLogs: (recipient: string) => authFetch<Array<{recipient: string; template: string | null; messageId: string | null; status: string; sentAt: string | null; failedAt: string | null; requestId: string | null}>>(`/api/test/email-logs?recipient=${encodeURIComponent(recipient)}`)
 };

@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 import helmet from "helmet";
@@ -28,6 +28,9 @@ import type { GeminiService } from "../services/gemini.js";
 import { EncryptionService, hashToken } from "../utils/crypto.js";
 import { calculateAge } from "../utils/age.js";
 import type { SecretProvider } from "../utils/secretManager.js";
+import {DeliveryError} from "../domain/lenderDelivery.js";
+import type {LenderDeliveryApplication} from "../services/lenderDelivery.js";
+import type {DeliveryEventBroker} from "../services/deliveryEvents.js";
 
 export interface AppServices {
   env: AppEnv;
@@ -41,10 +44,17 @@ export interface AppServices {
   limiter: RateLimitStore;
   gemini: GeminiService;
   firebaseAccounts: {deleteUser(uid: string): Promise<void>};
+  delivery?: LenderDeliveryApplication;
+  deliveryEvents?: DeliveryEventBroker;
 }
 
 const asyncRoute = (handler: (request: Request, response: Response, next: NextFunction) => Promise<void>) =>
   (request: Request, response: Response, next: NextFunction): void => { void handler(request, response, next).catch(next); };
+
+function routeParam(request: Request, name: string): string {
+  const value = request.params[name];
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+}
 
 const smtpSettingsSchema = z.object({
   SMTP_HOST: z.string().trim().min(1).max(253),
@@ -58,6 +68,9 @@ const smtpSettingsSchema = z.object({
 }).strict();
 
 const advisorStatusSchema = z.object({status: z.enum(["ACTIVE", "SUSPENDED", "DISABLED"])}).strict();
+const companySchema = z.object({name: z.string().trim().min(2).max(200), legalName: z.string().trim().max(250).nullable().optional(), companyNumber: z.string().trim().max(50).nullable().optional(), phone: z.string().trim().max(50).nullable().optional(), address: z.string().trim().max(500).nullable().optional(), website: z.string().trim().url().max(500).nullable().optional(), activityAreas: z.array(z.string().trim().min(1).max(100)).max(30), adminNotes: z.string().trim().max(4000).nullable().optional(), active: z.boolean()}).strict();
+const contactSchema = z.object({firstName: z.string().trim().min(1).max(100), lastName: z.string().trim().min(1).max(100), roleTitle: z.string().trim().min(1).max(150), email: z.string().trim().email().max(320), phone: z.string().trim().max(50).nullable().optional(), isPrimary: z.boolean(), active: z.boolean()}).strict();
+const calendarSchema = z.object({date: z.iso.date(), type: z.enum(["HOLIDAY", "NON_WORKING_DAY", "FORCED_WORKING_DAY"]), title: z.string().trim().min(1).max(200), source: z.string().trim().min(1).max(200)}).strict();
 
 function publicAdvisorAccount(account: Awaited<ReturnType<AppStore["getAdvisorAccount"]>>, encryption: EncryptionService) {
   if (!account) return null;
@@ -314,6 +327,20 @@ function detectMime(file: Express.Multer.File): string | null {
   if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
   return null;
+}
+
+function cookieValue(request: Request, name: string): string {
+  const cookies = request.header("cookie")?.split(";") ?? [];
+  for (const cookie of cookies) {
+    const [key, ...value] = cookie.trim().split("=");
+    if (key === name) return decodeURIComponent(value.join("="));
+  }
+  return "";
+}
+
+function valuesEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left); const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 export function createApp(services: AppServices) {
@@ -916,6 +943,92 @@ export function createApp(services: AppServices) {
     response.json({read: true});
   }));
 
+  if (services.delivery) {
+    const delivery = services.delivery;
+    const context = (request: Request) => ({requestId: request.requestId, ip: request.ip, userAgent: request.header("user-agent")});
+    const advisorActor = (request: Request) => {
+      if (!request.user?.advisorId) throw new DeliveryError("ADVISOR_PROFILE_REQUIRED", 403, "נדרש פרופיל יועץ פעיל.");
+      return {userId: request.user.id, advisorId: request.user.advisorId};
+    };
+    const adminActor = (request: Request) => ({userId: request.user!.id});
+    const csrfCookie = "syncash_external_csrf";
+    const portalCookie = "syncash_portal_session";
+    const issueCsrf = (response: Response) => {
+      const value = randomBytes(24).toString("base64url");
+      response.cookie(csrfCookie, value, {httpOnly: false, secure: services.env.NODE_ENV === "production", sameSite: services.env.NODE_ENV === "production" ? "none" : "lax", path: "/api/external", maxAge: 30 * 60_000});
+      return value;
+    };
+    const requireExternalCsrf = (request: Request, response: Response, next: NextFunction) => {
+      const cookie = cookieValue(request, csrfCookie); const header = request.header("x-csrf-token") ?? "";
+      if (!cookie || !header || !valuesEqual(cookie, header)) { response.status(403).json({error: "CSRF_VALIDATION_FAILED", message: "אימות הבקשה נכשל.", requestId: request.requestId}); return; }
+      next();
+    };
+    app.use("/api/external", (_request, response, next) => {
+      response.setHeader("Cache-Control", "no-store, max-age=0"); response.setHeader("Pragma", "no-cache"); response.setHeader("X-Robots-Tag", "noindex, nofollow"); response.setHeader("Referrer-Policy", "no-referrer"); response.setHeader("X-Frame-Options", "DENY"); next();
+    });
+
+    app.get("/api/advisor/financing-companies", ...authenticated, auth.requireRole("ADVISOR"), asyncRoute(async (request, response) => {
+      const clientId = z.coerce.number().int().positive().parse(request.query.clientId); response.json(await delivery.listAdvisorCompanies(clientId, advisorActor(request)));
+    }));
+    app.post("/api/clients/:clientId/delivery/preview", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+      const input = z.object({companyIds: z.array(z.number().int().positive()).min(1).max(30)}).strict().parse(request.body); response.json(await delivery.preview(request.authorizedClientId!, input.companyIds, advisorActor(request)));
+    }));
+    app.post("/api/clients/:clientId/delivery/send", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, rateLimit(services.limiter, "lender-delivery-send", 10, 60), asyncRoute(async (request, response) => {
+      const input = z.object({companyIds: z.array(z.number().int().positive()).min(1).max(30), idempotencyKey: z.string().uuid(), previewConfirmation: z.string().min(40).max(4000)}).strict().parse(request.body); response.status(201).json(await delivery.send(request.authorizedClientId!, input, advisorActor(request), context(request)));
+    }));
+    app.get("/api/clients/:clientId/company-responses", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.listClientResponses(request.authorizedClientId!, advisorActor(request))); }));
+    app.get("/api/clients/:clientId/company-responses/:submissionId", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.getClientResponse(request.authorizedClientId!, routeParam(request, "submissionId"), advisorActor(request))); }));
+
+    app.get("/api/admin/financing-companies", ...authenticated, auth.requireAdmin, asyncRoute(async (_request, response) => { response.json(await delivery.listCompaniesForAdmin()); }));
+    app.post("/api/admin/financing-companies", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.status(201).json(await delivery.createCompany(companySchema.parse(request.body), adminActor(request), context(request))); }));
+    app.patch("/api/admin/financing-companies/:id", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.updateCompany(Number(request.params.id), companySchema.partial().strict().parse(request.body), adminActor(request), context(request))); }));
+    app.delete("/api/admin/financing-companies/:id", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { await delivery.deleteCompany(Number(request.params.id), adminActor(request), context(request)); response.status(204).end(); }));
+    app.post("/api/admin/financing-companies/:id/logo", ...authenticated, auth.requireAdmin, upload.single("file"), asyncRoute(async (request, response) => {
+      if (!request.file || request.file.size > 2 * 1024 * 1024) throw new DeliveryError("INVALID_COMPANY_LOGO", 422, "יש להעלות לוגו PNG או JPEG עד 2MB.");
+      const mimeType = detectMime(request.file);
+      if (mimeType !== "image/png" && mimeType !== "image/jpeg") throw new DeliveryError("INVALID_COMPANY_LOGO", 422, "יש להעלות לוגו PNG או JPEG תקין.");
+      response.json(await delivery.uploadCompanyLogo(Number(request.params.id), request.file.buffer, mimeType, adminActor(request), context(request)));
+    }));
+    app.post("/api/admin/financing-companies/:id/contacts", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.status(201).json(await delivery.createContact(Number(request.params.id), contactSchema.parse(request.body), adminActor(request), context(request))); }));
+    app.patch("/api/admin/financing-companies/:id/contacts/:contactId", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.updateContact(Number(request.params.id), Number(request.params.contactId), contactSchema.partial().strict().parse(request.body), adminActor(request), context(request))); }));
+    app.delete("/api/admin/financing-companies/:id/contacts/:contactId", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { await delivery.deleteContact(Number(request.params.id), Number(request.params.contactId), adminActor(request), context(request)); response.status(204).end(); }));
+    app.get("/api/admin/business-calendar", ...authenticated, auth.requireAdmin, asyncRoute(async (_request, response) => { response.json(await delivery.listCalendar()); }));
+    app.post("/api/admin/business-calendar", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.status(201).json(await delivery.createCalendarException(calendarSchema.parse(request.body), adminActor(request), context(request))); }));
+    app.patch("/api/admin/business-calendar/:id", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.updateCalendarException(Number(request.params.id), calendarSchema.parse(request.body), adminActor(request), context(request))); }));
+    app.delete("/api/admin/business-calendar/:id", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { await delivery.deleteCalendarException(Number(request.params.id), adminActor(request), context(request)); response.status(204).end(); }));
+    app.get("/api/admin/company-submissions", ...authenticated, auth.requireAdmin, asyncRoute(async (_request, response) => { response.json(await delivery.listAdminSubmissions()); }));
+    app.get("/api/admin/company-submissions/:id", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.getAdminSubmission(routeParam(request, "id"))); }));
+    for (const [route, kind] of [["masked-pdf", "masked"], ["full-pdf", "full"]] as const) app.get(`/api/admin/company-submissions/:id/${route}`, ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => {
+      const file = await delivery.getAdminPdf(routeParam(request, "id"), kind, adminActor(request), context(request));
+      response.type("application/pdf").setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body);
+    }));
+    for (const action of ["resend-failed", "send-reminder", "cancel-invitation", "reissue", "extend-access", "revoke-access"]) app.post(`/api/admin/company-submissions/:id/${action}`, ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.adminAction(routeParam(request, "id"), action, z.record(z.string(), z.unknown()).parse(request.body ?? {}), adminActor(request), context(request))); }));
+
+    app.get("/api/delivery/events", ...authenticated, asyncRoute(async (request, response) => {
+      if (!services.deliveryEvents) throw new DeliveryError("REALTIME_UNAVAILABLE", 503, "עדכונים בזמן אמת אינם זמינים כרגע.");
+      response.writeHead(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no"});
+      const unsubscribe = services.deliveryEvents.subscribe({userId: request.user!.id, advisorId: request.user!.advisorId, isAdmin: request.user!.role === "ADMIN" || request.user!.role === "SUPER_ADMIN", response});
+      const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 20_000); request.on("close", () => {clearInterval(heartbeat); unsubscribe();});
+    }));
+
+    app.get("/api/external/review/:token", rateLimit(services.limiter, "external-review", 60, 60), asyncRoute(async (request, response) => { const result = await delivery.getReview(routeParam(request, "token"), context(request)); response.json({...result as object, csrfToken: issueCsrf(response)}); }));
+    app.get("/api/external/review/:token/masked-pdf", rateLimit(services.limiter, "external-masked-pdf", 30, 60), asyncRoute(async (request, response) => { const file = await delivery.getMaskedPdf(routeParam(request, "token"), request.query.download === "1", context(request)); response.type("application/pdf").setHeader("Content-Disposition", `${request.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
+    app.post("/api/external/review/:token/not-interested", requireExternalCsrf, rateLimit(services.limiter, "external-decision", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.decideNotInterested(routeParam(request, "token"), context(request))); }));
+    app.post("/api/external/review/:token/interested/start", requireExternalCsrf, rateLimit(services.limiter, "external-otp-start", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.startInterest(routeParam(request, "token"), context(request))); }));
+    app.post("/api/external/review/:token/interested/resend-code", requireExternalCsrf, rateLimit(services.limiter, "external-otp-resend", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.resendInterestCode(routeParam(request, "token"), context(request))); }));
+    app.post("/api/external/review/:token/interested/verify", requireExternalCsrf, rateLimit(services.limiter, "external-otp-verify", 20, 60), asyncRoute(async (request, response) => { const {code} = z.object({code: z.string().regex(/^\d{6}$/)}).strict().parse(request.body); response.json(await delivery.verifyInterest(routeParam(request, "token"), code, context(request))); }));
+    app.get("/api/external/access/:token", rateLimit(services.limiter, "external-access", 60, 60), asyncRoute(async (request, response) => { const result = await delivery.getAccess(routeParam(request, "token")); response.json({...result as object, csrfToken: issueCsrf(response)}); }));
+    app.post("/api/external/access/:token/send-code", requireExternalCsrf, rateLimit(services.limiter, "external-access-code", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.sendAccessCode(routeParam(request, "token"), context(request))); }));
+    app.post("/api/external/access/:token/verify-code", requireExternalCsrf, rateLimit(services.limiter, "external-access-verify", 20, 60), asyncRoute(async (request, response) => { const {code} = z.object({code: z.string().regex(/^\d{6}$/)}).strict().parse(request.body); const result = await delivery.verifyAccessCode(routeParam(request, "token"), code, context(request)); response.cookie(portalCookie, result.sessionToken, {httpOnly: true, secure: services.env.NODE_ENV === "production", sameSite: services.env.NODE_ENV === "production" ? "none" : "lax", path: "/api/external/portal", expires: result.expiresAt}); response.json({authenticated: true, expiresAt: result.expiresAt}); }));
+    const session = (request: Request) => cookieValue(request, portalCookie);
+    app.get("/api/external/portal/case", rateLimit(services.limiter, "external-portal", 120, 60), asyncRoute(async (request, response) => { const result = await delivery.getPortalCase(session(request), context(request)); response.json({...result as object, csrfToken: issueCsrf(response)}); }));
+    app.get("/api/external/portal/full-pdf", rateLimit(services.limiter, "external-portal-download", 30, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalPdf(session(request), context(request)); response.type("application/pdf").setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
+    app.get("/api/external/portal/documents", rateLimit(services.limiter, "external-portal", 120, 60), asyncRoute(async (request, response) => { response.json(await delivery.listPortalDocuments(session(request), context(request))); }));
+    for (const mode of ["view", "download"]) app.get(`/api/external/portal/documents/:documentId/${mode}`, rateLimit(services.limiter, "external-portal-download", 30, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalDocument(session(request), routeParam(request, "documentId"), mode === "download", context(request)); response.type(file.contentType).setHeader("Content-Disposition", `${mode === "download" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
+    app.get("/api/external/portal/download-all", rateLimit(services.limiter, "external-portal-zip", 5, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalZip(session(request), context(request)); response.type("application/zip").setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
+    app.post("/api/external/portal/logout", requireExternalCsrf, asyncRoute(async (request, response) => { await delivery.logoutPortal(session(request)); response.clearCookie(portalCookie, {path: "/api/external/portal"}); response.status(204).end(); }));
+  }
+
   app.post("/api/clients/:clientId/analysis", ...authenticated, auth.requireAdvisorClientAccess, rateLimit(services.limiter, "gemini", 10, 60), asyncRoute(async (request, response) => {
     const {question} = z.object({question: z.string().trim().min(3).max(2000)}).parse(request.body);
     const source = await services.store.getSnapshotSource(request.authorizedClientId!);
@@ -948,6 +1061,10 @@ export function createApp(services: AppServices) {
     }
     if (error instanceof multer.MulterError) {
       response.status(400).json({error: error.code === "LIMIT_FILE_SIZE" ? "FILE_TOO_LARGE" : "UPLOAD_ERROR", requestId: request.requestId});
+      return;
+    }
+    if (error instanceof DeliveryError) {
+      response.status(error.status).json({error: error.code, code: error.code, message: error.publicMessage, requestId: request.requestId, ...(error.details ?? {})});
       return;
     }
     console.error("Request failed", {requestId: request.requestId, errorCode: "UNHANDLED_REQUEST_ERROR"});

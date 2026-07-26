@@ -1,188 +1,188 @@
-import { createHash } from "node:crypto";
-import { expect, test, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
+import {randomUUID} from "node:crypto";
+import {expect, test, type APIRequestContext, type Browser, type BrowserContext, type Page} from "@playwright/test";
+
+const apiOrigin = "http://localhost:3000";
+const mailpitOrigin = "http://localhost:8025";
 
 async function login(page: Page, email: string, password: string): Promise<string> {
+  await page.goto("/");
   await page.getByLabel("דואר אלקטרוני").fill(email);
   await page.getByLabel("סיסמה").fill(password);
-  const authenticatedRequest = page.waitForRequest((request) => request.url().includes("/api/auth/me") && Boolean(request.headers().authorization));
+  const authenticated = page.waitForRequest((request) => request.url().includes("/api/auth/me") && Boolean(request.headers().authorization));
   await page.getByRole("button", {name: "כניסה"}).click();
-  return (await authenticatedRequest).headers().authorization ?? "";
+  return (await authenticated).headers().authorization ?? "";
 }
 
-async function latestInvitation(request: APIRequestContext, publicCaseNumber: string): Promise<string> {
-  let invitation = "";
-  await expect.poll(async () => {
-    const response = await request.get("http://localhost:8025/api/v1/messages");
-    if (!response.ok()) return "";
-    const listing = await response.json() as {messages?: Array<{ID?: string; id?: string; Subject?: string}>};
-    const message = listing.messages?.find((item) => item.Subject?.includes(publicCaseNumber));
-    const id = message?.ID ?? message?.id;
-    if (!id) return "";
-    const detail = await request.get(`http://localhost:8025/api/v1/message/${id}`);
-    const content = await detail.text();
-    invitation = content.match(/http:\/\/localhost:5173\/lender\/invite\/[A-Za-z0-9_-]+/)?.[0] ?? "";
-    return invitation;
-  }, {timeout: 20_000}).not.toBe("");
-  return invitation;
+async function loginInNewContext(browser: Browser, email: string, password: string): Promise<{context: BrowserContext; page: Page; authorization: string}> {
+  const context = await browser.newContext(); const page = await context.newPage(); const authorization = await login(page, email, password);
+  return {context, page, authorization};
 }
 
-test("advisor-to-lender financing workflow", async ({browser, page, request}) => {
-  test.setTimeout(180_000);
-  const advisorEmail = process.env.E2E_ADVISOR_EMAIL;
-  const advisorPassword = process.env.E2E_ADVISOR_PASSWORD;
-  const lenderEmail = process.env.E2E_LENDER_EMAIL;
-  const lenderPassword = process.env.E2E_LENDER_PASSWORD;
-  const otherLenderEmail = process.env.E2E_OTHER_LENDER_EMAIL;
-  const otherLenderPassword = process.env.E2E_OTHER_LENDER_PASSWORD;
-  if (!advisorEmail || !advisorPassword || !lenderEmail || !lenderPassword || !otherLenderEmail || !otherLenderPassword) throw new Error("All E2E credentials are required");
+interface MailpitMessage {ID: string; Subject: string; To: Array<{Address: string}>}
+interface MailpitDetail extends MailpitMessage {HTML: string; Text: string; Attachments: unknown[]}
 
-  let clientId = 0;
-  let lenderContext: BrowserContext | null = null;
-  let otherContext: BrowserContext | null = null;
-  let advisorAuthorization = "";
+async function findMessage(request: APIRequestContext, recipient: string, subjectPart: string): Promise<MailpitDetail | null> {
+  const listingResponse = await request.get(`${mailpitOrigin}/api/v1/messages`);
+  if (!listingResponse.ok()) return null;
+  const listing = await listingResponse.json() as {messages?: MailpitMessage[]};
+  const message = listing.messages?.find((item) => item.Subject.includes(subjectPart) && item.To.some((target) => target.Address.toLowerCase() === recipient.toLowerCase()));
+  if (!message) return null;
+  const detail = await request.get(`${mailpitOrigin}/api/v1/message/${message.ID}`);
+  return detail.ok() ? await detail.json() as MailpitDetail : null;
+}
+
+async function waitForMail(request: APIRequestContext, recipient: string, subjectPart: string): Promise<MailpitDetail> {
+  let message: MailpitDetail | null = null;
+  await expect.poll(async () => {message = await findMessage(request, recipient, subjectPart); return Boolean(message);}, {timeout: 30_000}).toBe(true);
+  return message!;
+}
+
+function linkFrom(message: MailpitDetail, path: "review" | "access"): string {
+  const source = `${message.HTML}\n${message.Text}`.replace(/&amp;/g, "&");
+  const link = source.match(new RegExp(`http://localhost:5173/external/${path}/[A-Za-z0-9_-]+`))?.[0] ?? "";
+  expect(link).not.toBe("");
+  return link;
+}
+
+function otpFrom(message: MailpitDetail): string {
+  const code = message.Text.match(/\b\d{6}\b/)?.[0] ?? "";
+  expect(code).toMatch(/^\d{6}$/);
+  return code;
+}
+
+const clientPayload = {
+  numberOfBorrowers: 2, borrowerRelationship: "MARRIED", borrowerRelationshipOther: null,
+  household: {numberOfChildren: 2, childrenAges: [4, 8]},
+  borrowers: [
+    {order: 1, isPrimary: true, firstName: "בדיקת", lastName: "מסירה", identityNumber: "123456782", dateOfBirth: "1985-06-15", phone: "0501234567", email: "delivery-client@syncash.local", address: "רחוב סודי 1, תל אביב", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SALARIED", employerName: "מעסיק סודי בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6}, income: {monthlyNetIncome: 20_000, hasAdditionalIncome: true, additionalIncomeType: "RENTAL_INCOME", additionalIncomeAmount: 2_500, additionalIncomeDescription: null}, liabilities: []},
+    {order: 2, isPrimary: false, firstName: "לווה", lastName: "נוסף", identityNumber: "987654324", dateOfBirth: "1987-08-20", phone: "0507654321", email: "second-borrower@syncash.local", address: "רחוב סודי 1, תל אביב", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SELF_EMPLOYED", employerName: "עסק סודי", jobTitle: "בעלים", employmentSeniorityYears: 8}, income: {monthlyNetIncome: 15_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null}, liabilities: []}
+  ],
+  householdLiabilities: [{type: "MORTGAGE", otherTypeDescription: null, currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "משכנתה של בדיקת מסירה בטלפון 0501234567"}],
+  property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", address: "רחוב הנכס הסודי 2, תל אביב", value: 2_000_000},
+  loanPurpose: "SECOND_HAND_PURCHASE", loanRequest: {requestedAmount: 1_000_000}, dealDetails: "בדיקת מסירה מבקשת מימון. delivery-client@syncash.local ומעסיק סודי בע״מ", status: "ACTIVE"
+};
+
+test("advisor-to-company delivery uses personal links, OTP and a seven-day full portal", async ({browser, page, request}) => {
+  test.setTimeout(360_000);
+  const advisorEmail = process.env.E2E_ADVISOR_EMAIL; const advisorPassword = process.env.E2E_ADVISOR_PASSWORD;
+  const adminEmail = process.env.E2E_SUPER_ADMIN_EMAIL; const adminPassword = process.env.E2E_SUPER_ADMIN_PASSWORD;
+  if (!advisorEmail || !advisorPassword || !adminEmail || !adminPassword) throw new Error("E2E advisor and admin credentials are required");
+  const unique = Date.now(); const companyName = `מימון אופק ${unique}`; const contactA = `delivery-a-${unique}@syncash.local`; const contactB = `delivery-b-${unique}@syncash.local`;
+  let clientId = 0; const companyIds: number[] = []; let advisorAuthorization = ""; let adminAuthorization = ""; const contexts: BrowserContext[] = [];
+  const consoleErrors: string[] = []; const failedResponses: string[] = [];
+  page.on("console", (message) => {if (message.type() === "error") consoleErrors.push(message.text());});
+  page.on("response", (response) => {if (response.url().startsWith(`${apiOrigin}/api/`) && response.status() >= 500) failedResponses.push(`${response.status()} ${response.url()}`);});
   try {
-    await page.goto("/");
+    await request.delete(`${mailpitOrigin}/api/v1/messages`);
+    const admin = await loginInNewContext(browser, adminEmail, adminPassword); contexts.push(admin.context); adminAuthorization = admin.authorization;
+    await expect(admin.page.getByRole("heading", {name: "לוח הבקרה"})).toBeVisible();
+    const companyResponse = await request.post(`${apiOrigin}/api/admin/financing-companies`, {headers: {authorization: adminAuthorization}, data: {name: companyName, legalName: null, companyNumber: null, phone: null, address: null, website: null, activityAreas: ["משכנתאות", "איחוד הלוואות"], adminNotes: "הערת בדיקה מוצפנת", active: false}});
+    expect(companyResponse.ok()).toBe(true); const companyId = (await companyResponse.json()).id as number; companyIds.push(companyId);
+    for (const [firstName, email, isPrimary] of [["נועה", contactA, true], ["דוד", contactB, false]] as const) {
+      const contact = await request.post(`${apiOrigin}/api/admin/financing-companies/${companyId}/contacts`, {headers: {authorization: adminAuthorization}, data: {firstName, lastName: "בדיקה", roleTitle: "חתם/ת", email, phone: null, isPrimary, active: true}});
+      expect(contact.ok()).toBe(true);
+    }
+    expect((await request.patch(`${apiOrigin}/api/admin/financing-companies/${companyId}`, {headers: {authorization: adminAuthorization}, data: {active: true}})).ok()).toBe(true);
+
     advisorAuthorization = await login(page, advisorEmail, advisorPassword);
     await expect(page.getByRole("heading", {name: "ברוך הבא ללוח הבקרה"})).toBeVisible();
-    await page.getByRole("link", {name: "תיק חדש"}).click();
-
-    await page.getByLabel("שם פרטי").fill("E2E");
-    await page.getByLabel("שם משפחה").fill("Client");
-    await page.getByLabel("מספר תעודת זהות").fill("999999999");
-    await page.getByLabel("תאריך לידה").fill("1985-06-15");
-    await page.getByLabel("טלפון").fill("0500000000");
-    await page.getByLabel("דוא״ל").fill("e2e@example.com");
-    await page.getByLabel("כתובת מגורים").fill("רחוב בדיקה 1, תל אביב");
-    await page.getByLabel("מצב משפחתי").selectOption("MARRIED");
-    await page.getByLabel("מספר ילדים").fill("3");
-    await expect(page.getByLabel(/^ילד \d+ — גיל/)).toHaveCount(3);
-    await page.getByLabel("ילד 1 — גיל").fill("3");
-    await page.getByLabel("ילד 2 — גיל").fill("7");
-    await page.getByLabel("ילד 3 — גיל").fill("10");
-    await page.getByLabel("מספר לווים בתיק").fill("1");
-    await page.getByRole("button", {name: "הבא"}).click();
-    await page.getByLabel("סוג תעסוקה").selectOption("SALARIED");
-    await page.getByLabel("שם המעסיק או העסק").fill("E2E Employer");
-    await page.getByLabel("תפקיד").fill("מנהלת בדיקות");
-    await page.getByLabel("ותק בשנים").fill("5");
-    await page.getByLabel("הכנסה חודשית נטו").fill("30000");
-    await page.getByLabel("האם קיימת הכנסה נוספת").selectOption("yes");
-    await page.getByLabel("סוג הכנסה נוספת").selectOption("RENTAL_INCOME");
-    await page.getByLabel("סכום הכנסה נוספת חודשי").fill("2500");
-    await page.getByRole("button", {name: "הוספת התחייבות"}).click();
-    await page.getByLabel("סוג התחייבות 1").selectOption("MORTGAGE");
-    await page.getByLabel("יתרה נוכחית").fill("400000");
-    await page.getByLabel("החזר חודשי").fill("4000");
-    await page.getByLabel("תאריך סיום התחייבות").fill("2040-07-31");
-    await page.getByLabel("הערות").fill("משכנתה קיימת");
-    await page.getByRole("button", {name: "הבא"}).click();
-    await page.getByLabel("מטרת ההלוואה").selectOption("SECOND_HAND_PURCHASE");
-    await page.getByLabel("סוג הנכס").selectOption("APARTMENT");
-    await page.getByLabel("עיר").fill("תל אביב");
-    await page.getByLabel("כתובת הנכס").fill("רחוב הנכס 2, תל אביב");
-    await page.getByLabel("שווי הנכס").fill("2000000");
-    await page.getByLabel("סכום המימון המבוקש").fill("1000000");
-    await page.getByLabel("פירוט עסקה").fill("תיק E2E מלא");
-    await page.getByRole("button", {name: "יצירת תיק"}).click();
-    await expect(page.getByRole("heading", {name: "E2E Client"})).toBeVisible();
-    clientId = Number(new URL(page.url()).pathname.split("/").at(-1));
-    const publicCaseNumber = (await page.getByText(/^תיק SC-/).first().textContent())?.replace("תיק ", "") ?? "";
-    expect(publicCaseNumber).toMatch(/^SC-/);
-
-    await page.getByRole("button", {name: "עריכה", exact: true}).click();
-    await expect(page.getByRole("dialog")).toHaveCount(0);
-    await page.getByLabel("שם פרטי").fill("E2E Updated");
-    await page.getByRole("button", {name: "הבא"}).click();
-    await page.getByRole("button", {name: "הבא"}).click();
-    await page.getByLabel("פירוט עסקה").fill("נתון נשמר לאחר רענון");
-    await page.getByRole("button", {name: "שמירת שינויים"}).click();
-    await expect(page.getByRole("status")).toContainText("נשמרו בהצלחה");
-    await page.reload();
-    await expect(page.getByRole("heading", {name: "E2E Updated Client"})).toBeVisible();
-    await page.getByRole("button", {name: "פירוט עסקה", exact: true}).click();
-    await expect(page.getByText("נתון נשמר לאחר רענון")).toBeVisible();
-
-    await page.getByRole("button", {name: /שליחה לחברות מימון/}).click();
-    await page.locator('.lender-card input[type="checkbox"]').first().check();
-    await page.getByRole("button", {name: "שליחת התיק לחברות שנבחרו"}).click();
-    await expect(page.getByRole("heading", {name: "לא ניתן לשלוח את התיק"})).toBeVisible();
-    await expect(page.getByText("כתב הסמכה", {exact: true})).toBeVisible();
-    await page.getByRole("button", {name: "מעבר למסמכים"}).click();
-    const pdf = Buffer.from("%PDF-1.7\nE2E document");
-    const expectedChecksum = createHash("sha256").update(pdf).digest("hex");
-    const requiredInputs = page.locator(".document-check-row.missing input[type=file]");
-    await expect(requiredInputs).toHaveCount(5);
-    for (let index = 0; index < 5; index += 1) {
-      await requiredInputs.nth(0).setInputFiles({name: `e2e-${index}.pdf`, mimeType: "application/pdf", buffer: pdf});
-      await expect(requiredInputs).toHaveCount(4 - index);
-    }
-    await expect(page.getByText("5 מתוך 5 מסמכי חובה הועלו")).toBeVisible();
-
-    await page.reload();
-    await page.getByRole("button", {name: "מסמכים", exact: true}).click();
-    await page.getByRole("button", {name: "צפייה"}).first().click();
-    const previewDialog = page.locator(".document-preview-modal");
-    await expect(previewDialog).toBeVisible();
-    await expect(previewDialog.getByRole("heading", {name: "תעודת זהות — צד קדמי"})).toBeVisible();
-    await expect(previewDialog).not.toContainText("e2e-0.pdf");
-    await expect(previewDialog.locator("iframe")).toHaveAttribute("title", "תצוגת תעודת זהות — צד קדמי");
-    await expect(previewDialog.locator("iframe")).toHaveAttribute("src", /^blob:/);
-    await previewDialog.getByRole("button").first().click();
-    const downloadPromise = page.waitForEvent("download");
-    await page.getByRole("button", {name: "הורדה"}).first().click();
-    const download = await downloadPromise;
-    expect(download.suggestedFilename()).toBe("תעודת זהות — צד קדמי.pdf");
-    const stream = await download.createReadStream();
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
-    expect(createHash("sha256").update(Buffer.concat(chunks)).digest("hex")).toBe(expectedChecksum);
-
-    await page.getByRole("button", {name: /שליחה לחברות מימון/}).click();
-    await page.locator('.lender-card input[type="checkbox"]').first().check();
-    await page.getByRole("button", {name: "שליחת התיק לחברות שנבחרו"}).click();
-    await expect(page.getByRole("status")).toContainText("התיק נשלח בהצלחה");
-    const inviteUrl = await latestInvitation(request, publicCaseNumber);
-
-    lenderContext = await browser.newContext();
-    const lenderPage = await lenderContext.newPage();
-    await lenderPage.goto(inviteUrl);
-    await login(lenderPage, lenderEmail, lenderPassword);
-    await expect(lenderPage.getByRole("heading", {name: "תיק מימון אנונימי"})).toBeVisible();
-    await expect(lenderPage.locator("body")).not.toContainText("E2E Updated Client");
-    await expect(lenderPage.locator("body")).not.toContainText("0500000000");
-    await expect(lenderPage.locator("body")).not.toContainText("e2e@example.com");
-    const identityRequestCreated = lenderPage.waitForResponse((response) => response.url().includes("/identity-request") && response.request().method() === "POST");
-    await lenderPage.getByRole("button", {name: "בקשת שם וטלפון"}).click();
-    expect((await identityRequestCreated).ok()).toBe(true);
-
-    const identityRequests = await request.get("http://localhost:3000/api/advisor/identity-requests", {headers: {authorization: advisorAuthorization}});
-    expect(identityRequests.ok()).toBe(true);
-    const identityRequest = (await identityRequests.json()).find((item: {clientId: number}) => item.clientId === clientId);
-    expect(identityRequest).toBeTruthy();
-    const approval = await request.post(`http://localhost:3000/api/advisor/identity-requests/${identityRequest.id}/approve`, {headers: {authorization: advisorAuthorization}, data: {approvedFields: ["PHONE"], approvedDocumentIds: []}});
-    expect(approval.ok()).toBe(true);
-    await lenderPage.getByRole("button", {name: "רענון מידע מאושר"}).click();
-    await expect(lenderPage.getByText("0500000000")).toBeVisible();
-    await expect(lenderPage.locator("body")).not.toContainText("E2E Updated Client");
-
-    await lenderPage.getByRole("button", {name: "הגשת הצעה"}).click();
-    await page.reload();
-    await page.getByRole("button", {name: "הצעות", exact: true}).click();
-    await expect(page.locator(".offers-grid").getByText("1,000,000").first()).toBeVisible();
-
-    otherContext = await browser.newContext();
-    const otherPage = await otherContext.newPage();
-    await otherPage.goto(inviteUrl);
-    await login(otherPage, otherLenderEmail, otherLenderPassword);
-    await expect(otherPage.locator("body")).not.toContainText("תיק מימון אנונימי");
-  } finally {
-    await lenderContext?.close();
-    await otherContext?.close();
-    if (clientId) {
-      if (advisorAuthorization) {
-        const cleanup = await request.delete(`http://localhost:3000/api/clients/${clientId}`, {headers: {authorization: advisorAuthorization}});
-        expect(cleanup.ok()).toBe(true);
+    const created = await request.post(`${apiOrigin}/api/clients`, {headers: {authorization: advisorAuthorization}, data: clientPayload});
+    expect(created.ok()).toBe(true); const client = await created.json() as {id: number; publicCaseNumber: string; borrowers: Array<{id: number; borrowerOrder: number}>}; clientId = client.id;
+    const pdf = Buffer.from("%PDF-1.7\nSynCash E2E immutable document");
+    for (const borrower of client.borrowers) {
+      for (const documentType of ["ID_FRONT", "ID_BACK", "ID_APPENDIX"]) {
+        const upload = await request.post(`${apiOrigin}/api/clients/${clientId}/documents`, {headers: {authorization: advisorAuthorization}, multipart: {documentType, borrowerId: String(borrower.id), file: {name: `${documentType}.pdf`, mimeType: "application/pdf", buffer: pdf}}});
+        expect(upload.ok()).toBe(true);
       }
     }
+    for (const documentType of ["PROPERTY_RIGHTS", "POWER_OF_ATTORNEY"]) {
+      const upload = await request.post(`${apiOrigin}/api/clients/${clientId}/documents`, {headers: {authorization: advisorAuthorization}, multipart: {documentType, file: {name: `${documentType}.pdf`, mimeType: "application/pdf", buffer: pdf}}});
+      expect(upload.ok()).toBe(true);
+    }
+
+    await page.goto(`/advisor/clients/${clientId}`);
+    await expect(page.getByRole("heading", {name: "בדיקת מסירה ועוד 1"})).toBeVisible();
+    await page.getByRole("button", {name: /שליחה לחברות מימון/}).click();
+    await page.getByLabel(`בחירת ${companyName}`).check();
+    const previewResponsePromise = page.waitForResponse((response) => response.url().endsWith(`/api/clients/${clientId}/delivery/preview`) && response.request().method() === "POST");
+    await page.getByRole("button", {name: "המשך לתצוגה מוסווית"}).click();
+    const previewResponse = await previewResponsePromise; expect(previewResponse.ok()).toBe(true);
+    const previewBody = JSON.stringify(await previewResponse.json());
+    for (const pii of ["בדיקת", "מסירה", "123456782", "0501234567", "delivery-client@syncash.local", "רחוב סודי", "מעסיק סודי"]) expect(previewBody).not.toContain(pii);
+    await expect(page.getByRole("heading", {name: "תצוגה מקדימה מוסווית"})).toBeVisible();
+    await expect(page.getByText("2", {exact: true}).first()).toBeVisible();
+    await page.getByRole("button", {name: "המשך לאישור"}).click();
+    await page.getByLabel("אני מאשר/ת שהמידע המוסווה נבדק ושהתיק מוכן לשליחה.").check();
+    const sendResponsePromise = page.waitForResponse((response) => response.url().endsWith(`/api/clients/${clientId}/delivery/send`) && response.request().method() === "POST");
+    await page.getByRole("button", {name: "אישור ושליחת התיק"}).click();
+    expect((await sendResponsePromise).status()).toBe(201);
+    await expect(page.getByRole("heading", {name: "התיק נשלח בהצלחה"})).toBeVisible();
+
+    const [initialA, initialB] = await Promise.all([waitForMail(request, contactA, client.publicCaseNumber), waitForMail(request, contactB, client.publicCaseNumber)]);
+    expect(initialA.Attachments).toHaveLength(0); expect(initialB.Attachments).toHaveLength(0);
+    const reviewA = linkFrom(initialA, "review"); const reviewB = linkFrom(initialB, "review"); expect(reviewA).not.toBe(reviewB);
+
+    const reviewContext = await browser.newContext(); contexts.push(reviewContext); const reviewPage = await reviewContext.newPage();
+    await reviewPage.goto(reviewA); await expect(reviewPage.getByRole("heading", {name: "תיק מימון מוסווה לבחינה"})).toBeVisible();
+    for (const pii of ["בדיקת מסירה", "123456782", "0501234567", "delivery-client@syncash.local", "מעסיק סודי", "רחוב הנכס הסודי"]) await expect(reviewPage.locator("body")).not.toContainText(pii);
+    await reviewPage.getByRole("button", {name: "מעוניינים", exact: true}).click();
+    await expect(reviewPage.getByText("קוד חד־פעמי נשלח")).toBeVisible();
+    const interestOtp = otpFrom(await waitForMail(request, contactA, "קוד אימות לפתיחת תיק מימון"));
+    await reviewPage.getByLabel("קוד חד־פעמי").fill(interestOtp);
+    await reviewPage.getByRole("button", {name: "אימות והמשך"}).click();
+    await expect(reviewPage.getByText("הגישה המלאה נפתחה")).toBeVisible();
+
+    const secondReviewContext = await browser.newContext(); contexts.push(secondReviewContext); const secondReviewPage = await secondReviewContext.newPage();
+    await secondReviewPage.goto(reviewB); await expect(secondReviewPage.getByText("כבר התקבלה החלטה מטעם חברתכם")).toBeVisible();
+
+    const accessMessageB = await waitForMail(request, contactB, "גישה מלאה לתיק מימון נפתחה"); const accessB = linkFrom(accessMessageB, "access");
+    const portalContext = await browser.newContext(); contexts.push(portalContext); const portalPage = await portalContext.newPage();
+    await portalPage.goto(accessB); await expect(portalPage.getByRole("heading", {name: "גישה מלאה לתיק"})).toBeVisible();
+    await portalPage.getByRole("button", {name: "שליחת קוד כניסה"}).click();
+    const portalOtp = otpFrom(await waitForMail(request, contactB, "קוד אימות לפתיחת תיק מלא"));
+    await portalPage.getByLabel("קוד חד־פעמי").fill(portalOtp);
+    await portalPage.getByRole("button", {name: "כניסה מאובטחת"}).click();
+    await expect(portalPage.getByRole("heading", {name: "תיק מימון מלא"})).toBeVisible();
+    await expect(portalPage.getByText("בדיקת מסירה", {exact: true})).toBeVisible();
+    await expect(portalPage.getByText("0501234567", {exact: true})).toBeVisible();
+    await expect(portalPage.getByText("מעסיק סודי בע״מ", {exact: true})).toBeVisible();
+    await expect(portalPage.getByText("היועץ המטפל")).toBeVisible();
+    await expect(portalPage.getByRole("button", {name: /הצעה/})).toHaveCount(0);
+    const fullPdf = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "PDF מלא"}).click(); expect((await fullPdf).suggestedFilename()).toContain("תיק-מימון-מלא");
+    const documentDownload = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: /^הורדת /}).first().click(); expect((await documentDownload).suggestedFilename()).not.toContain("ID_FRONT");
+    const zipDownload = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "הורדת כל התיק"}).click(); expect((await zipDownload).suggestedFilename()).toMatch(/\.zip$/);
+
+    await page.reload(); await page.getByRole("button", {name: "תגובות חברות"}).click();
+    await expect(page.getByText(companyName)).toBeVisible(); await expect(page.getByText("מעוניינת", {exact: true})).toBeVisible();
+    await admin.page.goto("/admin/company-submissions"); await expect(admin.page.getByRole("heading", {name: "שליחות לחברות"})).toBeVisible(); await expect(admin.page.getByText(client.publicCaseNumber)).toBeVisible();
+
+    const raceCompanyName = `מימון פסגה ${unique}`; const raceContactA = `race-a-${unique}@syncash.local`; const raceContactB = `race-b-${unique}@syncash.local`;
+    const raceCompanyResponse = await request.post(`${apiOrigin}/api/admin/financing-companies`, {headers: {authorization: adminAuthorization}, data: {name: raceCompanyName, legalName: null, companyNumber: null, phone: null, address: null, website: null, activityAreas: ["מימון נכסים"], adminNotes: null, active: false}});
+    expect(raceCompanyResponse.ok()).toBe(true); const raceCompanyId = (await raceCompanyResponse.json()).id as number; companyIds.push(raceCompanyId);
+    for (const [firstName, email, isPrimary] of [["רוני", raceContactA, true], ["גל", raceContactB, false]] as const) {
+      expect((await request.post(`${apiOrigin}/api/admin/financing-companies/${raceCompanyId}/contacts`, {headers: {authorization: adminAuthorization}, data: {firstName, lastName: "בדיקה", roleTitle: "חתם/ת", email, phone: null, isPrimary, active: true}})).ok()).toBe(true);
+    }
+    expect((await request.patch(`${apiOrigin}/api/admin/financing-companies/${raceCompanyId}`, {headers: {authorization: adminAuthorization}, data: {active: true}})).ok()).toBe(true);
+    const racePreviewResponse = await request.post(`${apiOrigin}/api/clients/${clientId}/delivery/preview`, {headers: {authorization: advisorAuthorization}, data: {companyIds: [raceCompanyId]}}); expect(racePreviewResponse.ok()).toBe(true);
+    const racePreview = await racePreviewResponse.json() as {previewConfirmation: string};
+    const raceSend = await request.post(`${apiOrigin}/api/clients/${clientId}/delivery/send`, {headers: {authorization: advisorAuthorization}, data: {companyIds: [raceCompanyId], idempotencyKey: randomUUID(), previewConfirmation: racePreview.previewConfirmation}}); expect(raceSend.status()).toBe(201);
+    const [raceInitialA, raceInitialB] = await Promise.all([waitForMail(request, raceContactA, client.publicCaseNumber), waitForMail(request, raceContactB, client.publicCaseNumber)]);
+    const raceReviewA = linkFrom(raceInitialA, "review"); const raceReviewB = linkFrom(raceInitialB, "review");
+    const raceContextA = await browser.newContext(); contexts.push(raceContextA); const racePageA = await raceContextA.newPage(); await racePageA.goto(raceReviewA);
+    await racePageA.getByRole("button", {name: "מעוניינים", exact: true}).click(); await expect(racePageA.getByText("קוד חד־פעמי נשלח")).toBeVisible();
+    const pendingOtp = otpFrom(await waitForMail(request, raceContactA, "קוד אימות לפתיחת תיק מימון"));
+    const raceContextB = await browser.newContext(); contexts.push(raceContextB); const racePageB = await raceContextB.newPage(); await racePageB.goto(raceReviewB);
+    racePageB.once("dialog", (dialog) => void dialog.accept()); await racePageB.getByRole("button", {name: "לא מעוניינים", exact: true}).click();
+    await expect(racePageB.getByText("התגובה נשמרה")).toBeVisible();
+    await racePageA.getByLabel("קוד חד־פעמי").fill(pendingOtp); await racePageA.getByRole("button", {name: "אימות והמשך"}).click();
+    await expect(racePageA.getByRole("alert")).toContainText("כבר התקבלה החלטה");
+    await racePageA.reload(); await expect(racePageA.getByText("כבר התקבלה החלטה מטעם חברתכם")).toBeVisible();
+    await Promise.all([waitForMail(request, raceContactA, "תודה על תגובתכם"), waitForMail(request, raceContactB, "תודה על תגובתכם"), waitForMail(request, advisorEmail, `חברת ${raceCompanyName} אינה מעוניינת`)]);
+    expect(await findMessage(request, raceContactA, "גישה מלאה לתיק מימון נפתחה")).toBeNull();
+    expect(consoleErrors).toEqual([]); expect(failedResponses).toEqual([]);
+  } finally {
+    for (const context of contexts.reverse()) await context.close().catch(() => undefined);
+    if (clientId && advisorAuthorization) await request.delete(`${apiOrigin}/api/clients/${clientId}`, {headers: {authorization: advisorAuthorization}}).catch(() => undefined);
+    for (const companyId of companyIds.reverse()) if (adminAuthorization) await request.delete(`${apiOrigin}/api/admin/financing-companies/${companyId}`, {headers: {authorization: adminAuthorization}}).catch(() => undefined);
   }
 });
