@@ -7,13 +7,20 @@ import { z } from "zod";
 import { allowedOrigins, type AppEnv } from "../config/env.js";
 import { IDENTITY_FIELDS, type IdentityField } from "../domain/types.js";
 import { advisorProfileSchema, advisorRegistrationApiSchema, normalizeEmail } from "../domain/advisorRegistration.js";
-import { clientInputSchema, type ClientInput } from "../domain/clientValidation.js";
+import {
+  clientDealDetailsInputSchema, clientIncomeInputSchema, clientInputSchema, clientLiabilitiesInputSchema,
+  clientPersonalInputSchema, clientPropertyInputSchema,
+  type ClientIncomeInput, type ClientInput, type ClientLiabilitiesInput, type ClientPersonalInput, type ClientPropertyInput
+} from "../domain/clientValidation.js";
 import { DOCUMENT_TYPES, REQUIRED_BORROWER_DOCUMENT_TYPES } from "../domain/clientFields.js";
 import { createAuthMiddleware, type TokenVerifier } from "../middleware/auth.js";
 import { createAnonymousPdf } from "../services/pdf.js";
 import { rateLimit, type RateLimitStore } from "../services/rateLimiter.js";
 import { buildAnonymousSubmissionSnapshot } from "../services/snapshot.js";
-import type { AppStore, ClientMutationRecord } from "../services/store.js";
+import type {
+  AppStore, ClientIncomeMutationRecord, ClientLiabilitiesMutationRecord, ClientMutationRecord,
+  ClientPersonalMutationRecord, ClientPropertyMutationRecord, LiabilityMutationRecord
+} from "../services/store.js";
 import type { StorageService } from "../services/storage.js";
 import { sanitizeEmailError, sanitizeSmtpFailure, type EmailService } from "../services/email.js";
 import { ADVISOR_EMAIL_VERIFICATION_TEMPLATE, EmailVerificationDeliveryError, type EmailVerificationService } from "../services/emailVerification.js";
@@ -117,6 +124,57 @@ function clientMutationRecord(input: ClientInput, encryption: EncryptionService,
     propertyValue: input.property.value,
     requestedAmount: input.loanRequest.requestedAmount,
     status: "ACTIVE"
+  };
+}
+
+function personalMutationRecord(input: ClientPersonalInput, encryption: EncryptionService): ClientPersonalMutationRecord {
+  const encrypt = (value: string) => encryption.encrypt(value);
+  return {
+    numberOfBorrowers: input.numberOfBorrowers,
+    borrowerRelationship: input.borrowerRelationship,
+    borrowerRelationshipOtherEncrypted: input.borrowerRelationshipOther ? encrypt(input.borrowerRelationshipOther) : null,
+    householdChildrenCount: input.household.numberOfChildren,
+    householdChildrenAges: input.household.childrenAges,
+    borrowers: input.borrowers.map((borrower) => ({
+      id: borrower.id, borrowerOrder: borrower.order, isPrimary: borrower.isPrimary,
+      firstNameEncrypted: encrypt(borrower.firstName), lastNameEncrypted: encrypt(borrower.lastName),
+      fullNameEncrypted: encrypt(`${borrower.firstName} ${borrower.lastName}`),
+      identityNumberEncrypted: encrypt(borrower.identityNumber),
+      identityNumberHash: createHash("sha256").update(borrower.identityNumber.replace(/\D/g, "")).digest("hex"),
+      birthDateEncrypted: encrypt(borrower.dateOfBirth), phoneEncrypted: encrypt(borrower.phone),
+      emailEncrypted: encrypt(borrower.email), addressEncrypted: encrypt(borrower.address),
+      maritalStatus: borrower.maritalStatus, numberOfChildren: borrower.children.numberOfChildren,
+      childrenAges: borrower.children.childrenAges
+    }))
+  };
+}
+
+function incomeMutationRecord(input: ClientIncomeInput, encryption: EncryptionService): ClientIncomeMutationRecord {
+  return {borrowers: input.borrowers.map((borrower) => ({
+    id: borrower.id, employmentType: borrower.employment.employmentType,
+    employerNameEncrypted: encryption.encrypt(borrower.employment.employerName), jobTitle: borrower.employment.jobTitle,
+    employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
+    monthlyNetIncome: borrower.income.monthlyNetIncome, hasAdditionalIncome: borrower.income.hasAdditionalIncome,
+    additionalIncomeType: borrower.income.additionalIncomeType, additionalIncomeAmount: borrower.income.additionalIncomeAmount,
+    additionalIncomeDescriptionEncrypted: borrower.income.additionalIncomeDescription ? encryption.encrypt(borrower.income.additionalIncomeDescription) : null
+  }))};
+}
+
+function liabilitiesMutationRecord(input: ClientLiabilitiesInput, encryption: EncryptionService): ClientLiabilitiesMutationRecord {
+  const liability = (item: ClientLiabilitiesInput["householdLiabilities"][number]): LiabilityMutationRecord => ({
+    liabilityType: item.type, otherTypeDescriptionEncrypted: item.otherTypeDescription ? encryption.encrypt(item.otherTypeDescription) : null,
+    currentBalance: item.currentBalance, monthlyPayment: item.monthlyPayment, endDate: item.endDate,
+    notesEncrypted: encryption.encrypt(item.notes)
+  });
+  return {borrowers: input.borrowers.map((borrower) => ({id: borrower.id, liabilities: borrower.liabilities.map(liability)})), householdLiabilities: input.householdLiabilities.map(liability)};
+}
+
+function propertyMutationRecord(input: ClientPropertyInput, encryption: EncryptionService): ClientPropertyMutationRecord {
+  return {
+    loanPurpose: input.loanPurpose, propertyType: input.property.propertyType,
+    propertyTypeOtherDescriptionEncrypted: input.property.propertyTypeOtherDescription ? encryption.encrypt(input.property.propertyTypeOtherDescription) : null,
+    propertyCity: input.property.city, propertyAddressEncrypted: encryption.encrypt(input.property.address),
+    propertyValue: input.property.value, requestedAmount: input.loanRequest.requestedAmount
   };
 }
 
@@ -426,10 +484,51 @@ export function createApp(services: AppServices) {
     response.json(await publicClient(client, services.store, services.encryption));
   }));
 
-  app.patch("/api/clients/:id", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+  app.patch("/api/clients/:id", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientInputSchema.parse(request.body);
     const client = await services.store.updateClient(request.authorizedClientId!, clientMutationRecord(input, services.encryption, request.user!.id));
-    await services.store.addAudit(request.user!.id, "CLIENT_UPDATED", "client", request.authorizedClientId!, {fields: Object.keys(input)}, request.requestId);
+    if (!client) { response.status(400).json({error: "CLIENT_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_FULL_UPDATED", "client", request.authorizedClientId!, {section: "full", fields: ["personal", "income", "liabilities", "property", "dealDetails"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id/personal", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientPersonalInputSchema.parse(request.body);
+    const client = await services.store.updateClientPersonal(request.authorizedClientId!, personalMutationRecord(input, services.encryption));
+    if (!client) { response.status(400).json({error: "CLIENT_PERSONAL_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_PERSONAL_UPDATED", "client", request.authorizedClientId!, {section: "personal", fields: ["borrowers", "relationship", "household"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id/income", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientIncomeInputSchema.parse(request.body);
+    const client = await services.store.updateClientIncome(request.authorizedClientId!, incomeMutationRecord(input, services.encryption));
+    if (!client) { response.status(400).json({error: "CLIENT_INCOME_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_INCOME_UPDATED", "client", request.authorizedClientId!, {section: "income", fields: ["employment", "income"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id/liabilities", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientLiabilitiesInputSchema.parse(request.body);
+    const client = await services.store.updateClientLiabilities(request.authorizedClientId!, liabilitiesMutationRecord(input, services.encryption));
+    if (!client) { response.status(400).json({error: "CLIENT_LIABILITIES_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_LIABILITIES_UPDATED", "client", request.authorizedClientId!, {section: "liabilities", fields: ["borrowerLiabilities", "householdLiabilities"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id/property", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientPropertyInputSchema.parse(request.body);
+    const client = await services.store.updateClientProperty(request.authorizedClientId!, propertyMutationRecord(input, services.encryption));
+    if (!client) { response.status(400).json({error: "CLIENT_PROPERTY_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_PROPERTY_UPDATED", "client", request.authorizedClientId!, {section: "property", fields: ["loanPurpose", "property", "loanRequest"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id/deal-details", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientDealDetailsInputSchema.parse(request.body);
+    const client = await services.store.updateClientDealDetails(request.authorizedClientId!, services.encryption.encrypt(input.dealDetails), request.user!.id);
+    if (!client) { response.status(400).json({error: "CLIENT_DEAL_DETAILS_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_DEAL_DETAILS_UPDATED", "client", request.authorizedClientId!, {section: "dealDetails", fields: ["dealDetails"]}, request.requestId);
     response.json(await publicClient(client, services.store, services.encryption));
   }));
 

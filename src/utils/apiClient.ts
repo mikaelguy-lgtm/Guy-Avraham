@@ -93,6 +93,11 @@ export const api = {
   client: (id: number) => authFetch<Client>(`/api/clients/${id}`),
   createClient: (data: Record<string, unknown>) => authFetch<Client>("/api/clients", {method: "POST", body: JSON.stringify(data)}),
   updateClient: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}`, {method: "PATCH", body: JSON.stringify(data)}),
+  updateClientPersonal: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/personal`, {method: "PATCH", body: JSON.stringify(data)}),
+  updateClientIncome: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/income`, {method: "PATCH", body: JSON.stringify(data)}),
+  updateClientLiabilities: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/liabilities`, {method: "PATCH", body: JSON.stringify(data)}),
+  updateClientProperty: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/property`, {method: "PATCH", body: JSON.stringify(data)}),
+  updateClientDealDetails: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/deal-details`, {method: "PATCH", body: JSON.stringify(data)}),
   deleteClient: (id: number) => authFetch<void>(`/api/clients/${id}`, {method: "DELETE"}),
   documents: (clientId: number) => authFetch<DocumentRecord[]>(`/api/clients/${clientId}/documents`),
   uploadDocument: (clientId: number, file: File, documentType: string, metadata: {borrowerId?: number | null; customTitle?: string; description?: string} = {}) => {

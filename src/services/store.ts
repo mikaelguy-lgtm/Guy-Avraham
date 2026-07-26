@@ -55,6 +55,63 @@ export interface BorrowerMutationRecord {
   liabilities: LiabilityMutationRecord[];
 }
 
+export interface PersonalBorrowerMutationRecord {
+  id: number;
+  borrowerOrder: number;
+  isPrimary: boolean;
+  firstNameEncrypted: string;
+  lastNameEncrypted: string;
+  identityNumberEncrypted: string;
+  identityNumberHash: string;
+  birthDateEncrypted: string;
+  phoneEncrypted: string;
+  emailEncrypted: string;
+  addressEncrypted: string;
+  maritalStatus: string;
+  numberOfChildren: number;
+  childrenAges: number[];
+  fullNameEncrypted: string;
+}
+
+export interface ClientPersonalMutationRecord {
+  numberOfBorrowers: number;
+  borrowerRelationship: string | null;
+  borrowerRelationshipOtherEncrypted: string | null;
+  householdChildrenCount: number;
+  householdChildrenAges: number[];
+  borrowers: PersonalBorrowerMutationRecord[];
+}
+
+export interface ClientIncomeMutationRecord {
+  borrowers: Array<{
+    id: number;
+    employmentType: string;
+    employerNameEncrypted: string;
+    jobTitle: string;
+    employmentSeniorityYears: number;
+    monthlyNetIncome: number;
+    hasAdditionalIncome: boolean;
+    additionalIncomeType: string | null;
+    additionalIncomeAmount: number;
+    additionalIncomeDescriptionEncrypted: string | null;
+  }>;
+}
+
+export interface ClientLiabilitiesMutationRecord {
+  borrowers: Array<{id: number; liabilities: LiabilityMutationRecord[]}>;
+  householdLiabilities: LiabilityMutationRecord[];
+}
+
+export interface ClientPropertyMutationRecord {
+  loanPurpose: string;
+  propertyType: string;
+  propertyTypeOtherDescriptionEncrypted: string | null;
+  propertyCity: string;
+  propertyAddressEncrypted: string;
+  propertyValue: number;
+  requestedAmount: number;
+}
+
 export interface LiabilityMutationRecord {
   liabilityType: "LOAN" | "MORTGAGE" | "ALIMONY" | "OTHER_FINANCIAL_ENTITY";
   otherTypeDescriptionEncrypted: string | null;
@@ -227,6 +284,11 @@ export interface AppStore extends AuthorizationDirectory {
   getClient(id: number): Promise<ClientRecord | null>;
   getClientDetails(id: number): Promise<ClientFinancialDetails | null>;
   updateClient(id: number, record: ClientMutationRecord): Promise<ClientRecord | null>;
+  updateClientPersonal(id: number, record: ClientPersonalMutationRecord): Promise<ClientRecord | null>;
+  updateClientIncome(id: number, record: ClientIncomeMutationRecord): Promise<ClientRecord | null>;
+  updateClientLiabilities(id: number, record: ClientLiabilitiesMutationRecord): Promise<ClientRecord | null>;
+  updateClientProperty(id: number, record: ClientPropertyMutationRecord): Promise<ClientRecord | null>;
+  updateClientDealDetails(id: number, dealDetailsEncrypted: string, updatedByUserId: number): Promise<ClientRecord | null>;
   softDeleteClient(id: number): Promise<void>;
   createDocument(values: Omit<DocumentRecord, "id" | "status" | "deletedAt">): Promise<DocumentRecord>;
   getDocument(id: number): Promise<DocumentRecord | null>;
@@ -706,6 +768,119 @@ export class PostgresStore implements AppStore {
 
   async listDocuments(clientId: number): Promise<DocumentRecord[]> {
     return db.select().from(documents).where(and(eq(documents.clientId, clientId), isNull(documents.deletedAt)));
+  }
+
+  async updateClientPersonal(id: number, record: ClientPersonalMutationRecord): Promise<ClientRecord | null> {
+    return db.transaction(async (transaction) => {
+      const existingBorrowers = await transaction.select({id: borrowers.id}).from(borrowers).where(eq(borrowers.clientId, id));
+      const existingIds = new Set(existingBorrowers.map((borrower) => borrower.id));
+      if (record.borrowers.length !== existingBorrowers.length || record.borrowers.some((borrower) => !existingIds.has(borrower.id))) return null;
+      const primary = record.borrowers[0];
+      const [client] = await transaction.update(clients).set({
+        firstNameEncrypted: primary.firstNameEncrypted, lastNameEncrypted: primary.lastNameEncrypted,
+        identityNumberEncrypted: primary.identityNumberEncrypted, phoneEncrypted: primary.phoneEncrypted,
+        emailEncrypted: primary.emailEncrypted, addressEncrypted: primary.addressEncrypted,
+        maritalStatus: primary.maritalStatus, numberOfChildren: primary.numberOfChildren, childrenAges: primary.childrenAges,
+        borrowerCount: record.numberOfBorrowers, numberOfBorrowers: record.numberOfBorrowers,
+        borrowerRelationship: record.borrowerRelationship,
+        borrowerRelationshipOtherEncrypted: record.borrowerRelationshipOtherEncrypted,
+        householdChildrenCount: record.householdChildrenCount,
+        householdChildrenAges: record.householdChildrenAges,
+        updatedAt: new Date()
+      }).where(and(eq(clients.id, id), isNull(clients.deletedAt))).returning();
+      if (!client) return null;
+      await transaction.update(borrowers).set({borrowerOrder: sql`${borrowers.borrowerOrder} + 100`, isPrimary: false, updatedAt: new Date()}).where(eq(borrowers.clientId, id));
+      for (const borrower of record.borrowers) {
+        await transaction.update(borrowers).set({
+          borrowerOrder: borrower.borrowerOrder, isPrimary: borrower.isPrimary,
+          borrowerType: borrower.isPrimary ? "PRIMARY" : "CO_BORROWER",
+          fullNameEncrypted: borrower.fullNameEncrypted, firstNameEncrypted: borrower.firstNameEncrypted,
+          lastNameEncrypted: borrower.lastNameEncrypted, identityNumberEncrypted: borrower.identityNumberEncrypted,
+          identityNumberHash: borrower.identityNumberHash, birthDateEncrypted: borrower.birthDateEncrypted,
+          birthDate: null, phoneEncrypted: borrower.phoneEncrypted, emailEncrypted: borrower.emailEncrypted,
+          addressEncrypted: borrower.addressEncrypted, maritalStatus: borrower.maritalStatus,
+          numberOfChildren: borrower.numberOfChildren, childrenAges: borrower.childrenAges, updatedAt: new Date()
+        }).where(and(eq(borrowers.id, borrower.id), eq(borrowers.clientId, id)));
+      }
+      return client;
+    });
+  }
+
+  async updateClientIncome(id: number, record: ClientIncomeMutationRecord): Promise<ClientRecord | null> {
+    return db.transaction(async (transaction) => {
+      const existingBorrowers = await transaction.select({id: borrowers.id}).from(borrowers).where(eq(borrowers.clientId, id));
+      const existingIds = new Set(existingBorrowers.map((borrower) => borrower.id));
+      if (record.borrowers.length !== existingBorrowers.length || record.borrowers.some((borrower) => !existingIds.has(borrower.id))) return null;
+      const existingEmployment = await transaction.select({borrowerId: employmentRecords.borrowerId}).from(employmentRecords).where(inArray(employmentRecords.borrowerId, record.borrowers.map((borrower) => borrower.id)));
+      if (existingEmployment.length !== record.borrowers.length) return null;
+      for (const borrower of record.borrowers) {
+        const values = {
+          employmentType: borrower.employmentType, employerNameEncrypted: borrower.employerNameEncrypted,
+          jobTitle: borrower.jobTitle, employmentSeniorityYears: borrower.employmentSeniorityYears,
+          monthlyNetIncome: String(borrower.monthlyNetIncome), hasAdditionalIncome: borrower.hasAdditionalIncome,
+          additionalIncomeType: borrower.additionalIncomeType,
+          additionalIncomeAmount: String(borrower.additionalIncomeAmount),
+          additionalIncomeDescriptionEncrypted: borrower.additionalIncomeDescriptionEncrypted, updatedAt: new Date()
+        };
+        await transaction.update(employmentRecords).set(values).where(eq(employmentRecords.borrowerId, borrower.id));
+      }
+      const [client] = await transaction.update(clients).set({updatedAt: new Date()}).where(and(eq(clients.id, id), isNull(clients.deletedAt))).returning();
+      return client ?? null;
+    });
+  }
+
+  async updateClientLiabilities(id: number, record: ClientLiabilitiesMutationRecord): Promise<ClientRecord | null> {
+    return db.transaction(async (transaction) => {
+      const existingBorrowers = await transaction.select({id: borrowers.id}).from(borrowers).where(eq(borrowers.clientId, id));
+      const existingIds = new Set(existingBorrowers.map((borrower) => borrower.id));
+      if (record.borrowers.length !== existingBorrowers.length || record.borrowers.some((borrower) => !existingIds.has(borrower.id))) return null;
+      await transaction.update(liabilities).set({deletedAt: new Date(), updatedAt: new Date()}).where(and(eq(liabilities.clientId, id), isNull(liabilities.deletedAt)));
+      for (const borrower of record.borrowers) {
+        if (borrower.liabilities.length > 0) await transaction.insert(liabilities).values(borrower.liabilities.map((liability) => ({
+          clientId: id, borrowerId: borrower.id, scope: "BORROWER", liabilityType: liability.liabilityType,
+          outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+          monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+          otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
+        })));
+      }
+      if (record.householdLiabilities.length > 0) await transaction.insert(liabilities).values(record.householdLiabilities.map((liability) => ({
+        clientId: id, borrowerId: null, scope: "HOUSEHOLD", liabilityType: liability.liabilityType,
+        outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+        monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+        otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
+      })));
+      const [client] = await transaction.update(clients).set({updatedAt: new Date()}).where(and(eq(clients.id, id), isNull(clients.deletedAt))).returning();
+      return client ?? null;
+    });
+  }
+
+  async updateClientProperty(id: number, record: ClientPropertyMutationRecord): Promise<ClientRecord | null> {
+    return db.transaction(async (transaction) => {
+      const [property] = await transaction.select({id: properties.id}).from(properties).where(eq(properties.clientId, id)).limit(1);
+      const [loan] = await transaction.select({id: loanRequests.id}).from(loanRequests).where(eq(loanRequests.clientId, id)).limit(1);
+      if (!property || !loan) return null;
+      await transaction.update(properties).set({
+        propertyType: record.propertyType, propertyTypeOtherDescriptionEncrypted: record.propertyTypeOtherDescriptionEncrypted,
+        city: record.propertyCity, addressEncrypted: record.propertyAddressEncrypted,
+        estimatedValue: String(record.propertyValue), updatedAt: new Date()
+      }).where(eq(properties.id, property.id));
+      await transaction.update(loanRequests).set({
+        purpose: record.loanPurpose, requestedAmount: String(record.requestedAmount),
+        loanToValue: String(record.propertyValue > 0 ? (record.requestedAmount / record.propertyValue) * 100 : 0), updatedAt: new Date()
+      }).where(eq(loanRequests.id, loan.id));
+      const [client] = await transaction.update(clients).set({updatedAt: new Date()}).where(and(eq(clients.id, id), isNull(clients.deletedAt))).returning();
+      return client ?? null;
+    });
+  }
+
+  async updateClientDealDetails(id: number, dealDetailsEncrypted: string, updatedByUserId: number): Promise<ClientRecord | null> {
+    return db.transaction(async (transaction) => {
+      const [client] = await transaction.update(clients).set({
+        notesEncrypted: dealDetailsEncrypted, dealDetailsEncrypted, dealDetailsUpdatedByUserId: updatedByUserId,
+        dealDetailsUpdatedAt: new Date(), updatedAt: new Date()
+      }).where(and(eq(clients.id, id), isNull(clients.deletedAt))).returning();
+      return client ?? null;
+    });
   }
 
   async listMissingRequiredDocuments(clientId: number) {

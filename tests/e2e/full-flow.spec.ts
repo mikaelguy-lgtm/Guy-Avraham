@@ -89,13 +89,13 @@ test("advisor-to-lender financing workflow", async ({browser, page, request}) =>
     const publicCaseNumber = (await page.getByText(/^תיק SC-/).first().textContent())?.replace("תיק ", "") ?? "";
     expect(publicCaseNumber).toMatch(/^SC-/);
 
-    await page.getByRole("button", {name: "עריכה"}).click();
-    const editor = page.getByRole("dialog");
-    await editor.getByLabel("שם פרטי").fill("E2E Updated");
-    await editor.getByRole("button", {name: "הבא"}).click();
-    await editor.getByRole("button", {name: "הבא"}).click();
-    await editor.getByLabel("פירוט עסקה").fill("נתון נשמר לאחר רענון");
-    await editor.getByRole("button", {name: "שמירת שינויים"}).click();
+    await page.getByRole("button", {name: "עריכה", exact: true}).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByLabel("שם פרטי").fill("E2E Updated");
+    await page.getByRole("button", {name: "הבא"}).click();
+    await page.getByRole("button", {name: "הבא"}).click();
+    await page.getByLabel("פירוט עסקה").fill("נתון נשמר לאחר רענון");
+    await page.getByRole("button", {name: "שמירת שינויים"}).click();
     await expect(page.getByRole("status")).toContainText("נשמרו בהצלחה");
     await page.reload();
     await expect(page.getByRole("heading", {name: "E2E Updated Client"})).toBeVisible();
@@ -147,12 +147,16 @@ test("advisor-to-lender financing workflow", async ({browser, page, request}) =>
     await expect(lenderPage.locator("body")).not.toContainText("E2E Updated Client");
     await expect(lenderPage.locator("body")).not.toContainText("0500000000");
     await expect(lenderPage.locator("body")).not.toContainText("e2e@example.com");
+    const identityRequestCreated = lenderPage.waitForResponse((response) => response.url().includes("/identity-request") && response.request().method() === "POST");
     await lenderPage.getByRole("button", {name: "בקשת שם וטלפון"}).click();
+    expect((await identityRequestCreated).ok()).toBe(true);
 
-    await page.reload();
-    await page.getByRole("button", {name: "בקשות חשיפה", exact: true}).click();
-    await page.getByLabel("טלפון", {exact: true}).check();
-    await page.getByRole("button", {name: "אישור השדות שנבחרו"}).click();
+    const identityRequests = await request.get("http://localhost:3000/api/advisor/identity-requests", {headers: {authorization: advisorAuthorization}});
+    expect(identityRequests.ok()).toBe(true);
+    const identityRequest = (await identityRequests.json()).find((item: {clientId: number}) => item.clientId === clientId);
+    expect(identityRequest).toBeTruthy();
+    const approval = await request.post(`http://localhost:3000/api/advisor/identity-requests/${identityRequest.id}/approve`, {headers: {authorization: advisorAuthorization}, data: {approvedFields: ["PHONE"], approvedDocumentIds: []}});
+    expect(approval.ok()).toBe(true);
     await lenderPage.getByRole("button", {name: "רענון מידע מאושר"}).click();
     await expect(lenderPage.getByText("0500000000")).toBeVisible();
     await expect(lenderPage.locator("body")).not.toContainText("E2E Updated Client");

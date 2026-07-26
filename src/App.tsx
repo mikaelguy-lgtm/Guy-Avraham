@@ -21,6 +21,7 @@ import AdvisorArenaView from "./components/AdvisorArenaView";
 import AdvisorNotificationsView from "./components/AdvisorNotificationsView";
 import AdvisorProfileView from "./components/AdvisorProfileView";
 import ClientDetailView from "./components/ClientDetailView";
+import ClientEditView from "./components/ClientEditView";
 import NewClientWizard from "./components/NewClientWizard";
 import AdvisorRegistrationScreen from "./components/AdvisorRegistrationScreen";
 import EmailVerificationScreen from "./components/EmailVerificationScreen";
@@ -65,6 +66,8 @@ export default function App() {
     <Route path="/advisor" element={user.role === "ADVISOR" ? <AdvisorLayout user={user} /> : <Navigate to={homePath} replace />}>
       <Route index element={<DashboardView user={user} />} />
       <Route path="clients" element={<DashboardView user={user} clientsOnly />} />
+      <Route path="clients/:id/edit" element={<ClientEditView />} />
+      <Route path="clients/:id/edit/:section" element={<ClientEditView />} />
       <Route path="clients/:id" element={<ClientDetailView />} />
       <Route path="new" element={<NewClientWizard />} />
       <Route path="arena" element={<AdvisorArenaView />} />

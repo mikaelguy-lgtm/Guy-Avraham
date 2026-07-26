@@ -82,13 +82,13 @@ test("creates, reorders and edits a two-borrower household", async ({page, reque
     await expect(page.getByRole("heading", {name: "נועה כהן"})).toBeVisible();
     await expect(page.getByText("7", {exact: true})).toBeVisible();
 
-    await page.getByRole("button", {name: "עריכה"}).click();
-    const editor = page.getByRole("dialog");
-    await editor.getByLabel("טלפון - לווה 2", {exact: true}).fill("0503333333");
-    await editor.getByRole("button", {name: "הבא"}).click();
-    await editor.getByLabel("הכנסה חודשית נטו - לווה 2", {exact: true}).fill("19000");
-    await editor.getByRole("button", {name: "הבא"}).click();
-    await editor.getByRole("button", {name: "שמירת שינויים"}).click();
+    await page.getByRole("button", {name: "עריכה", exact: true}).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByLabel("טלפון - לווה 2", {exact: true}).fill("0503333333");
+    await page.getByRole("button", {name: "הבא"}).click();
+    await page.getByLabel("הכנסה חודשית נטו - לווה 2", {exact: true}).fill("19000");
+    await page.getByRole("button", {name: "הבא"}).click();
+    await page.getByRole("button", {name: "שמירת שינויים"}).click();
     await expect(page.getByRole("status")).toContainText("נשמרו בהצלחה");
     await page.reload();
     await page.getByRole("button", {name: "פרטים אישיים", exact: true}).click();

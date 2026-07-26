@@ -333,6 +333,63 @@ describe("complete nested client create and update", () => {
   });
 });
 
+describe("focused client updates", () => {
+  const personal = {
+    numberOfBorrowers: 2, borrowerRelationship: "MARRIED", borrowerRelationshipOther: null,
+    household: completeClientInput.household,
+    borrowers: completeClientInput.borrowers.map((borrower, index) => ({
+      id: index + 1, order: borrower.order, isPrimary: borrower.isPrimary, firstName: borrower.firstName,
+      lastName: borrower.lastName, identityNumber: borrower.identityNumber, dateOfBirth: borrower.dateOfBirth,
+      phone: borrower.phone, email: borrower.email, address: borrower.address,
+      maritalStatus: borrower.maritalStatus, children: borrower.children
+    }))
+  };
+  const income = {borrowers: completeClientInput.borrowers.map((borrower, index) => ({id: index + 1, employment: borrower.employment, income: borrower.income}))};
+  const liabilities = {borrowerRelationship: "MARRIED", borrowers: [{id: 1, liabilities: []}, {id: 2, liabilities: []}], householdLiabilities: completeClientInput.householdLiabilities};
+  const property = {loanPurpose: completeClientInput.loanPurpose, property: completeClientInput.property, loanRequest: completeClientInput.loanRequest};
+
+  it.each([
+    ["personal", personal, "updateClientPersonal", "CLIENT_PERSONAL_UPDATED"],
+    ["income", income, "updateClientIncome", "CLIENT_INCOME_UPDATED"],
+    ["liabilities", liabilities, "updateClientLiabilities", "CLIENT_LIABILITIES_UPDATED"],
+    ["property", property, "updateClientProperty", "CLIENT_PROPERTY_UPDATED"],
+    ["deal-details", {dealDetails: "פירוט עסקה מעודכן"}, "updateClientDealDetails", "CLIENT_DEAL_DETAILS_UPDATED"]
+  ])("updates only the %s section and writes a PII-free audit", async (path, payload, method, action) => {
+    const existing = await makeStore().getClient(1);
+    const update = vi.fn().mockResolvedValue(existing);
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    await request(app({[method]: update, addAudit})).patch(`/api/clients/1/${path}`).set("authorization", "Bearer advisor").send(payload).expect(200);
+    expect(update).toHaveBeenCalledOnce();
+    expect(addAudit).toHaveBeenCalledWith(1, action, "client", 1, expect.objectContaining({section: expect.any(String), fields: expect.any(Array)}), expect.any(String));
+    const auditMetadata = JSON.stringify(addAudit.mock.calls[0][4]);
+    expect(auditMetadata).not.toContain("123456789");
+    expect(auditMetadata).not.toContain("0501234567");
+    expect(auditMetadata).not.toContain("פירוט עסקה מעודכן");
+  });
+
+  it("enforces authentication, advisor role and client ownership", async () => {
+    await request(app()).patch("/api/clients/1/property").send(property).expect(401);
+    await request(app()).patch("/api/clients/1/property").set("authorization", "Bearer advisor2").send(property).expect(403);
+    await request(app()).patch("/api/clients/1/property").set("authorization", "Bearer super").send(property).expect(403);
+  });
+
+  it("returns Hebrew field validation errors without calling the store", async () => {
+    const updateClientProperty = vi.fn();
+    const response = await request(app({updateClientProperty})).patch("/api/clients/1/property").set("authorization", "Bearer advisor")
+      .send({...property, property: {...property.property, address: ""}}).expect(400);
+    expect(response.body).toEqual(expect.objectContaining({error: "VALIDATION_ERROR", requestId: expect.any(String)}));
+    expect(response.body.fieldErrors["property.address"]).toMatch(/[א-ת]/);
+    expect(updateClientProperty).not.toHaveBeenCalled();
+  });
+
+  it("does not write an audit when the transactional store update fails", async () => {
+    const addAudit = vi.fn();
+    await request(app({updateClientIncome: vi.fn().mockRejectedValue(new Error("transaction failed")), addAudit}))
+      .patch("/api/clients/1/income").set("authorization", "Bearer advisor").send(income).expect(500);
+    expect(addAudit).not.toHaveBeenCalled();
+  });
+});
+
 describe("multi-borrower client create and update", () => {
   it("creates every borrower in one nested encrypted record", async () => {
     const existing = await makeStore().getClient(1);
