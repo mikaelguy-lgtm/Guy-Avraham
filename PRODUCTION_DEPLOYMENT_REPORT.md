@@ -6,7 +6,7 @@ Target: `app.syncash.co.il` on `169.58.83.2`
 
 Branch: `codex-syncash-production-rebuild`
 
-Status: **Prepared; deployment blocked at the external configuration gate**
+Status: **Firebase Production connected; public startup remains blocked by SMTP and DNS gates**
 
 Prepared release candidate: `3af97244c172`
 
@@ -25,6 +25,10 @@ Prepared release candidate: `3af97244c172`
 - Verified the API image contains the compiled API, worker, and migration artifacts.
 - Verified the frontend image starts read-only, returns a healthy response, and contains no prohibited development/private markers.
 - Installed and reloaded the isolated Nginx HTTP server block after `nginx -t` passed. It currently returns 502 by design because Production containers are not started before the external configuration gate.
+- Installed the dedicated Firebase Production service-account credential outside the release tree with owner-only permissions.
+- Configured Application Default Credentials, the Production Firebase project, the Firebase client identity, and the authoritative Firebase Web App configuration in the protected server environment.
+- Kept the Firebase Emulator disabled and removed the legacy emulator/credential-path variables from the Production environment.
+- Updated the API and worker runtime identity so the non-root processes can read the owner-only credential without weakening file permissions.
 
 ## Verification Results
 
@@ -37,6 +41,13 @@ Prepared release candidate: `3af97244c172`
 - `npm run build`: passed; the repository Production bundle safety scan passed.
 - `docker compose config --quiet`: passed on the target server using non-secret placeholders.
 - `shellcheck`: passed for every Production shell script.
+- Google Application Default Credentials: passed against the Production project.
+- Google Secret Manager read-only access: passed for the field-encryption and Firebase-key secrets; no secret value was retained or emitted.
+- Firebase Admin SDK initialization and Firebase Authentication access: passed.
+- Firebase ID token mint, verification, and immediate temporary-user cleanup: passed.
+- Firebase Email/Password provider and the required authorized domain: passed.
+- Firebase Web App configuration: passed against the authoritative Production project configuration.
+- Firebase Emulator exclusion: passed.
 - `npm run db:check`: cannot run from the Windows host because the local development URL uses the Docker-internal hostname `postgres` and the Docker Desktop CLI/WSL integration is unavailable. The Production check remains gated behind creation of the real isolated PostgreSQL service.
 - `npm audit --omit=dev`: reports 13 transitive advisories. The remaining chains are upstream in Google/Firebase libraries plus a React Router RSC advisory; this application is a Vite SPA and does not enable React Server Components. No unsafe major override, forced downgrade, or `npm audit fix --force` was applied.
 
@@ -52,8 +63,6 @@ Prepared release candidate: `3af97244c172`
 ## Current External Blockers
 
 - DNS: `app.syncash.co.il` does not yet resolve to `169.58.83.2`.
-- Firebase Production public configuration and authorized-domain setup are not available.
-- Firebase Admin/Google Secret Manager credentials and required secret values are not available.
 - Real Production SMTP host/user/password/sender/reply-to and mail-domain records are not available.
 - Compatible upstream releases eliminating the remaining npm transitive advisories are not currently available; this risk must be accepted or resolved before the opening gate.
 
