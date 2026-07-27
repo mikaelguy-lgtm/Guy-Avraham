@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from "react";
 import {Building2, CheckCircle2, ChevronLeft, ChevronRight, Eye, Mail, Send, ShieldCheck, Sparkles, X} from "lucide-react";
-import type {Client, DeliveryCompany, DeliveryPreview, MissingRequiredDocument} from "../types";
+import type {Client, DeliveryBlocker, DeliveryCompany, DeliveryPreview} from "../types";
 import {ApiError, api} from "../utils/apiClient";
 import {formatCurrency, formatDate} from "../utils/formatters";
 
@@ -41,7 +41,7 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
   const [stage, setStage] = useState<Stage>("companies");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [missingDocuments, setMissingDocuments] = useState<MissingRequiredDocument[]>([]);
+  const [blockers, setBlockers] = useState<DeliveryBlocker[]>([]);
 
   useEffect(() => {
     void api.clients().then((result) => {
@@ -61,10 +61,7 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
   const showError = (caught: unknown) => {
     if (caught instanceof ApiError) {
       setMessage(caught.publicMessage ?? "הפעולה נכשלה. נסה שוב.");
-      if (caught.code === "MISSING_REQUIRED_DOCUMENTS") {
-        const missing = caught.missingDocuments.length ? caught.missingDocuments : caught.fields.map((label) => ({documentType: label, borrowerId: null, borrowerOrder: null, label}));
-        setMissingDocuments(missing);
-      }
+      if (caught.blockers.length) setBlockers(caught.blockers);
     } else setMessage("הפעולה נכשלה. נסה שוב.");
   };
 
@@ -126,6 +123,6 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
 
     {stage === "complete" && <div className="delivery-complete"><CheckCircle2 /><h2>התיק נשלח בהצלחה</h2><p>הודעות נפרדות הוכנסו לתור השליחה לכל אנשי הקשר הפעילים.</p><button type="button" className="secondary-action" onClick={() => {setStage("companies"); setPreview(null); setSelectedCompanies([]);}}>שליחת גרסה חדשה</button></div>}
     {message && <p className={stage === "complete" ? "form-message success" : "form-message error"} role="status">{message}</p>}
-    {missingDocuments.length > 0 && <div className="modal-backdrop"><section className="modal content-card" role="dialog" aria-modal="true" aria-labelledby="missing-documents-title"><header className="modal-heading"><div><span className="eyebrow">מסמכי חובה</span><h2 id="missing-documents-title">לא ניתן לשלוח את התיק</h2></div><button type="button" className="icon-action" aria-label="סגירה" onClick={() => setMissingDocuments([])}><X /></button></header><p>חסרים מסמכי חובה. יש להשלים את המסמכים הבאים:</p><ul className="missing-documents-list">{missingDocuments.map((document) => <li key={`${document.borrowerId ?? "client"}-${document.documentType}`}>{document.label}</li>)}</ul><div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setMissingDocuments([])}>סגירה</button>{onMissingDocuments && <button type="button" className="primary-action" onClick={onMissingDocuments}>מעבר למסמכים</button>}</div></section></div>}
+    {blockers.length > 0 && <div className="modal-backdrop"><section className="modal content-card" role="dialog" aria-modal="true" aria-labelledby="delivery-guard-title"><header className="modal-heading"><div><span className="eyebrow">בדיקת מוכנות</span><h2 id="delivery-guard-title">לא ניתן לשלוח את התיק</h2></div><button type="button" className="icon-action" aria-label="סגירה" onClick={() => setBlockers([])}><X /></button></header><p>התיק השתנה ויש להשלים את הפריטים הבאים:</p><ul className="delivery-blockers-list">{blockers.map((blocker) => <li key={blocker.code}><span><strong>{blocker.label}</strong><small>{blocker.hint}</small></span></li>)}</ul><div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setBlockers([])}>סגירה</button>{onMissingDocuments && blockers.some((item) => item.action === "documents") && <button type="button" className="primary-action" onClick={onMissingDocuments}>מעבר למסמכים</button>}</div></section></div>}
   </section>;
 }

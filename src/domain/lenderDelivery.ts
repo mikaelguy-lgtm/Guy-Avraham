@@ -44,6 +44,7 @@ export interface FullCaseLiabilitySnapshot {
   monthlyPayment: number;
   endDate: string | null;
   notes: string;
+  incompleteLegacy?: boolean;
 }
 
 export interface VersionDocumentSnapshot {
@@ -61,9 +62,11 @@ export interface VersionDocumentSnapshot {
 
 export interface FullCaseSnapshot {
   publicCaseNumber: string;
+  status?: string;
   sourceClientUpdatedAt: string;
   numberOfBorrowers: number;
   borrowerRelationship: string | null;
+  borrowerRelationshipOther?: string | null;
   household: {numberOfChildren: number; childrenAges: number[]};
   borrowers: FullCaseBorrowerSnapshot[];
   householdLiabilities: FullCaseLiabilitySnapshot[];
@@ -77,8 +80,10 @@ export interface FullCaseSnapshot {
 
 export interface MaskedCaseSnapshot {
   publicCaseNumber: string;
+  status?: string;
   numberOfBorrowers: number;
   borrowerRelationship: string | null;
+  borrowerRelationshipOther?: string | null;
   household: {numberOfChildren: number; childrenAges: number[]};
   borrowers: Array<{
     label: string;
@@ -122,6 +127,19 @@ export interface DeliveryPreview {
   selectedContactCount: number;
   responseDeadlineAt: string;
   previewConfirmation: string;
+}
+
+export interface DeliveryBlocker {
+  code: string;
+  category: "DOCUMENT" | "FIELD" | "BUSINESS";
+  label: string;
+  hint: string;
+  action: "documents" | "edit";
+}
+
+export interface DeliveryPreflight {
+  ready: boolean;
+  blockers: DeliveryBlocker[];
 }
 
 export class DeliveryError extends Error {

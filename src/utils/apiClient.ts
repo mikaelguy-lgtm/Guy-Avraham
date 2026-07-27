@@ -1,7 +1,7 @@
 import { createUserWithEmailAndPassword, deleteUser, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import {requireFrontendConfig} from "../config/frontend";
-import type { AdvisorAdminRecord, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryCompany, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LoanOffer, MissingRequiredDocument, NotificationRecord } from "../types";
+import type { AdvisorAdminRecord, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LoanOffer, MissingRequiredDocument, NotificationRecord } from "../types";
 import type { AdvisorRegistrationInput } from "../domain/advisorRegistration";
 
 const API_URL = requireFrontendConfig().apiBaseUrl;
@@ -16,15 +16,16 @@ export class ApiError extends Error {
     readonly accountCreated = false,
     readonly retryAfterSeconds?: number,
     readonly publicMessage?: string,
-    readonly missingDocuments: MissingRequiredDocument[] = []
+    readonly missingDocuments: MissingRequiredDocument[] = [],
+    readonly blockers: DeliveryBlocker[] = []
   ) {
     super(code);
   }
 }
 
 async function parseError(response: Response): Promise<ApiError> {
-  const body = await response.json().catch(() => ({})) as {error?: string; message?: string; requestId?: string; fields?: string[]; fieldErrors?: Record<string, string>; accountCreated?: boolean; retryAfterSeconds?: number; missingDocuments?: MissingRequiredDocument[]};
-  return new ApiError(body.error || `HTTP_${response.status}`, response.status, body.requestId ?? response.headers.get("x-request-id") ?? undefined, body.fields ?? [], body.fieldErrors ?? {}, body.accountCreated === true, body.retryAfterSeconds, body.message, body.missingDocuments ?? []);
+  const body = await response.json().catch(() => ({})) as {error?: string; message?: string; requestId?: string; fields?: string[]; fieldErrors?: Record<string, string>; accountCreated?: boolean; retryAfterSeconds?: number; missingDocuments?: MissingRequiredDocument[]; blockers?: DeliveryBlocker[]};
+  return new ApiError(body.error || `HTTP_${response.status}`, response.status, body.requestId ?? response.headers.get("x-request-id") ?? undefined, body.fields ?? [], body.fieldErrors ?? {}, body.accountCreated === true, body.retryAfterSeconds, body.message, body.missingDocuments ?? [], body.blockers ?? []);
 }
 
 async function publicFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -163,11 +164,13 @@ export const api = {
   testSmtp: (recipientEmail?: string) => authFetch<{messageId: string}>("/api/admin/settings/email/test", {method: "POST", body: JSON.stringify({recipientEmail})}),
   notifications: () => authFetch<NotificationRecord[]>("/api/notifications"),
   markNotificationRead: (id: number) => authFetch(`/api/notifications/${id}/read`, {method: "PATCH"}),
+  markAllNotificationsRead: () => authFetch<{read: true; count: number}>("/api/notifications/read-all", {method: "PATCH"}),
   updateAdvisorProfile: (values: {firstName: string; lastName: string; phone: string; businessName: string}) => authFetch<CurrentUser>("/api/advisor/profile", {method: "PATCH", body: JSON.stringify(values)}),
   adminAdvisors: () => authFetch<AdvisorAdminRecord[]>("/api/admin/advisors"),
   updateAdvisorStatus: (id: number, status: "ACTIVE" | "SUSPENDED" | "DISABLED") => authFetch<AdvisorAdminRecord>(`/api/admin/advisors/${id}/status`, {method: "PATCH", body: JSON.stringify({status})}),
   adminResendAdvisorVerification: (id: number) => authFetch<{success: true; verificationEmailSent: true}>(`/api/admin/advisors/${id}/resend-verification`, {method: "POST"}),
   deliveryCompanies: (clientId: number) => authFetch<DeliveryCompany[]>(`/api/advisor/financing-companies?clientId=${clientId}`),
+  deliveryPreflight: (clientId: number) => authFetch<DeliveryPreflight>(`/api/clients/${clientId}/delivery/preflight`),
   deliveryPreview: (clientId: number, companyIds: number[]) => authFetch<DeliveryPreview>(`/api/clients/${clientId}/delivery/preview`, {method: "POST", body: JSON.stringify({companyIds})}),
   deliverySend: (clientId: number, values: {companyIds: number[]; idempotencyKey: string; previewConfirmation: string}) => authFetch<Record<string, unknown>>(`/api/clients/${clientId}/delivery/send`, {method: "POST", body: JSON.stringify(values)}),
   companyResponses: (clientId: number) => authFetch<CompanyResponse[]>(`/api/clients/${clientId}/company-responses`),

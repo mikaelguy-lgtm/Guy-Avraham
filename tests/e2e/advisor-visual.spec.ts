@@ -98,7 +98,11 @@ test("advisor visual journey is Hebrew, RTL and responsive", async ({page, reque
 
     await page.getByRole("button", {name: "מסמכים", exact: true}).click();
     await capture(page, "advisor-documents.png");
+    const preflightResponse = page.waitForResponse((response) => response.url().endsWith(`/api/clients/${clientId}/delivery/preflight`) && response.request().method() === "GET");
     await page.getByRole("button", {name: /שליחה לחברות מימון/}).click();
+    expect((await preflightResponse).status()).toBe(200);
+    await expect(page.getByRole("heading", {name: "לא ניתן לשלוח את התיק"})).toBeVisible();
+    await expect(page.getByText(/חסר מסמך: תעודת זהות — צד אחורי/).first()).toBeVisible();
     await capture(page, "advisor-financing-arena.png");
 
     for (const viewport of [{width: 390, height: 844, file: "advisor-mobile-390.png"}, {width: 430, height: 900}, {width: 768, height: 1024, file: "advisor-tablet-768.png"}, {width: 1024, height: 900}, {width: 1440, height: 1000, file: "advisor-desktop-1440.png"}, {width: 1920, height: 1080}]) {

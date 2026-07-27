@@ -3,12 +3,13 @@ import JSZip from "jszip";
 import type {Pool, PoolClient} from "pg";
 import {createPool} from "../db/index.js";
 import type {
-  BusinessCalendarException, DeliveryCompanySummary, DeliveryPreview, FullCaseBorrowerSnapshot,
+  BusinessCalendarException, DeliveryCompanySummary, DeliveryPreflight, DeliveryPreview, FullCaseBorrowerSnapshot,
   FullCaseLiabilitySnapshot, FullCaseSnapshot, VersionDocumentSnapshot
 } from "../domain/lenderDelivery.js";
 import {DeliveryError} from "../domain/lenderDelivery.js";
 import {calculateAge} from "../utils/age.js";
 import {getDocumentDisplayName} from "../utils/documentDisplay.js";
+import {collectDeliveryBlockers} from "../domain/deliveryPreflight.js";
 import type {EncryptionService} from "../utils/crypto.js";
 import type {EmailService} from "./email.js";
 import {sanitizeEmailError} from "./email.js";
@@ -39,6 +40,7 @@ export interface AdminDeliveryActor {
 
 export interface LenderDeliveryApplication {
   listAdvisorCompanies(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryCompanySummary[]>;
+  preflight(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryPreflight>;
   preview(clientId: number, companyIds: number[], actor: AdvisorDeliveryActor): Promise<DeliveryPreview>;
   send(clientId: number, input: {companyIds: number[]; idempotencyKey: string; previewConfirmation: string}, actor: AdvisorDeliveryActor, context: DeliveryContext): Promise<Record<string, unknown>>;
   listClientResponses(clientId: number, actor: AdvisorDeliveryActor): Promise<unknown[]>;
@@ -184,7 +186,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       where b.client_id = $1 order by b.borrower_order`, [clientId]);
     const liabilityResult = await this.pool.query(`select l.*, b.borrower_order from liabilities l left join borrowers b on b.id = l.borrower_id where l.client_id = $1 and l.deleted_at is null order by l.id`, [clientId]);
     const documentResult = await this.pool.query(`select d.*, b.borrower_order from documents d left join borrowers b on b.id = d.borrower_id where d.client_id = $1 and d.deleted_at is null and d.status in ('UPLOADED','VERIFIED','REPLACED') order by d.id`, [clientId]);
-    const liabilities = liabilityResult.rows.map((row): FullCaseLiabilitySnapshot => ({scope: row.scope, borrowerOrder: row.borrower_order ? Number(row.borrower_order) : null, type: row.liability_type, otherTypeDescription: this.decrypt(row.other_type_description_encrypted) || null, currentBalance: Number(row.current_balance ?? row.outstanding_balance), monthlyPayment: Number(row.monthly_payment), endDate: row.end_date ? String(row.end_date).slice(0, 10) : null, notes: this.decrypt(row.notes_encrypted)}));
+    const liabilities = liabilityResult.rows.map((row): FullCaseLiabilitySnapshot => ({scope: row.scope, borrowerOrder: row.borrower_order ? Number(row.borrower_order) : null, type: row.liability_type, otherTypeDescription: this.decrypt(row.other_type_description_encrypted) || null, currentBalance: Number(row.current_balance ?? row.outstanding_balance), monthlyPayment: Number(row.monthly_payment), endDate: row.end_date ? String(row.end_date).slice(0, 10) : null, notes: this.decrypt(row.notes_encrypted), incompleteLegacy: row.legacy_status === "INCOMPLETE_LEGACY"}));
     const borrowers = borrowerResult.rows.map((row): FullCaseBorrowerSnapshot => {
       const dateOfBirth = this.decrypt(row.date_of_birth_encrypted) || (row.birth_date ? new Date(row.birth_date).toISOString().slice(0, 10) : "");
       const address = this.decrypt(row.address_encrypted);
@@ -197,7 +199,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     const documents: VersionDocumentSnapshot[] = documentResult.rows.map((row) => ({documentId: Number(row.id), borrowerId: row.borrower_id ? Number(row.borrower_id) : null, borrowerOrder: row.borrower_order ? Number(row.borrower_order) : null, documentType: row.document_type, customTitle: row.custom_title, mimeType: row.mime_type, sizeBytes: Number(row.size_bytes), checksumSha256: row.checksum_sha256, storageKey: row.storage_key, createdAt: new Date(row.created_at).toISOString()}));
     const householdLiabilities = liabilities.filter((liability) => liability.scope === "HOUSEHOLD");
     return {
-      publicCaseNumber: client.public_case_number, sourceClientUpdatedAt: new Date(client.updated_at).toISOString(), numberOfBorrowers: Number(client.number_of_borrowers), borrowerRelationship: client.borrower_relationship,
+      publicCaseNumber: client.public_case_number, status: client.status, sourceClientUpdatedAt: new Date(client.updated_at).toISOString(), numberOfBorrowers: Number(client.number_of_borrowers), borrowerRelationship: client.borrower_relationship, borrowerRelationshipOther: this.decrypt(client.borrower_relationship_other_encrypted) || null,
       household: {numberOfChildren: Number(client.household_children_count), childrenAges: client.household_children_ages ?? []}, borrowers, householdLiabilities,
       property: {propertyType: client.property_type, propertyTypeOtherDescription: this.decrypt(client.property_type_other_description_encrypted) || null, city: client.property_city ?? "", address: this.decrypt(client.property_address_encrypted), value: Number(client.estimated_value)},
       loanRequest: {purpose: client.purpose, requestedAmount: Number(client.requested_amount), requestedTermMonths: Number(client.requested_term_months), loanToValue: Number(client.loan_to_value)},
@@ -207,13 +209,15 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     };
   }
 
-  private validateCompleteness(snapshot: FullCaseSnapshot): void {
-    if (!snapshot.dealDetails.trim()) throw new DeliveryError("DEAL_DETAILS_REQUIRED", 422, "יש להשלים את פירוט העסקה לפני השליחה.");
-    if (!snapshot.loanRequest.purpose) throw new DeliveryError("LOAN_PURPOSE_REQUIRED", 422, "יש לבחור מטרת הלוואה לפני השליחה.");
-    const missing: string[] = [];
-    for (const borrower of snapshot.borrowers) for (const type of ["ID_FRONT", "ID_BACK", "ID_APPENDIX"]) if (!snapshot.documents.some((document) => document.borrowerOrder === borrower.order && document.documentType === type)) missing.push(`${type}:${borrower.order}`);
-    for (const type of ["PROPERTY_RIGHTS", "POWER_OF_ATTORNEY"]) if (!snapshot.documents.some((document) => document.borrowerId === null && document.documentType === type)) missing.push(type);
-    if (missing.length) throw new DeliveryError("MISSING_REQUIRED_DOCUMENTS", 422, "חסרים מסמכי חובה הנדרשים לשליחת התיק.", {missing});
+  private assertReady(snapshot: FullCaseSnapshot): void {
+    const blockers = collectDeliveryBlockers(snapshot);
+    if (blockers.length) throw new DeliveryError("DELIVERY_PREFLIGHT_BLOCKED", 422, "לפני שליחה לחברות מימון יש להשלים את הפריטים החסרים.", {blockers});
+  }
+
+  async preflight(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryPreflight> {
+    const snapshot = await this.loadFullSnapshot(clientId, actor.advisorId);
+    const blockers = collectDeliveryBlockers(snapshot);
+    return {ready: blockers.length === 0, blockers};
   }
 
   private async selectedCompanies(companyIds: number[]): Promise<Row[]> {
@@ -238,7 +242,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   }
 
   async preview(clientId: number, companyIds: number[], actor: AdvisorDeliveryActor): Promise<DeliveryPreview> {
-    const snapshot = await this.loadFullSnapshot(clientId, actor.advisorId); this.validateCompleteness(snapshot);
+    const snapshot = await this.loadFullSnapshot(clientId, actor.advisorId); this.assertReady(snapshot);
     const companies = await this.selectedCompanies(companyIds);
     const redacted = this.redaction.redact(snapshot);
     const versionResult = await this.pool.query("select coalesce(max(version_number),0)::int + 1 as version_number from case_versions where client_id=$1", [clientId]);
@@ -268,7 +272,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     if (confirmation.clientId !== clientId || confirmation.advisorId !== actor.advisorId || Number(confirmation.expiresAt) < this.now().getTime() || JSON.stringify(confirmation.companyIds) !== JSON.stringify(selectedIds)) throw new DeliveryError("PREVIEW_CONFIRMATION_EXPIRED", 409, "פרטי התיק או בחירת החברות השתנו. יש ליצור תצוגה מקדימה חדשה.");
     const existing = await this.pool.query("select id from delivery_batches where advisor_id=$1 and idempotency_key=$2", [actor.advisorId, input.idempotencyKey]);
     if (existing.rows[0]) return this.batchSummary(this.pool, Number(existing.rows[0].id));
-    const snapshot = await this.loadFullSnapshot(clientId, actor.advisorId); this.validateCompleteness(snapshot);
+    const snapshot = await this.loadFullSnapshot(clientId, actor.advisorId); this.assertReady(snapshot);
     const contentHash = sha256(JSON.stringify(snapshot));
     if (snapshot.sourceClientUpdatedAt !== confirmation.sourceClientUpdatedAt || contentHash !== confirmation.contentHash) throw new DeliveryError("CLIENT_CHANGED_AFTER_PREVIEW", 409, "התיק השתנה לאחר התצוגה המקדימה. יש לעיין בגרסה המעודכנת לפני השליחה.");
     const companies = await this.selectedCompanies(selectedIds);

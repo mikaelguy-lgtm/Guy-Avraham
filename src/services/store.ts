@@ -336,6 +336,7 @@ export interface AppStore extends AuthorizationDirectory {
   notifyAdvisor(clientId: number, type: string, title: string, body: string): Promise<void>;
   listNotifications(userId: number): Promise<unknown[]>;
   markNotificationRead(id: number, userId: number): Promise<boolean>;
+  markAllNotificationsRead(userId: number): Promise<number>;
   listAuditLogs(limit: number): Promise<unknown[]>;
 }
 
@@ -1214,6 +1215,12 @@ export class PostgresStore implements AppStore {
     const [row] = await db.update(notifications).set({readAt: new Date(), updatedAt: new Date()})
       .where(and(eq(notifications.id, id), eq(notifications.userId, userId))).returning({id: notifications.id});
     return Boolean(row);
+  }
+
+  async markAllNotificationsRead(userId: number): Promise<number> {
+    const rows = await db.update(notifications).set({readAt: new Date(), updatedAt: new Date()})
+      .where(and(eq(notifications.userId, userId), isNull(notifications.readAt))).returning({id: notifications.id});
+    return rows.length;
   }
 
   async listAuditLogs(limit: number): Promise<unknown[]> {

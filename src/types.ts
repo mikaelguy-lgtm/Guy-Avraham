@@ -216,6 +216,19 @@ export interface DeliveryPreview {
   previewConfirmation: string;
 }
 
+export interface DeliveryBlocker {
+  code: string;
+  category: "DOCUMENT" | "FIELD" | "BUSINESS";
+  label: string;
+  hint: string;
+  action: "documents" | "edit";
+}
+
+export interface DeliveryPreflight {
+  ready: boolean;
+  blockers: DeliveryBlocker[];
+}
+
 export interface CompanyResponse {
   publicId: string;
   companyId: number;

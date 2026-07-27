@@ -937,9 +937,15 @@ export function createApp(services: AppServices) {
   app.get("/api/notifications", ...authenticated, asyncRoute(async (request, response) => {
     response.json(await services.store.listNotifications(request.user!.id));
   }));
+  app.patch("/api/notifications/read-all", ...authenticated, asyncRoute(async (request, response) => {
+    const count = await services.store.markAllNotificationsRead(request.user!.id);
+    await services.store.addAudit(request.user!.id, "NOTIFICATIONS_MARKED_READ", "notification", null, {count}, request.requestId);
+    response.json({read: true, count});
+  }));
   app.patch("/api/notifications/:id/read", ...authenticated, asyncRoute(async (request, response) => {
     const updated = await services.store.markNotificationRead(Number(request.params.id), request.user!.id);
     if (!updated) { response.status(404).json({error: "NOTIFICATION_NOT_FOUND"}); return; }
+    await services.store.addAudit(request.user!.id, "NOTIFICATION_MARKED_READ", "notification", Number(request.params.id), {}, request.requestId);
     response.json({read: true});
   }));
 
@@ -969,6 +975,9 @@ export function createApp(services: AppServices) {
 
     app.get("/api/advisor/financing-companies", ...authenticated, auth.requireRole("ADVISOR"), asyncRoute(async (request, response) => {
       const clientId = z.coerce.number().int().positive().parse(request.query.clientId); response.json(await delivery.listAdvisorCompanies(clientId, advisorActor(request)));
+    }));
+    app.get("/api/clients/:clientId/delivery/preflight", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+      response.json(await delivery.preflight(request.authorizedClientId!, advisorActor(request)));
     }));
     app.post("/api/clients/:clientId/delivery/preview", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
       const input = z.object({companyIds: z.array(z.number().int().positive()).min(1).max(30)}).strict().parse(request.body); response.json(await delivery.preview(request.authorizedClientId!, input.companyIds, advisorActor(request)));

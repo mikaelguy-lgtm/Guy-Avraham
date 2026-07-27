@@ -76,6 +76,8 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     await request.delete(`${mailpitOrigin}/api/v1/messages`);
     const admin = await loginInNewContext(browser, adminEmail, adminPassword); contexts.push(admin.context); adminAuthorization = admin.authorization;
     await expect(admin.page.getByRole("heading", {name: "לוח הבקרה"})).toBeVisible();
+    const smtpConfiguration = await request.patch(`${apiOrigin}/api/admin/settings/email`, {headers: {authorization: adminAuthorization}, data: {SMTP_HOST: "mailpit", SMTP_PORT: "1025", SMTP_SECURE: "false", SMTP_USER: "", EMAIL_FROM: "no-reply@syncash.local", EMAIL_FROM_NAME: "SynCash Local SMTP", EMAIL_REPLY_TO: "support@syncash.local"}});
+    expect(smtpConfiguration.ok()).toBe(true);
     const companyResponse = await request.post(`${apiOrigin}/api/admin/financing-companies`, {headers: {authorization: adminAuthorization}, data: {name: companyName, legalName: null, companyNumber: null, phone: null, address: null, website: null, activityAreas: ["משכנתאות", "איחוד הלוואות"], adminNotes: "הערת בדיקה מוצפנת", active: false}});
     expect(companyResponse.ok()).toBe(true); const companyId = (await companyResponse.json()).id as number; companyIds.push(companyId);
     for (const [firstName, email, isPrimary] of [["נועה", contactA, true], ["דוד", contactB, false]] as const) {
@@ -117,6 +119,16 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     await page.getByRole("button", {name: "אישור ושליחת התיק"}).click();
     expect((await sendResponsePromise).status()).toBe(201);
     await expect(page.getByRole("heading", {name: "התיק נשלח בהצלחה"})).toBeVisible();
+    await page.getByRole("dialog", {name: "שליחה לחברות מימון"}).getByRole("button", {name: "סגירה"}).click();
+    await expect(page.locator(".advisor-topbar .notification-badge")).toBeVisible();
+    await page.locator(".advisor-topbar").getByRole("button", {name: /התראות/}).click();
+    await expect(page.locator(".notification-popover").getByText(`תיק ${client.publicCaseNumber} נשלח`, {exact: false})).toBeVisible();
+    await page.locator(".notification-popover").getByRole("button", {name: "סמן הכל כנקרא"}).click();
+    await expect(page.locator(".advisor-topbar .notification-badge")).toHaveCount(0);
+    await page.locator(".notification-popover").getByRole("link", {name: "לכל ההתראות"}).click();
+    await expect(page).toHaveURL(/\/advisor\/notifications$/);
+    await expect(page.getByText(`תיק ${client.publicCaseNumber} נשלח`, {exact: false})).toBeVisible();
+    await expect(page.locator(".notification-card").filter({hasText: client.publicCaseNumber})).toHaveClass(/read/);
 
     const [initialA, initialB] = await Promise.all([waitForMail(request, contactA, client.publicCaseNumber), waitForMail(request, contactB, client.publicCaseNumber)]);
     expect(initialA.Attachments).toHaveLength(0); expect(initialB.Attachments).toHaveLength(0);
@@ -152,7 +164,7 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     const documentDownload = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: /^הורדת /}).first().click(); expect((await documentDownload).suggestedFilename()).not.toContain("ID_FRONT");
     const zipDownload = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "הורדת כל התיק"}).click(); expect((await zipDownload).suggestedFilename()).toMatch(/\.zip$/);
 
-    await page.reload(); await page.getByRole("button", {name: "תגובות חברות"}).click();
+    await page.goto(`/advisor/clients/${clientId}`); await page.getByRole("button", {name: "תגובות חברות"}).click();
     await expect(page.getByText(companyName)).toBeVisible(); await expect(page.getByText("מעוניינת", {exact: true})).toBeVisible();
     await admin.page.goto("/admin/company-submissions"); await expect(admin.page.getByRole("heading", {name: "שליחות לחברות"})).toBeVisible(); await expect(admin.page.getByText(client.publicCaseNumber)).toBeVisible();
 

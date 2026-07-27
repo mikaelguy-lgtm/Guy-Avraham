@@ -35,8 +35,10 @@ export class CaseRedactionService {
     const redactLiability = (liability: FullCaseSnapshot["householdLiabilities"][number]) => ({...liability, otherTypeDescription: sanitize(liability.otherTypeDescription), notes: sanitize(liability.notes) ?? ""});
     const maskedSnapshot: MaskedCaseSnapshot = {
       publicCaseNumber: source.publicCaseNumber,
+      status: source.status,
       numberOfBorrowers: source.numberOfBorrowers,
       borrowerRelationship: source.borrowerRelationship,
+      borrowerRelationshipOther: sanitize(source.borrowerRelationshipOther ?? null),
       household: source.household,
       borrowers: source.borrowers.map((borrower) => ({
         label: `לווה ${borrower.order}`,

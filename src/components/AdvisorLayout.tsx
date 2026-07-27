@@ -4,6 +4,8 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import type { CurrentUser } from "../types";
 import { api } from "../utils/apiClient";
 import SynCashLogo from "./SynCashLogo";
+import AdvisorNotificationBell from "./AdvisorNotificationBell";
+import {AdvisorNotificationsProvider} from "./AdvisorNotificationsContext";
 
 const navigation = [
   {to: "/advisor", label: "לוח בקרה", icon: LayoutDashboard, end: true},
@@ -27,10 +29,10 @@ export default function AdvisorLayout({user}: {user: CurrentUser}) {
     </div>
   </aside>;
 
-  return <div className="advisor-app" dir="rtl">
-    <header className="advisor-mobile-header"><SynCashLogo size="sm" showSubtitle={false} /><button type="button" className="icon-button" aria-label={drawerOpen ? "סגירת תפריט" : "פתיחת תפריט"} onClick={() => setDrawerOpen((open) => !open)}>{drawerOpen ? <X /> : <Menu />}</button></header>
+  return <AdvisorNotificationsProvider><div className="advisor-app" dir="rtl">
+    <header className="advisor-mobile-header"><SynCashLogo size="sm" showSubtitle={false} /><div className="advisor-mobile-actions"><AdvisorNotificationBell /><button type="button" className="icon-button" aria-label={drawerOpen ? "סגירת תפריט" : "פתיחת תפריט"} onClick={() => setDrawerOpen((open) => !open)}>{drawerOpen ? <X /> : <Menu />}</button></div></header>
     {sidebar}
     {drawerOpen && <button type="button" className="drawer-backdrop" aria-label="סגירת תפריט" onClick={() => setDrawerOpen(false)} />}
-    <div className="advisor-main"><Outlet /></div>
-  </div>;
+    <div className="advisor-main"><header className="advisor-topbar"><div><strong>SynCash</strong><small>סביבת העבודה של היועץ</small></div><AdvisorNotificationBell /></header><Outlet /></div>
+  </div></AdvisorNotificationsProvider>;
 }

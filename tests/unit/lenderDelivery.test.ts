@@ -3,6 +3,7 @@ import type {FullCaseSnapshot} from "../../src/domain/lenderDelivery";
 import {CaseRedactionService} from "../../src/services/caseRedaction";
 import {DeliveryTokenService} from "../../src/services/deliveryTokens";
 import {IsraelBusinessCalendarService, israelDateKey} from "../../src/services/israelBusinessCalendar";
+import {collectDeliveryBlockers} from "../../src/domain/deliveryPreflight";
 
 const localParts = (date: Date) => Object.fromEntries(new Intl.DateTimeFormat("en-CA", {timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"}).formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
 
@@ -68,6 +69,34 @@ describe("CaseRedactionService", () => {
     expect(serialized).toContain("1250000");
     expect(result.redactionReport.categories).toEqual(expect.arrayContaining(["FULL_NAME", "IDENTITY_NUMBER", "EMPLOYER", "ADVISOR_DETAILS"]));
     expect(JSON.stringify(result.redactionReport)).not.toContain("123456789");
+  });
+});
+
+describe("delivery preflight", () => {
+  const collect = collectDeliveryBlockers;
+
+  it("returns every missing required document in one response", () => {
+    const blockers = collect(fullSnapshot);
+    expect(blockers.filter((item) => item.category === "DOCUMENT")).toHaveLength(8);
+    expect(blockers.map((item) => item.label)).toEqual(expect.arrayContaining([expect.stringContaining("תעודת זהות — צד אחורי"), expect.stringContaining("כתב הסמכה")]));
+  });
+
+  it("returns field blockers together instead of failing on the first field", () => {
+    const snapshot = structuredClone(fullSnapshot);
+    snapshot.dealDetails = "";
+    snapshot.property.address = "";
+    snapshot.borrowers[0].employment.employerName = "";
+    const blockers = collect(snapshot);
+    expect(blockers.map((item) => item.code)).toEqual(expect.arrayContaining(["DEAL_DETAILS_REQUIRED", "PROPERTY_ADDRESS_REQUIRED", "BORROWER_1_EMPLOYER"]));
+  });
+
+  it("allows a complete case with all required documents", () => {
+    const snapshot = structuredClone(fullSnapshot);
+    const documents: FullCaseSnapshot["documents"] = [];
+    for (const borrower of snapshot.borrowers) for (const [index, documentType] of ["ID_FRONT", "ID_BACK", "ID_APPENDIX"].entries()) documents.push({documentId: borrower.order * 10 + index, borrowerId: borrower.order, borrowerOrder: borrower.order, documentType, customTitle: null, mimeType: "application/pdf", sizeBytes: 100, checksumSha256: "a".repeat(64), storageKey: `${borrower.order}-${documentType}`, createdAt: "2026-07-27T00:00:00.000Z"});
+    for (const [index, documentType] of ["PROPERTY_RIGHTS", "POWER_OF_ATTORNEY"].entries()) documents.push({documentId: 100 + index, borrowerId: null, borrowerOrder: null, documentType, customTitle: null, mimeType: "application/pdf", sizeBytes: 100, checksumSha256: "b".repeat(64), storageKey: documentType, createdAt: "2026-07-27T00:00:00.000Z"});
+    snapshot.documents = documents;
+    expect(collect(snapshot)).toEqual([]);
   });
 });
 

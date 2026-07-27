@@ -36,6 +36,10 @@ function isApiRequest(request: Request): boolean {
   return request.url().startsWith(`${apiOrigin}/api/`);
 }
 
+function isRealtimeStream(request: Request): boolean {
+  return request.url() === `${apiOrigin}/api/delivery/events`;
+}
+
 async function waitForApiIdle(activeRequests: Set<Request>): Promise<void> {
   await expect.poll(() => activeRequests.size, {timeout: 10_000, message: "API requests should finish before navigation"}).toBe(0);
 }
@@ -83,10 +87,11 @@ test("final client module delivery verifies all required fields and deal types",
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
-  page.on("request", (request) => { if (isApiRequest(request)) activeApiRequests.add(request); });
+  page.on("request", (request) => { if (isApiRequest(request) && !isRealtimeStream(request)) activeApiRequests.add(request); });
   page.on("requestfinished", (request) => activeApiRequests.delete(request));
   page.on("requestfailed", (request) => {
     activeApiRequests.delete(request);
+    if (isRealtimeStream(request) && request.failure()?.errorText.includes("ERR_ABORTED")) return;
     failedRequests.push({method: request.method(), url: request.url(), errorText: request.failure()?.errorText ?? "UNKNOWN", phase});
   });
   page.on("response", (response) => {
