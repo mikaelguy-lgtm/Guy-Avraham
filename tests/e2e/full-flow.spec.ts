@@ -8,6 +8,7 @@ import {getDocument} from "pdfjs-dist/legacy/build/pdf.mjs";
 const apiOrigin = "http://localhost:3000";
 const mailpitOrigin = "http://localhost:8025";
 const pdfProofDirectory = `${process.cwd()}/output/pdf-hebrew-verification`;
+const borrowerLayoutProofDirectory = `${process.cwd()}/output/external-borrower-layout`;
 
 async function login(page: Page, email: string, password: string): Promise<string> {
   await page.goto("/");
@@ -191,6 +192,10 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
 
     const reviewContext = await browser.newContext(); contexts.push(reviewContext); const reviewPage = await reviewContext.newPage();
     await reviewPage.goto(reviewA); await expect(reviewPage.getByRole("heading", {name: "תיק מימון מוסווה לבחינה"})).toBeVisible();
+    await expect(reviewPage.getByTestId("external-borrowers-masked")).toBeVisible();
+    await expect(reviewPage.locator(".external-borrower-card")).toHaveCount(2);
+    await expect(reviewPage.locator(".external-household-liabilities")).toHaveCount(1);
+    await reviewPage.setViewportSize({width: 1440, height: 1000}); await mkdir(borrowerLayoutProofDirectory, {recursive: true}); await reviewPage.screenshot({path: `${borrowerLayoutProofDirectory}/live-full-flow-masked-1440.png`, fullPage: true});
     for (const pii of ["בדיקת מסירה", "123456782", "0501234567", "delivery-client@syncash.local", "מעסיק סודי", "רחוב הנכס הסודי"]) await expect(reviewPage.locator("body")).not.toContainText(pii);
     const reviewToken = new URL(reviewA).pathname.split("/").at(-1) ?? "";
     const persistedMaskedResponse = await request.get(`${apiOrigin}/api/external/review/${reviewToken}/masked-pdf?download=1`);
@@ -220,10 +225,14 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     await portalPage.getByLabel("קוד חד־פעמי").fill(portalOtp);
     await portalPage.getByRole("button", {name: "כניסה מאובטחת"}).click();
     await expect(portalPage.getByRole("heading", {name: "תיק מימון מלא"})).toBeVisible();
-    await expect(portalPage.getByText("בדיקת מסירה", {exact: true})).toBeVisible();
+    await expect(portalPage.getByTestId("external-borrowers-full")).toBeVisible();
+    await expect(portalPage.locator(".external-borrower-card")).toHaveCount(2);
+    await expect(portalPage.locator(".external-household-liabilities")).toHaveCount(1);
+    await expect(portalPage.locator(".external-borrower-header p").filter({hasText: "בדיקת מסירה"}).first()).toBeVisible();
     await expect(portalPage.getByText("0501234567", {exact: true})).toBeVisible();
     await expect(portalPage.getByText("מעסיק סודי בע״מ", {exact: true})).toBeVisible();
     await expect(portalPage.getByText("היועץ המטפל")).toBeVisible();
+    await portalPage.setViewportSize({width: 1440, height: 1000}); await portalPage.screenshot({path: `${borrowerLayoutProofDirectory}/live-full-flow-full-1440.png`, fullPage: true});
     await expect(portalPage.getByRole("button", {name: /הצעה/})).toHaveCount(0);
     const fullPdfPromise = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "PDF מלא"}).click(); const fullPdfDownload = await fullPdfPromise; expect(fullPdfDownload.suggestedFilename()).toContain("תיק-מימון-מלא");
     const fullPdf = await downloadedBuffer(fullPdfDownload); await writeFile(`${pdfProofDirectory}/full-from-docker-endpoint.pdf`, fullPdf); expect(fullPdf.toString("latin1")).toContain("NotoSansHebrew"); const fullExtracted = await extractPdf(fullPdf); expectHealthyHebrewPdf(fullExtracted, "full"); expect(fullExtracted.text).toContain("בדיקת מסירה");

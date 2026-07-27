@@ -6,6 +6,7 @@ playwright-report/
 test-results/
 output/playwright/
 output/pdf-hebrew-verification/
+output/external-borrower-layout/
 .env
 .env.local
 .env.*.local

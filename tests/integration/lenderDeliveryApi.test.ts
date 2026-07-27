@@ -84,6 +84,41 @@ describe("secure lender delivery API", () => {
     expect(response.headers["x-robots-tag"]).toContain("noindex");
   });
 
+  it("keeps masked and full borrower view models separated with one household liability collection", async () => {
+    const maskedSnapshot = {
+      borrowerRelationship: "MARRIED",
+      household: {numberOfChildren: 2, childrenAges: [4, 8]},
+      borrowers: [
+        {label: "לווה 1", age: 41, residenceCity: "תל אביב", maritalStatus: "MARRIED", employment: {employmentType: "SALARIED", jobTitle: "מנהלת", monthlyNetIncome: 20_000}, liabilities: []},
+        {label: "לווה 2", age: 38, residenceCity: "תל אביב", maritalStatus: "MARRIED", employment: {employmentType: "SELF_EMPLOYED", jobTitle: "בעלים", monthlyNetIncome: 15_000}, liabilities: []}
+      ],
+      householdLiabilities: [{type: "MORTGAGE", currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "התחייבות משותפת"}]
+    };
+    const fullSnapshot = {
+      ...maskedSnapshot,
+      borrowers: [
+        {order: 1, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", age: 41, phone: "0501234567", email: "dana@example.com", address: "רחוב סודי 1", residenceCity: "תל אביב", maritalStatus: "MARRIED", employment: {employmentType: "SALARIED", employerName: "חברה סודית", jobTitle: "מנהלת", monthlyNetIncome: 20_000}, liabilities: []},
+        {order: 2, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", age: 38, phone: "0507654321", email: "noam@example.com", address: "רחוב סודי 1", residenceCity: "תל אביב", maritalStatus: "MARRIED", employment: {employmentType: "SELF_EMPLOYED", employerName: "עסק סודי", jobTitle: "בעלים", monthlyNetIncome: 15_000}, liabilities: []}
+      ]
+    };
+    const delivery = fakeDelivery({
+      getReview: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, maskedSnapshot, closed: false}),
+      getPortalCase: vi.fn().mockResolvedValue({companyName: "מימון בטוח", versionNumber: 1, snapshot: fullSnapshot})
+    });
+    const masked = await request(application(delivery)).get("/api/external/review/personal-token").expect(200);
+    const maskedBody = JSON.stringify(masked.body);
+    for (const pii of ["דנה", "לוי", "123456789", "0501234567", "dana@example.com", "רחוב סודי", "חברה סודית"]) expect(maskedBody).not.toContain(pii);
+    expect(masked.body.maskedSnapshot.borrowers).toHaveLength(2);
+    expect(masked.body.maskedSnapshot.householdLiabilities).toHaveLength(1);
+    expect(maskedBody.match(/התחייבות משותפת/gu)).toHaveLength(1);
+
+    const full = await request(application(delivery)).get("/api/external/portal/case").expect(200);
+    expect(full.body.snapshot.borrowers[0]).toEqual(expect.objectContaining({firstName: "דנה", identityNumber: "123456789", phone: "0501234567"}));
+    expect(full.body.snapshot.borrowers[1]).toEqual(expect.objectContaining({firstName: "נועם", identityNumber: "987654321"}));
+    expect(full.body.snapshot.householdLiabilities).toHaveLength(1);
+    expect(JSON.stringify(full.body).match(/התחייבות משותפת/gu)).toHaveLength(1);
+  });
+
   it("serves a fresh masked PDF with browser caching disabled", async () => {
     const response = await request(application()).get("/api/external/review/personal-token/masked-pdf").expect("content-type", /application\/pdf/).expect(200);
     expect(response.headers["cache-control"]).toContain("no-store");

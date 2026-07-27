@@ -398,10 +398,51 @@ p { line-height: 1.65; }
 .document-card-grid .document-card small { color: var(--muted); }
 .document-card-grid .document-card > div:last-child { display: flex; gap: .35rem; }
 
+.external-borrowers-section { display: grid; gap: 1rem; min-inline-size: 0; }
+.external-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; padding-inline: .2rem; }
+.external-section-heading h2 { margin: .2rem 0 0; }
+.external-section-heading > span { flex: none; padding: .4rem .75rem; border: 1px solid rgba(34, 211, 238, .24); border-radius: 999px; color: #a5f3fc; background: rgba(6, 182, 212, .08); font-size: .8rem; font-weight: 800; }
+.external-borrower-list { display: grid; gap: 1rem; min-inline-size: 0; }
+.external-borrower-card { min-inline-size: 0; overflow: hidden; border: 1px solid rgba(70, 111, 149, .42); border-radius: 20px; background: linear-gradient(145deg, rgba(15, 27, 48, .97), rgba(7, 17, 34, .97)); box-shadow: 0 18px 50px rgba(0, 0, 0, .18); }
+.external-borrower-header { display: flex; align-items: center; flex-wrap: wrap; gap: .85rem; padding: clamp(1rem, 2.2vw, 1.4rem); border-block-end: 1px solid var(--border-soft); background: linear-gradient(90deg, rgba(6, 182, 212, .1), rgba(7, 17, 34, .15)); }
+.external-borrower-icon { display: grid; place-items: center; flex: none; inline-size: 46px; block-size: 46px; border: 1px solid rgba(34, 211, 238, .25); border-radius: 14px; color: #67e8f9; background: rgba(6, 182, 212, .1); }
+.external-borrower-icon svg { inline-size: 25px; block-size: 25px; }
+.external-borrower-header > div { flex: 1 1 230px; min-inline-size: 0; }
+.external-borrower-header h3, .external-borrower-header p { margin: 0; overflow-wrap: anywhere; }
+.external-borrower-header h3 { font-size: 1.2rem; }
+.external-borrower-header p { margin-block-start: .2rem; color: #d8e4f2; font-weight: 750; }
+.external-borrower-header .age-badge { flex: none; margin-inline-start: auto; }
+.external-borrower-subsection { min-inline-size: 0; padding: clamp(1rem, 2.2vw, 1.4rem); }
+.external-borrower-subsection + .external-borrower-subsection { border-block-start: 1px solid rgba(49, 65, 88, .58); }
+.external-borrower-subsection > h4 { display: flex; align-items: center; gap: .5rem; margin-block-end: .9rem; color: #dbeafe; font-size: .98rem; }
+.external-borrower-subsection > h4 svg { inline-size: 18px; block-size: 18px; color: #67e8f9; }
+.external-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; min-inline-size: 0; margin: 0; }
+.external-detail-field { display: grid; align-content: start; gap: .28rem; min-inline-size: 0; padding: .78rem .85rem; border: 1px solid rgba(49, 65, 88, .5); border-radius: 12px; background: rgba(2, 9, 24, .42); }
+.external-detail-field-wide { grid-column: 1 / -1; }
+.external-detail-field dt { color: #8192aa; font-size: .72rem; font-weight: 750; }
+.external-detail-field dd { min-inline-size: 0; margin: 0; color: #eef6ff; text-align: start; font-weight: 800; line-height: 1.55; overflow-wrap: anywhere; }
+.external-detail-field dd[dir="ltr"] { text-align: left; unicode-bidi: plaintext; }
+.external-liabilities-list { display: grid; gap: .75rem; min-inline-size: 0; }
+.external-liability-card { min-inline-size: 0; padding: .9rem; border: 1px solid rgba(65, 213, 205, .18); border-radius: 15px; background: rgba(3, 13, 29, .62); }
+.external-liability-card > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin-block-end: .75rem; }
+.external-liability-card h5 { margin: 0; color: #cffafe; font-size: .92rem; overflow-wrap: anywhere; }
+.external-liability-card > header > span { color: var(--muted); font-size: .72rem; }
+.external-empty-state { display: flex; align-items: center; gap: .65rem; min-block-size: 64px; padding: .9rem; border: 1px dashed rgba(71, 96, 130, .65); border-radius: 13px; color: #91a2ba; background: rgba(2, 9, 24, .28); }
+.external-empty-state svg { flex: none; inline-size: 21px; block-size: 21px; color: #67e8f9; }
+.external-household-liabilities { min-inline-size: 0; padding: clamp(1rem, 2.2vw, 1.4rem); border: 1px solid rgba(220, 167, 55, .28); border-radius: 20px; background: linear-gradient(145deg, rgba(35, 31, 34, .88), rgba(8, 17, 33, .95)); }
+.external-household-liabilities > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-block-end: 1rem; }
+.external-household-liabilities > header > div { display: flex; align-items: center; gap: .75rem; min-inline-size: 0; }
+.external-household-liabilities > header > div > svg { flex: none; inline-size: 38px; block-size: 38px; padding: .55rem; border-radius: 12px; color: #fcd34d; background: rgba(220, 167, 55, .1); }
+.external-household-liabilities h3 { margin: .2rem 0 0; overflow-wrap: anywhere; }
+.external-household-liabilities > header > dl { display: grid; grid-template-columns: repeat(2, minmax(130px, 1fr)); gap: .55rem; min-inline-size: min(100%, 300px); margin: 0; }
+.external-household-liabilities > header .external-detail-field { padding-block: .6rem; }
+.deal-details-text { overflow-wrap: anywhere; }
+
 @media (max-width: 900px) {
   .response-card-grid, .admin-company-grid, .calendar-admin-layout { grid-template-columns: 1fr; }
   .external-title { align-items: stretch; flex-direction: column; }
   .deadline-card { min-inline-size: 0; }
+  .external-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {
@@ -419,4 +460,13 @@ p { line-height: 1.65; }
   .external-summary-card dd, .response-card dd { text-align: start; }
   .document-card-grid .document-card { grid-template-columns: auto 1fr; }
   .document-card-grid .document-card > div:last-child { grid-column: 1 / -1; justify-content: flex-end; }
+}
+
+@media (max-width: 560px) {
+  .external-section-heading { align-items: start; flex-direction: column; }
+  .external-borrower-header .age-badge { margin-inline-start: 0; }
+  .external-detail-grid, .external-household-liabilities > header > dl { grid-template-columns: 1fr; inline-size: 100%; }
+  .external-detail-field-wide { grid-column: auto; }
+  .external-household-liabilities > header { align-items: stretch; flex-direction: column; }
+  .external-household-liabilities > header > div { align-items: start; }
 }
