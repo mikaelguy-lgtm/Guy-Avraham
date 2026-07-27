@@ -58,12 +58,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   }
 
   if (env.NODE_ENV === "production") {
-    const required = [
-      "FIREBASE_PROJECT_ID",
-      "FIREBASE_CLIENT_EMAIL",
-      "FIREBASE_PRIVATE_KEY",
-      "FIELD_ENCRYPTION_KEY"
-    ] as const;
+    const required = ["FIREBASE_PROJECT_ID", "FIREBASE_CLIENT_EMAIL"] as const;
     const missing = required.filter((key) => !env[key]);
     if (missing.length > 0) {
       throw new Error(`Missing production environment variables: ${missing.join(", ")}`);
@@ -73,6 +68,16 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     }
     if (env.SECRET_PROVIDER === "local-encrypted") {
       throw new Error("Local encrypted secrets are forbidden in production");
+    }
+    if (env.SECRET_PROVIDER === "google" && !env.GOOGLE_CLOUD_PROJECT) {
+      throw new Error("GOOGLE_CLOUD_PROJECT is required for Google Secret Manager");
+    }
+    if (env.SECRET_PROVIDER === "environment") {
+      const environmentSecrets = ["FIREBASE_PRIVATE_KEY", "FIELD_ENCRYPTION_KEY"] as const;
+      const missingEnvironmentSecrets = environmentSecrets.filter((key) => !env[key]);
+      if (missingEnvironmentSecrets.length > 0) {
+        throw new Error(`Missing production environment variables: ${missingEnvironmentSecrets.join(", ")}`);
+      }
     }
   }
   if (env.SECRET_PROVIDER === "local-encrypted") {

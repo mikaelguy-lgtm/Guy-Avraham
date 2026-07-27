@@ -1,0 +1,73 @@
+# SynCash Production Deployment Report
+
+Report date: 2026-07-27
+
+Target: `app.syncash.co.il` on `169.58.83.2`
+
+Branch: `codex-syncash-production-rebuild`
+
+Status: **Prepared; deployment blocked at the external configuration gate**
+
+## Completed
+
+- Audited the new dedicated Ubuntu 24.04 server before changes.
+- Confirmed no existing applications, containers, databases, volumes, custom Nginx sites, or certificates were present.
+- Created and separately verified the `syncash` deployment user before hardening SSH.
+- Installed Docker Engine, Compose, Nginx, Certbot, UFW, Fail2ban, ShellCheck, and backup prerequisites without a general OS upgrade or reboot.
+- Enabled 4 GiB swap, Asia/Jerusalem timezone, UFW rules for SSH/HTTP/HTTPS, Fail2ban, and key-only SSH for `syncash`.
+- Prepared isolated Compose project `syncash-prod`, networks, volumes, loopback ports, SHA-tagged images, resource limits, health checks, security options, and log rotation.
+- Split API and delivery jobs into separate Production processes while preserving the development on-demand behavior.
+- Prepared PostgreSQL migration, encrypted backup, isolated restore-test, health, rollback, Nginx, and systemd timer scripts.
+- Validated the Production Compose model on the target server and passed ShellCheck for deployment scripts.
+
+## Verification Results
+
+- `npm ci`: passed.
+- `npm run typecheck`: passed.
+- `npm run lint`: passed with zero warnings.
+- `npm run test:unit`: 97/97 passed.
+- `npm run test:integration`: 86/86 passed.
+- `npm run test:e2e`: 19/19 passed in a real Chromium browser.
+- `npm run build`: passed; the repository Production bundle safety scan passed.
+- `docker compose config --quiet`: passed on the target server using non-secret placeholders.
+- `shellcheck`: passed for every Production shell script.
+- `npm run db:check`: cannot run from the Windows host because the local development URL uses the Docker-internal hostname `postgres` and the Docker Desktop CLI/WSL integration is unavailable. The Production check remains gated behind creation of the real isolated PostgreSQL service.
+- `npm audit --omit=dev`: reports 13 transitive advisories. The remaining chains are upstream in Google/Firebase libraries plus a React Router RSC advisory; this application is a Vite SPA and does not enable React Server Components. No unsafe major override, forced downgrade, or `npm audit fix --force` was applied.
+
+## Isolation
+
+- Compose project: `syncash-prod`.
+- Networks: `syncash-prod-internal`, `syncash-prod-edge`.
+- Volumes: `syncash-prod-postgres-data`, `syncash-prod-redis-data`, `syncash-prod-minio-data`.
+- Frontend/API host targets: `127.0.0.1:3180`, `127.0.0.1:3181`.
+- PostgreSQL, Redis, MinIO API, and MinIO Console are not published to the host or Internet.
+- Mailpit, Firebase Emulator, Vite, Playwright, and test containers are excluded.
+
+## Current External Blockers
+
+- DNS: `app.syncash.co.il` does not yet resolve to `169.58.83.2`.
+- Firebase Production public configuration and authorized-domain setup are not available.
+- Firebase Admin/Google Secret Manager credentials and required secret values are not available.
+- Real Production SMTP host/user/password/sender/reply-to and mail-domain records are not available.
+- Compatible upstream releases eliminating the remaining npm transitive advisories are not currently available; this risk must be accepted or resolved before the opening gate.
+
+No development credential, emulator, Mailpit endpoint, fabricated secret, or Production customer data was used. No application containers, migrations, SSL issuance, Production email, or public opening were attempted while these blockers remain.
+
+## DNS Action
+
+Create only this record:
+
+- Type: A
+- Host: `app`
+- Value: `169.58.83.2`
+- TTL: 300 or provider default
+
+The existing `syncash.co.il` and `www.syncash.co.il` records remain untouched.
+
+## Rollback
+
+The release rollback switches only SynCash images and the `/opt/syncash/current` symlink. It preserves named volumes and does not reverse migrations automatically. Server baseline files are stored under `/opt/syncash/backups/pre-deploy-*`.
+
+## Declaration
+
+No non-SynCash application, container, volume, network, domain, database, or configuration file was deleted, stopped, modified, or overwritten. The server was new and dedicated; only SynCash-specific files and baseline security services were added.

@@ -113,6 +113,7 @@ interface DeliveryServiceOptions {
   broker: DeliveryEventBroker;
   appUrl: string;
   nodeEnv: string;
+  processJobsOnDemand?: boolean;
   now?: () => Date;
 }
 
@@ -129,11 +130,13 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   private readonly tokens: DeliveryTokenService;
   private readonly broker: DeliveryEventBroker;
   private readonly appUrl: string;
+  private readonly processJobsOnDemand: boolean;
   private readonly now: () => Date;
   private readonly redaction = new CaseRedactionService();
   private readonly pdfRefreshes = new Map<number, Promise<void>>();
 
   private scheduleJobs(): void {
+    if (!this.processJobsOnDemand) return;
     void this.processJobs().catch(() => console.error("Lender delivery jobs failed", {errorCode: "LENDER_DELIVERY_JOB_FAILED"}));
   }
 
@@ -145,6 +148,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     this.tokens = options.tokens;
     this.broker = options.broker;
     this.appUrl = options.appUrl.replace(/\/$/, "");
+    this.processJobsOnDemand = options.processJobsOnDemand ?? true;
     this.now = options.now ?? (() => new Date());
   }
 
