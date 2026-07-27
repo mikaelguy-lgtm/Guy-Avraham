@@ -8,7 +8,7 @@ Branch: `codex-syncash-production-rebuild`
 
 Status: **Firebase Production connected; public startup remains blocked by SMTP and DNS gates**
 
-Prepared release candidate: `3af97244c172`
+Prepared release candidate: `f9578b410278`
 
 ## Completed
 
@@ -21,7 +21,7 @@ Prepared release candidate: `3af97244c172`
 - Split API and delivery jobs into separate Production processes while preserving the development on-demand behavior.
 - Prepared PostgreSQL migration, encrypted backup, isolated restore-test, health, rollback, Nginx, and systemd timer scripts.
 - Validated the Production Compose model on the target server and passed ShellCheck for deployment scripts.
-- Built `syncash-api:3af97244c172` and `syncash-frontend:3af97244c172` on the target server from an exact `git archive` of the tested commit.
+- Built `syncash-api:f9578b410278` and `syncash-frontend:f9578b410278` on the target server from an exact `git archive` of the tested commit and the authoritative Firebase Production Web App configuration.
 - Verified the API image contains the compiled API, worker, and migration artifacts.
 - Verified the frontend image starts read-only, returns a healthy response, and contains no prohibited development/private markers.
 - Installed and reloaded the isolated Nginx HTTP server block after `nginx -t` passed. It currently returns 502 by design because Production containers are not started before the external configuration gate.
@@ -48,6 +48,8 @@ Prepared release candidate: `3af97244c172`
 - Firebase Email/Password provider and the required authorized domain: passed.
 - Firebase Web App configuration: passed against the authoritative Production project configuration.
 - Firebase Emulator exclusion: passed.
+- Firebase-enabled API and frontend release images: passed; the frontend bundle includes the Production project and excludes emulator endpoints.
+- Runtime ADC access under the non-root Production UID: passed with the owner-only credential mount.
 - `npm run db:check`: cannot run from the Windows host because the local development URL uses the Docker-internal hostname `postgres` and the Docker Desktop CLI/WSL integration is unavailable. The Production check remains gated behind creation of the real isolated PostgreSQL service.
 - `npm audit --omit=dev`: reports 13 transitive advisories. The remaining chains are upstream in Google/Firebase libraries plus a React Router RSC advisory; this application is a Vite SPA and does not enable React Server Components. No unsafe major override, forced downgrade, or `npm audit fix --force` was applied.
 
