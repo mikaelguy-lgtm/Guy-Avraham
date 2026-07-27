@@ -8,6 +8,8 @@ Branch: `codex-syncash-production-rebuild`
 
 Status: **Prepared; deployment blocked at the external configuration gate**
 
+Prepared release candidate: `3af97244c172`
+
 ## Completed
 
 - Audited the new dedicated Ubuntu 24.04 server before changes.
@@ -19,6 +21,10 @@ Status: **Prepared; deployment blocked at the external configuration gate**
 - Split API and delivery jobs into separate Production processes while preserving the development on-demand behavior.
 - Prepared PostgreSQL migration, encrypted backup, isolated restore-test, health, rollback, Nginx, and systemd timer scripts.
 - Validated the Production Compose model on the target server and passed ShellCheck for deployment scripts.
+- Built `syncash-api:3af97244c172` and `syncash-frontend:3af97244c172` on the target server from an exact `git archive` of the tested commit.
+- Verified the API image contains the compiled API, worker, and migration artifacts.
+- Verified the frontend image starts read-only, returns a healthy response, and contains no prohibited development/private markers.
+- Installed and reloaded the isolated Nginx HTTP server block after `nginx -t` passed. It currently returns 502 by design because Production containers are not started before the external configuration gate.
 
 ## Verification Results
 
@@ -52,6 +58,8 @@ Status: **Prepared; deployment blocked at the external configuration gate**
 - Compatible upstream releases eliminating the remaining npm transitive advisories are not currently available; this risk must be accepted or resolved before the opening gate.
 
 No development credential, emulator, Mailpit endpoint, fabricated secret, or Production customer data was used. No application containers, migrations, SSL issuance, Production email, or public opening were attempted while these blockers remain.
+
+Docker long-running service status: no SynCash Production containers started. Final API and frontend images are built and ready; PostgreSQL, Redis, MinIO, API, worker, and frontend remain intentionally stopped.
 
 ## DNS Action
 
