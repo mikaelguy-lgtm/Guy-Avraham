@@ -3,12 +3,11 @@ import {Clock3, Eye, FileText, MailCheck, RefreshCw, ShieldOff, ShieldPlus, X} f
 import type {CompanyResponse} from "../types";
 import {api, subscribeDeliveryEvents} from "../utils/apiClient";
 import {formatAccessStatus, formatDate, formatDecisionStatus, formatDeliveryEvent, formatDeliveryStatus, formatInvitationStatus} from "../utils/formatters";
+import {openFreshPdfBlob} from "../utils/pdfBlob";
 
 const openBlob = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob);
-  const popup = window.open(url, "_blank", "noopener,noreferrer");
-  if (!popup) {const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click();}
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  void filename;
+  openFreshPdfBlob(blob);
 };
 
 export default function AdminCompanySubmissionsView() {

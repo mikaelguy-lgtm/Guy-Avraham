@@ -64,6 +64,13 @@
       "when": 1785103208898,
       "tag": "0008_mysterious_loners",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785144181653,
+      "tag": "0009_slow_the_hand",
+      "breakpoints": true
     }
   ]
 }

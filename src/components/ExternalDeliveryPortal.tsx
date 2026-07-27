@@ -4,13 +4,14 @@ import {useNavigate, useParams} from "react-router-dom";
 import type {ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview} from "../types";
 import {ApiError, api} from "../utils/apiClient";
 import {formatAdditionalIncomeType, formatBorrowerRelationship, formatCurrency, formatDate, formatEmploymentType, formatLiabilityType, formatLoanPurpose, formatMaritalStatus, formatPropertyType} from "../utils/formatters";
+import {openFreshPdfBlob} from "../utils/pdfBlob";
 import SynCashLogo from "./SynCashLogo";
 
 const errorMessage = (error: unknown) => error instanceof ApiError ? error.publicMessage ?? "לא ניתן להשלים את הפעולה." : "לא ניתן להשלים את הפעולה.";
 const downloadBlob = (blob: Blob, filename: string, open = false) => {
+  if (open) {openFreshPdfBlob(blob); return;}
   const url = URL.createObjectURL(blob);
-  if (open) window.open(url, "_blank", "noopener,noreferrer");
-  else {const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click();}
+  const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 };
 

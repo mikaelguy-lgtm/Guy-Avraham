@@ -97,7 +97,7 @@ export function makeStore(overrides: Partial<AppStore> = {}): AppStore {
 export class MemoryStorage implements StorageService {
   values = new Map<string, StoredObject>();
   async initialize() {}
-  async put(key: string, body: Buffer, contentType: string) { this.values.set(key, {body, contentType}); }
+  async put(key: string, body: Buffer, contentType: string, metadata?: Record<string, string>) { this.values.set(key, {body, contentType, metadata}); }
   async get(key: string) { return this.values.get(key) ?? {body: Buffer.from("%PDF-test"), contentType: "application/pdf"}; }
   async signedDownloadUrl(key: string) { return `memory://${key}`; }
   async delete(key: string) { this.values.delete(key); }

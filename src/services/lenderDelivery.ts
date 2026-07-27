@@ -4,7 +4,7 @@ import type {Pool, PoolClient} from "pg";
 import {createPool} from "../db/index.js";
 import type {
   BusinessCalendarException, DeliveryCompanySummary, DeliveryPreflight, DeliveryPreview, FullCaseBorrowerSnapshot,
-  FullCaseLiabilitySnapshot, FullCaseSnapshot, VersionDocumentSnapshot
+  FullCaseLiabilitySnapshot, FullCaseSnapshot, MaskedCaseSnapshot, VersionDocumentSnapshot
 } from "../domain/lenderDelivery.js";
 import {DeliveryError} from "../domain/lenderDelivery.js";
 import {calculateAge} from "../utils/age.js";
@@ -14,7 +14,8 @@ import type {EncryptionService} from "../utils/crypto.js";
 import type {EmailService} from "./email.js";
 import {sanitizeEmailError} from "./email.js";
 import {CaseRedactionService} from "./caseRedaction.js";
-import {createFullCasePdf, createMaskedCasePdf} from "./pdf.js";
+import {createFullCasePdf, createMaskedCasePdf, PDF_RENDERER_VERSION} from "./pdf.js";
+import {loadPdfHebrewFonts} from "./pdfFonts.js";
 import type {StorageService} from "./storage.js";
 import {DeliveryTokenService} from "./deliveryTokens.js";
 import {IsraelBusinessCalendarService} from "./israelBusinessCalendar.js";
@@ -130,6 +131,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   private readonly appUrl: string;
   private readonly now: () => Date;
   private readonly redaction = new CaseRedactionService();
+  private readonly pdfRefreshes = new Map<number, Promise<void>>();
 
   private scheduleJobs(): void {
     void this.processJobs().catch(() => console.error("Lender delivery jobs failed", {errorCode: "LENDER_DELIVERY_JOB_FAILED"}));
@@ -148,6 +150,74 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
 
   private decrypt(value: string | null | undefined): string {
     return value ? this.encryption.decrypt(value) : "";
+  }
+
+  private pdfObjectMetadata(contentHash: string, generatedAt: Date, classification: "masked" | "confidential", versionId: number): Record<string, string> {
+    return {
+      "case-version": String(versionId),
+      classification,
+      "renderer-version": String(PDF_RENDERER_VERSION),
+      "font-fingerprint": loadPdfHebrewFonts().fingerprint,
+      "generated-at": generatedAt.toISOString(),
+      "content-hash": contentHash
+    };
+  }
+
+  private versionMetadataCurrent(row: Row): boolean {
+    const fonts = loadPdfHebrewFonts();
+    return Number(row.pdf_renderer_version) === PDF_RENDERER_VERSION
+      && row.pdf_font_fingerprint === fonts.fingerprint
+      && Boolean(row.pdf_generated_at)
+      && Boolean(row.content_hash);
+  }
+
+  private objectMetadataCurrent(metadata: Record<string, string> | undefined, contentHash: string, generatedAt: Date): boolean {
+    const fonts = loadPdfHebrewFonts();
+    return metadata?.["renderer-version"] === String(PDF_RENDERER_VERSION)
+      && metadata?.["font-fingerprint"] === fonts.fingerprint
+      && metadata?.["content-hash"] === contentHash
+      && metadata?.["generated-at"] === generatedAt.toISOString();
+  }
+
+  private async refreshVersionPdfs(versionId: number, force = false): Promise<Row> {
+    const refresh = async () => {
+      const result = await this.pool.query("select * from case_versions where id=$1", [versionId]);
+      const row = result.rows[0];
+      if (!row) throw new DeliveryError("CASE_VERSION_NOT_FOUND", 404, "גרסת התיק לא נמצאה.");
+      if (!force && this.versionMetadataCurrent(row)) return;
+      const fullSnapshot = JSON.parse(this.encryption.decrypt(row.full_snapshot_encrypted)) as FullCaseSnapshot;
+      const maskedSnapshot = row.masked_snapshot as MaskedCaseSnapshot;
+      const generatedAt = new Date(row.pdf_generated_at ?? row.created_at);
+      if (Number.isNaN(generatedAt.getTime())) throw new DeliveryError("CASE_VERSION_PDF_DATE_INVALID", 500, "לא ניתן להפיק את מסמכי התיק.");
+      const [maskedPdf, fullPdf] = await Promise.all([
+        createMaskedCasePdf(maskedSnapshot, {versionNumber: Number(row.version_number), createdAt: generatedAt}),
+        createFullCasePdf(fullSnapshot, {versionNumber: Number(row.version_number), createdAt: generatedAt})
+      ]);
+      await Promise.all([
+        this.storage.put(row.masked_pdf_object_key, maskedPdf, "application/pdf", this.pdfObjectMetadata(row.content_hash, generatedAt, "masked", versionId)),
+        this.storage.put(row.full_pdf_object_key, fullPdf, "application/pdf", this.pdfObjectMetadata(row.content_hash, generatedAt, "confidential", versionId))
+      ]);
+      await this.pool.query("update case_versions set pdf_renderer_version=$2,pdf_font_fingerprint=$3,pdf_generated_at=$4 where id=$1", [versionId, PDF_RENDERER_VERSION, loadPdfHebrewFonts().fingerprint, generatedAt]);
+    };
+    const existing = this.pdfRefreshes.get(versionId);
+    if (existing) await existing;
+    else {
+      const pending = refresh().finally(() => this.pdfRefreshes.delete(versionId));
+      this.pdfRefreshes.set(versionId, pending);
+      await pending;
+    }
+    return (await this.pool.query("select * from case_versions where id=$1", [versionId])).rows[0];
+  }
+
+  private async getCurrentVersionPdf(versionId: number, kind: "masked" | "full"): Promise<Buffer> {
+    let row = await this.refreshVersionPdfs(versionId);
+    const objectKey = kind === "masked" ? row.masked_pdf_object_key : row.full_pdf_object_key;
+    let object = await this.storage.get(objectKey);
+    if (!this.objectMetadataCurrent(object.metadata, row.content_hash, new Date(row.pdf_generated_at))) {
+      row = await this.refreshVersionPdfs(versionId, true);
+      object = await this.storage.get(kind === "masked" ? row.masked_pdf_object_key : row.full_pdf_object_key);
+    }
+    return object.body;
   }
 
   private async calendar(client: Pool | PoolClient = this.pool): Promise<IsraelBusinessCalendarService> {
@@ -247,10 +317,11 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     const redacted = this.redaction.redact(snapshot);
     const versionResult = await this.pool.query("select coalesce(max(version_number),0)::int + 1 as version_number from case_versions where client_id=$1", [clientId]);
     const createdAt = this.now();
+    const contentHash = sha256(JSON.stringify(snapshot));
     const pdf = await createMaskedCasePdf(redacted.maskedSnapshot, {versionNumber: Number(versionResult.rows[0].version_number), createdAt});
     const deadline = (await this.calendar()).calculateResponseDeadline(createdAt);
-    const payload = JSON.stringify({clientId, advisorId: actor.advisorId, companyIds: [...new Set(companyIds)].sort((a, b) => a - b), sourceClientUpdatedAt: snapshot.sourceClientUpdatedAt, contentHash: sha256(JSON.stringify(snapshot)), expiresAt: createdAt.getTime() + 5 * 60_000});
-    return {maskedSnapshot: redacted.maskedSnapshot, maskedPdfBase64: pdf.toString("base64"), companies: companies.map((row) => ({id: Number(row.id), name: row.name, logoUrl: null, activityAreas: row.activity_areas ?? [], activeContactCount: Number(row.active_contact_count), lastSentAt: null, alreadySentCurrentVersion: false})), selectedCompanyCount: companies.length, selectedContactCount: companies.reduce((sum, row) => sum + Number(row.active_contact_count), 0), responseDeadlineAt: deadline.toISOString(), previewConfirmation: this.tokens.signPreview(payload)};
+    const payload = JSON.stringify({clientId, advisorId: actor.advisorId, companyIds: [...new Set(companyIds)].sort((a, b) => a - b), sourceClientUpdatedAt: snapshot.sourceClientUpdatedAt, contentHash, pdfGeneratedAt: createdAt.toISOString(), expiresAt: createdAt.getTime() + 5 * 60_000});
+    return {maskedSnapshot: redacted.maskedSnapshot, maskedPdfBase64: pdf.toString("base64"), pdfRendererVersion: PDF_RENDERER_VERSION, pdfFontFingerprint: loadPdfHebrewFonts().fingerprint, pdfGeneratedAt: createdAt.toISOString(), pdfContentHash: contentHash, companies: companies.map((row) => ({id: Number(row.id), name: row.name, logoUrl: null, activityAreas: row.activity_areas ?? [], activeContactCount: Number(row.active_contact_count), lastSentAt: null, alreadySentCurrentVersion: false})), selectedCompanyCount: companies.length, selectedContactCount: companies.reduce((sum, row) => sum + Number(row.active_contact_count), 0), responseDeadlineAt: deadline.toISOString(), previewConfirmation: this.tokens.signPreview(payload)};
   }
 
   private async batchSummary(client: Pool | PoolClient, batchId: number): Promise<Record<string, unknown>> {
@@ -278,6 +349,8 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     const companies = await this.selectedCompanies(selectedIds);
     const redacted = this.redaction.redact(snapshot);
     const createdAt = this.now();
+    const pdfGeneratedAt = new Date(String(confirmation.pdfGeneratedAt));
+    if (Number.isNaN(pdfGeneratedAt.getTime())) throw new DeliveryError("PREVIEW_CONFIRMATION_INVALID", 409, "אישור התצוגה המקדימה אינו תקף.");
     const calendar = await this.calendar();
     const deadline = calendar.calculateResponseDeadline(createdAt);
     const storagePrefix = `case-versions/${randomUUID()}`;
@@ -308,8 +381,11 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     } finally { connection.release(); }
 
     try {
-      const [maskedPdf, fullPdf] = await Promise.all([createMaskedCasePdf(redacted.maskedSnapshot, {versionNumber, createdAt}), createFullCasePdf(snapshot, {versionNumber, createdAt})]);
-      await Promise.all([this.storage.put(`${storagePrefix}/masked.pdf`, maskedPdf, "application/pdf", {caseVersion: String(versionId), classification: "masked"}), this.storage.put(`${storagePrefix}/full.pdf`, fullPdf, "application/pdf", {caseVersion: String(versionId), classification: "confidential"})]);
+      const [maskedPdf, fullPdf] = await Promise.all([createMaskedCasePdf(redacted.maskedSnapshot, {versionNumber, createdAt: pdfGeneratedAt}), createFullCasePdf(snapshot, {versionNumber, createdAt: pdfGeneratedAt})]);
+      await Promise.all([
+        this.storage.put(`${storagePrefix}/masked.pdf`, maskedPdf, "application/pdf", this.pdfObjectMetadata(contentHash, pdfGeneratedAt, "masked", versionId)),
+        this.storage.put(`${storagePrefix}/full.pdf`, fullPdf, "application/pdf", this.pdfObjectMetadata(contentHash, pdfGeneratedAt, "confidential", versionId))
+      ]);
       const immutableDocuments: Array<VersionDocumentSnapshot & {immutableObjectKey: string}> = [];
       for (const document of snapshot.documents) {
         const object = await this.storage.get(document.storageKey);
@@ -335,7 +411,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
           }
           await this.event(finalize, {submissionId, actorType: "ADVISOR", actorId: actor.userId, type: "SUBMISSION_CREATED", metadata: {versionNumber, contactCount: contacts.rows.length}}, context);
         }
-        await finalize.query("update case_versions set status='READY' where id=$1", [versionId]);
+        await finalize.query("update case_versions set status='READY',pdf_renderer_version=$2,pdf_font_fingerprint=$3,pdf_generated_at=$4 where id=$1", [versionId, PDF_RENDERER_VERSION, loadPdfHebrewFonts().fingerprint, pdfGeneratedAt]);
         await finalize.query("update clients set status='SUBMITTED',updated_at=now() where id=$1", [clientId]);
         await finalize.query("insert into notifications(user_id,type,title,body) select user_id,'CASE_SENT_TO_COMPANIES','התיק נשלח לחברות מימון',$2 from advisor_profiles where id=$1", [actor.advisorId, `תיק ${snapshot.publicCaseNumber} נשלח ל־${companies.length} חברות מימון.`]);
         await this.audit(finalize, actor.userId, "LENDER_DELIVERY_BATCH_CREATED", "delivery_batch", batchId, {clientId, versionId, versionNumber, companyCount: companies.length}, context);
@@ -563,8 +639,8 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     const column = download ? "masked_pdf_downloaded_at" : "masked_pdf_viewed_at";
     await this.pool.query(`update submission_contact_invitations set ${column}=coalesce(${column},now()),updated_at=now() where id=$1`, [row.invitation_id]);
     await this.event(this.pool, {submissionId: Number(row.submission_id), invitationId: Number(row.invitation_id), contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: download ? "MASKED_PDF_DOWNLOADED" : "MASKED_PDF_VIEWED"}, context);
-    const object = await this.storage.get(row.masked_pdf_object_key);
-    return {body: object.body, filename: `תיק-מימון-מוסווה-${row.public_case_number}.pdf`};
+    const body = await this.getCurrentVersionPdf(Number(row.case_version_id), "masked");
+    return {body, filename: `תיק-מימון-מוסווה-${row.public_case_number}.pdf`};
   }
 
   private async queueDecisionMessages(client: PoolClient, row: Row, interested: boolean, context: DeliveryContext): Promise<void> {
@@ -734,9 +810,9 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   }
 
   async getPortalPdf(sessionToken: string, context: DeliveryContext): Promise<{body: Buffer; filename: string}> {
-    const row = await this.portalSession(sessionToken, context); const object = await this.storage.get(row.full_pdf_object_key);
+    const row = await this.portalSession(sessionToken, context); const body = await this.getCurrentVersionPdf(Number(row.case_version_id), "full");
     await this.event(this.pool, {submissionId: Number(row.submission_id), contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "FULL_PDF_DOWNLOADED"}, context);
-    return {body: object.body, filename: `תיק-מימון-מלא-${row.public_case_number}.pdf`};
+    return {body, filename: `תיק-מימון-מלא-${row.public_case_number}.pdf`};
   }
 
   private documentPublicId(row: Row): string {
@@ -762,7 +838,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
 
   async getPortalZip(sessionToken: string, context: DeliveryContext): Promise<{body: Buffer; filename: string}> {
     const session = await this.portalSession(sessionToken, context); const snapshot = JSON.parse(this.encryption.decrypt(session.full_snapshot_encrypted)) as FullCaseSnapshot; const documents = await this.versionDocuments(Number(session.case_version_id)); const zip = new JSZip();
-    const pdf = await this.storage.get(session.full_pdf_object_key); zip.file(`תיק-מלא/תיק-מימון-מלא-${snapshot.publicCaseNumber}.pdf`, pdf.body);
+    const pdf = await this.getCurrentVersionPdf(Number(session.case_version_id), "full"); zip.file(`תיק-מלא/תיק-מימון-מלא-${snapshot.publicCaseNumber}.pdf`, pdf);
     for (const document of documents) {
       const object = await this.storage.get(document.immutable_object_key); const name = getDocumentDisplayName({documentType: document.document_type, customTitle: document.custom_title}); const extension = document.mime_type === "application/pdf" ? ".pdf" : document.mime_type === "image/png" ? ".png" : ".jpg"; const borrower = snapshot.documents.find((item) => item.documentId === Number(document.document_id))?.borrowerOrder; const folder = borrower ? `מסמכי-לווה-${borrower}` : document.document_type === "OTHER" ? "מסמכים-נוספים" : "מסמכי-נכס"; zip.file(`${folder}/${name}-${document.id}${extension}`, object.body);
     }
@@ -796,12 +872,12 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   }
 
   async getAdminPdf(publicId: string, kind: "masked" | "full", actor: AdminDeliveryActor, context: DeliveryContext): Promise<{body: Buffer; filename: string}> {
-    const result = await this.pool.query(`select cs.id,cv.masked_pdf_object_key,cv.full_pdf_object_key,c.public_case_number from company_submissions cs join case_versions cv on cv.id=cs.case_version_id join clients c on c.id=cv.client_id where cs.public_id=$1`, [publicId]);
+    const result = await this.pool.query(`select cs.id,cv.id case_version_id,c.public_case_number from company_submissions cs join case_versions cv on cv.id=cs.case_version_id join clients c on c.id=cv.client_id where cs.public_id=$1`, [publicId]);
     const row = result.rows[0];
     if (!row) throw new DeliveryError("SUBMISSION_NOT_FOUND", 404, "השליחה לא נמצאה.");
-    const object = await this.storage.get(kind === "masked" ? row.masked_pdf_object_key : row.full_pdf_object_key);
+    const body = await this.getCurrentVersionPdf(Number(row.case_version_id), kind);
     await this.audit(this.pool, actor.userId, kind === "masked" ? "ADMIN_MASKED_PDF_VIEWED" : "ADMIN_FULL_PDF_VIEWED", "company_submission", Number(row.id), {publicId}, context);
-    return {body: object.body, filename: `תיק-מימון-${kind === "masked" ? "מוסווה" : "מלא"}-${row.public_case_number}.pdf`};
+    return {body, filename: `תיק-מימון-${kind === "masked" ? "מוסווה" : "מלא"}-${row.public_case_number}.pdf`};
   }
 
   async adminAction(publicId: string, action: string, values: Record<string, unknown>, actor: AdminDeliveryActor, context: DeliveryContext): Promise<unknown> {

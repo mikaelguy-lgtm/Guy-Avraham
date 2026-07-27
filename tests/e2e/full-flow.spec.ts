@@ -1,8 +1,13 @@
 import {randomUUID} from "node:crypto";
+import {mkdir, readFile, writeFile} from "node:fs/promises";
 import {expect, test, type APIRequestContext, type Browser, type BrowserContext, type Page} from "@playwright/test";
+import {GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client} from "@aws-sdk/client-s3";
+import JSZip from "jszip";
+import {getDocument} from "pdfjs-dist/legacy/build/pdf.mjs";
 
 const apiOrigin = "http://localhost:3000";
 const mailpitOrigin = "http://localhost:8025";
+const pdfProofDirectory = `${process.cwd()}/output/pdf-hebrew-verification`;
 
 async function login(page: Page, email: string, password: string): Promise<string> {
   await page.goto("/");
@@ -50,6 +55,35 @@ function otpFrom(message: MailpitDetail): string {
   return code;
 }
 
+async function extractPdf(pdf: Buffer): Promise<{pageCount: number; pageTexts: string[]; text: string}> {
+  const document = await getDocument({data: new Uint8Array(pdf)}).promise;
+  const pageTexts: string[] = [];
+  for (let index = 1; index <= document.numPages; index += 1) {
+    const page = await document.getPage(index);
+    const content = await page.getTextContent();
+    pageTexts.push(content.items.map((item) => "str" in item ? item.str : "").join(" ").split("\u0000").join("").replace(/\s+/gu, " ").trim());
+  }
+  return {pageCount: document.numPages, pageTexts, text: pageTexts.join(" ")};
+}
+
+async function downloadedBuffer(download: {path(): Promise<string | null>}): Promise<Buffer> {
+  const filePath = await download.path();
+  if (!filePath) throw new Error("PLAYWRIGHT_DOWNLOAD_PATH_MISSING");
+  return readFile(filePath);
+}
+
+function expectHealthyHebrewPdf(extracted: {pageCount: number; pageTexts: string[]; text: string}, kind: "masked" | "full"): void {
+  expect(extracted.pageCount).toBeGreaterThan(1);
+  expect(extracted.pageCount).toBeLessThanOrEqual(kind === "masked" ? 4 : 5);
+  expect(extracted.pageTexts.every((pageText) => pageText.replace(/SYNCASH|מידע סודי|הופק|עמוד|מתוך|\s/g, "").length > 10)).toBe(true);
+  for (const heading of kind === "masked"
+    ? ["תיק מימון מוסווה לבחינה", "תקציר העסקה", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]
+    : ["תיק מימון מלא", "תקציר העסקה", "פרטים אישיים", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]
+  ) expect(extracted.text).toContain(heading);
+  expect(extracted.text).not.toMatch(/[�□■]/u);
+  expect(extracted.text).not.toMatch(/SECOND_HAND_PURCHASE|SALARIED|SELF_EMPLOYED|APARTMENT|MORTGAGE/u);
+}
+
 const clientPayload = {
   numberOfBorrowers: 2, borrowerRelationship: "MARRIED", borrowerRelationshipOther: null,
   household: {numberOfChildren: 2, childrenAges: [4, 8]},
@@ -67,8 +101,11 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
   const advisorEmail = process.env.E2E_ADVISOR_EMAIL; const advisorPassword = process.env.E2E_ADVISOR_PASSWORD;
   const adminEmail = process.env.E2E_SUPER_ADMIN_EMAIL; const adminPassword = process.env.E2E_SUPER_ADMIN_PASSWORD;
   if (!advisorEmail || !advisorPassword || !adminEmail || !adminPassword) throw new Error("E2E advisor and admin credentials are required");
+  if (!process.env.S3_ACCESS_KEY_ID || !process.env.S3_SECRET_KEY || !process.env.S3_BUCKET) throw new Error("E2E MinIO credentials are required");
+  const testStartedAt = Date.now();
+  const s3 = new S3Client({endpoint: "http://localhost:9000", region: process.env.S3_REGION ?? "us-east-1", forcePathStyle: true, credentials: {accessKeyId: process.env.S3_ACCESS_KEY_ID, secretAccessKey: process.env.S3_SECRET_KEY}});
   const unique = Date.now(); const companyName = `מימון אופק ${unique}`; const contactA = `delivery-a-${unique}@syncash.local`; const contactB = `delivery-b-${unique}@syncash.local`;
-  let clientId = 0; const companyIds: number[] = []; let advisorAuthorization = ""; let adminAuthorization = ""; const contexts: BrowserContext[] = [];
+  let clientId = 0; const companyIds: number[] = []; let advisorAuthorization = ""; let adminAuthorization = ""; let previewPdf = Buffer.alloc(0); const contexts: BrowserContext[] = [];
   const consoleErrors: string[] = []; const failedResponses: string[] = [];
   page.on("console", (message) => {if (message.type() === "error") consoleErrors.push(message.text());});
   page.on("response", (response) => {if (response.url().startsWith(`${apiOrigin}/api/`) && response.status() >= 500) failedResponses.push(`${response.status()} ${response.url()}`);});
@@ -109,15 +146,33 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     const previewResponsePromise = page.waitForResponse((response) => response.url().endsWith(`/api/clients/${clientId}/delivery/preview`) && response.request().method() === "POST");
     await page.getByRole("button", {name: "המשך לתצוגה מוסווית"}).click();
     const previewResponse = await previewResponsePromise; expect(previewResponse.ok()).toBe(true);
-    const previewBody = JSON.stringify(await previewResponse.json());
+    const preview = await previewResponse.json() as {maskedPdfBase64: string; pdfRendererVersion: number; pdfFontFingerprint: string; pdfGeneratedAt: string; pdfContentHash: string};
+    const previewBody = JSON.stringify(preview);
     for (const pii of ["בדיקת", "מסירה", "123456782", "0501234567", "delivery-client@syncash.local", "רחוב סודי", "מעסיק סודי"]) expect(previewBody).not.toContain(pii);
+    expect(preview.pdfRendererVersion).toBe(3); expect(preview.pdfFontFingerprint).toMatch(/^[a-f0-9]{64}$/); expect(preview.pdfContentHash).toMatch(/^[a-f0-9]{64}$/);
+    previewPdf = Buffer.from(preview.maskedPdfBase64, "base64");
+    await mkdir(pdfProofDirectory, {recursive: true}); await writeFile(`${pdfProofDirectory}/masked-from-docker-endpoint.pdf`, previewPdf);
+    expect(previewPdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+    expect(previewPdf.toString("latin1")).toContain("NotoSansHebrew");
+    const previewExtracted = await extractPdf(previewPdf); expectHealthyHebrewPdf(previewExtracted, "masked");
+    for (const pii of ["בדיקת", "מסירה", "123456782", "0501234567", "delivery-client@syncash.local", "מעסיק סודי"]) expect(previewExtracted.text).not.toContain(pii);
     await expect(page.getByRole("heading", {name: "תצוגה מקדימה מוסווית"})).toBeVisible();
     await expect(page.getByText("2", {exact: true}).first()).toBeVisible();
+    const previewPopupPromise = page.waitForEvent("popup");
+    await page.getByRole("button", {name: "צפייה ב־PDF המוסווה"}).click();
+    const previewPopup = await previewPopupPromise;
+    await expect.poll(() => previewPopup.url()).toMatch(/^(?:blob:|:)$/);
+    expect(previewPopup.isClosed()).toBe(false);
+    await previewPopup.close();
     await page.getByRole("button", {name: "המשך לאישור"}).click();
     await page.getByLabel("אני מאשר/ת שהמידע המוסווה נבדק ושהתיק מוכן לשליחה.").check();
     const sendResponsePromise = page.waitForResponse((response) => response.url().endsWith(`/api/clients/${clientId}/delivery/send`) && response.request().method() === "POST");
     await page.getByRole("button", {name: "אישור ושליחת התיק"}).click();
     expect((await sendResponsePromise).status()).toBe(201);
+    const listedObjects = await s3.send(new ListObjectsV2Command({Bucket: process.env.S3_BUCKET, Prefix: "case-versions/"}));
+    const maskedObject = listedObjects.Contents?.filter((item) => item.Key?.endsWith("/masked.pdf") && (item.LastModified?.getTime() ?? 0) >= testStartedAt - 5_000).sort((left, right) => (right.LastModified?.getTime() ?? 0) - (left.LastModified?.getTime() ?? 0))[0];
+    expect(maskedObject?.Key).toBeTruthy();
+    await s3.send(new PutObjectCommand({Bucket: process.env.S3_BUCKET, Key: maskedObject!.Key, Body: Buffer.from("%PDF-1.7\nbroken stale renderer"), ContentType: "application/pdf", Metadata: {"renderer-version": "2", "font-fingerprint": "stale", "content-hash": "stale"}}));
     await expect(page.getByRole("heading", {name: "התיק נשלח בהצלחה"})).toBeVisible();
     await page.getByRole("dialog", {name: "שליחה לחברות מימון"}).getByRole("button", {name: "סגירה"}).click();
     await expect(page.locator(".advisor-topbar .notification-badge")).toBeVisible();
@@ -137,6 +192,16 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     const reviewContext = await browser.newContext(); contexts.push(reviewContext); const reviewPage = await reviewContext.newPage();
     await reviewPage.goto(reviewA); await expect(reviewPage.getByRole("heading", {name: "תיק מימון מוסווה לבחינה"})).toBeVisible();
     for (const pii of ["בדיקת מסירה", "123456782", "0501234567", "delivery-client@syncash.local", "מעסיק סודי", "רחוב הנכס הסודי"]) await expect(reviewPage.locator("body")).not.toContainText(pii);
+    const reviewToken = new URL(reviewA).pathname.split("/").at(-1) ?? "";
+    const persistedMaskedResponse = await request.get(`${apiOrigin}/api/external/review/${reviewToken}/masked-pdf?download=1`);
+    expect(persistedMaskedResponse.ok()).toBe(true); expect(persistedMaskedResponse.headers()["cache-control"]).toContain("no-store");
+    const persistedMaskedPdf = Buffer.from(await persistedMaskedResponse.body());
+    expect(persistedMaskedPdf).toEqual(previewPdf);
+    expectHealthyHebrewPdf(await extractPdf(persistedMaskedPdf), "masked");
+    const regeneratedObject = await s3.send(new GetObjectCommand({Bucket: process.env.S3_BUCKET, Key: maskedObject!.Key}));
+    expect(regeneratedObject.Metadata?.["renderer-version"]).toBe("3"); expect(regeneratedObject.Metadata?.["font-fingerprint"]).toMatch(/^[a-f0-9]{64}$/); expect(regeneratedObject.Metadata?.["content-hash"]).toMatch(/^[a-f0-9]{64}$/);
+    const maskedDownloadPromise = reviewPage.waitForEvent("download"); await reviewPage.getByRole("button", {name: "הורדת PDF"}).click();
+    const maskedDownload = await maskedDownloadPromise; expect(await downloadedBuffer(maskedDownload)).toEqual(previewPdf);
     await reviewPage.getByRole("button", {name: "מעוניינים", exact: true}).click();
     await expect(reviewPage.getByText("קוד חד־פעמי נשלח")).toBeVisible();
     const interestOtp = otpFrom(await waitForMail(request, contactA, "קוד אימות לפתיחת תיק מימון"));
@@ -160,9 +225,12 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     await expect(portalPage.getByText("מעסיק סודי בע״מ", {exact: true})).toBeVisible();
     await expect(portalPage.getByText("היועץ המטפל")).toBeVisible();
     await expect(portalPage.getByRole("button", {name: /הצעה/})).toHaveCount(0);
-    const fullPdf = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "PDF מלא"}).click(); expect((await fullPdf).suggestedFilename()).toContain("תיק-מימון-מלא");
+    const fullPdfPromise = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "PDF מלא"}).click(); const fullPdfDownload = await fullPdfPromise; expect(fullPdfDownload.suggestedFilename()).toContain("תיק-מימון-מלא");
+    const fullPdf = await downloadedBuffer(fullPdfDownload); await writeFile(`${pdfProofDirectory}/full-from-docker-endpoint.pdf`, fullPdf); expect(fullPdf.toString("latin1")).toContain("NotoSansHebrew"); const fullExtracted = await extractPdf(fullPdf); expectHealthyHebrewPdf(fullExtracted, "full"); expect(fullExtracted.text).toContain("בדיקת מסירה");
     const documentDownload = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: /^הורדת /}).first().click(); expect((await documentDownload).suggestedFilename()).not.toContain("ID_FRONT");
-    const zipDownload = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "הורדת כל התיק"}).click(); expect((await zipDownload).suggestedFilename()).toMatch(/\.zip$/);
+    const zipDownloadPromise = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "הורדת כל התיק"}).click(); const zipDownload = await zipDownloadPromise; expect(zipDownload.suggestedFilename()).toMatch(/\.zip$/);
+    const zip = await JSZip.loadAsync(await downloadedBuffer(zipDownload)); const zippedPdfEntry = Object.values(zip.files).find((entry) => /תיק-מימון-מלא.*\.pdf$/u.test(entry.name)); expect(zippedPdfEntry).toBeDefined();
+    const zippedPdf = await zippedPdfEntry!.async("nodebuffer"); await writeFile(`${pdfProofDirectory}/full-from-zip.pdf`, zippedPdf); expect(zippedPdf).toEqual(fullPdf); expectHealthyHebrewPdf(await extractPdf(zippedPdf), "full");
 
     await page.goto(`/advisor/clients/${clientId}`); await page.getByRole("button", {name: "תגובות חברות"}).click();
     await expect(page.getByText(companyName)).toBeVisible(); await expect(page.getByText("מעוניינת", {exact: true})).toBeVisible();

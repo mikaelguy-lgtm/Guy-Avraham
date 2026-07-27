@@ -444,6 +444,9 @@ export const caseVersions = pgTable("case_versions", {
   fullPdfObjectKey: varchar("full_pdf_object_key", {length: 512}).notNull(),
   redactionReport: jsonb("redaction_report").notNull(),
   contentHash: varchar("content_hash", {length: 64}).notNull(),
+  pdfRendererVersion: integer("pdf_renderer_version"),
+  pdfFontFingerprint: varchar("pdf_font_fingerprint", {length: 64}),
+  pdfGeneratedAt: timestamp("pdf_generated_at", {withTimezone: true}),
   status: caseVersionStatusEnum("status").notNull().default("CREATING"),
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
 }, (table) => [

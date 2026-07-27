@@ -209,6 +209,10 @@ export interface DeliveryCompany {
 export interface DeliveryPreview {
   maskedSnapshot: Record<string, unknown>;
   maskedPdfBase64: string;
+  pdfRendererVersion: number;
+  pdfFontFingerprint: string;
+  pdfGeneratedAt: string;
+  pdfContentHash: string;
   companies: DeliveryCompany[];
   selectedCompanyCount: number;
   selectedContactCount: number;

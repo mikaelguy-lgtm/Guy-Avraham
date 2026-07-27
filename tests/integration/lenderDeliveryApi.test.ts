@@ -12,7 +12,7 @@ function fakeDelivery(overrides: Partial<LenderDeliveryApplication> = {}): Lende
   const defaults: Partial<LenderDeliveryApplication> = {
     listAdvisorCompanies: vi.fn().mockResolvedValue([{id: 7, name: "מימון בטוח", activeContactCount: 2, activityAreas: [], logoUrl: null, lastSentAt: null, alreadySentCurrentVersion: false}]),
     preflight: vi.fn().mockResolvedValue({ready: true, blockers: []}),
-    preview: vi.fn().mockResolvedValue({maskedSnapshot: {publicCaseNumber: "SC-1"}, maskedPdfBase64: "JVBERg==", companies: [], selectedCompanyCount: 1, selectedContactCount: 2, responseDeadlineAt: new Date().toISOString(), previewConfirmation: "signed-preview"}),
+    preview: vi.fn().mockResolvedValue({maskedSnapshot: {publicCaseNumber: "SC-1"}, maskedPdfBase64: "JVBERg==", pdfRendererVersion: 3, pdfFontFingerprint: "a".repeat(64), pdfGeneratedAt: new Date().toISOString(), pdfContentHash: "b".repeat(64), companies: [], selectedCompanyCount: 1, selectedContactCount: 2, responseDeadlineAt: new Date().toISOString(), previewConfirmation: "signed-preview"}),
     send: vi.fn().mockResolvedValue({batchId: "batch-public", companies: []}),
     listClientResponses: vi.fn().mockResolvedValue([]), getClientResponse: vi.fn().mockResolvedValue({publicId: "submission-public", timeline: []}),
     listCompaniesForAdmin: vi.fn().mockResolvedValue([]), createCompany: vi.fn().mockResolvedValue({id: 1}), updateCompany: vi.fn(), deleteCompany: vi.fn(), createContact: vi.fn(), updateContact: vi.fn(), deleteContact: vi.fn(),
@@ -69,7 +69,8 @@ describe("secure lender delivery API", () => {
 
   it("streams immutable delivery PDFs only to authenticated admins", async () => {
     const delivery = fakeDelivery(); const app = application(delivery);
-    await request(app).get("/api/admin/company-submissions/submission-public/masked-pdf").set("authorization", "Bearer admin").expect("content-type", /application\/pdf/).expect(200);
+    const masked = await request(app).get("/api/admin/company-submissions/submission-public/masked-pdf").set("authorization", "Bearer admin").expect("content-type", /application\/pdf/).expect(200);
+    expect(masked.headers["cache-control"]).toContain("no-store");
     await request(app).get("/api/admin/company-submissions/submission-public/full-pdf").set("authorization", "Bearer super").expect("content-type", /application\/pdf/).expect(200);
     await request(app).get("/api/admin/company-submissions/submission-public/full-pdf").set("authorization", "Bearer advisor").expect(403);
     expect(delivery.getAdminPdf).toHaveBeenCalledTimes(2);
@@ -81,6 +82,12 @@ describe("secure lender delivery API", () => {
     expect(JSON.stringify(response.body)).not.toMatch(/clientId|companyId|contactId|tokenHash|identityNumber/i);
     expect(response.headers["cache-control"]).toContain("no-store");
     expect(response.headers["x-robots-tag"]).toContain("noindex");
+  });
+
+  it("serves a fresh masked PDF with browser caching disabled", async () => {
+    const response = await request(application()).get("/api/external/review/personal-token/masked-pdf").expect("content-type", /application\/pdf/).expect(200);
+    expect(response.headers["cache-control"]).toContain("no-store");
+    expect(response.headers.pragma).toBe("no-cache");
   });
 
   it("requires double-submit CSRF for a public decision", async () => {

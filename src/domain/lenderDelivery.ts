@@ -122,6 +122,10 @@ export interface DeliveryCompanySummary {
 export interface DeliveryPreview {
   maskedSnapshot: MaskedCaseSnapshot;
   maskedPdfBase64: string;
+  pdfRendererVersion: number;
+  pdfFontFingerprint: string;
+  pdfGeneratedAt: string;
+  pdfContentHash: string;
   companies: DeliveryCompanySummary[];
   selectedCompanyCount: number;
   selectedContactCount: number;

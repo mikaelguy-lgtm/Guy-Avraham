@@ -464,3 +464,41 @@ docker compose ps         PASS — 7/7 healthy
 Playwright אימת חברה עם שני אנשי קשר, שני מיילים ללא Attachments, קישורים שונים, PDF מוסווה ללא PII, OTP, החלטה ראשונה שהושלמה, סגירת קישור מתחרה, פורטל מלא, PDF מלא, מסמך יחיד, ZIP, Timeline ו־Admin. `npm audit fix` בטוח עודכן ללא `--force`; נותרו Advisories בשרשרת Firebase/Google tooling וב־React Router RSC שאינו בשימוש ב־SPA. תיקון מלא שלהם דורש שינוי breaking ולכן לא הופעל אוטומטית.
 
 כתובות מקומיות: מנהל `http://localhost:5173/admin`, יועץ `http://localhost:5173/advisor`. קישורי בדיקה מוסווים ופורטל מלא הם אישיים וקצרי־תוקף ונלקחים ממייל Mailpit ב־`http://localhost:8025`; הם אינם מתועדים או מודפסים.
+
+## 16. הפקת PDF עברי מוטמע, BiDi ו־Pagination
+
+### גורם שורש ותיקון גופנים
+
+- המפיק הקודם רשם את `NotoSans-Regular.ttf` ו־`NotoSans-Bold.ttf`, גופנים כלליים ללא כיסוי גליפים עברי מלא; PDFKit החליף את האותיות החסרות ב־tofu.
+- נוספו לפרויקט `assets/fonts/NotoSansHebrew-Regular.ttf` ו־`assets/fonts/NotoSansHebrew-Bold.ttf` ברישיון SIL OFL, עם שמות פנימיים `NotoSansHebrew-Regular` ו־`NotoSansHebrew-Bold`.
+- `loadPdfHebrewFonts()` טוען את שני הקבצים ל־Buffer בלבד, מאמת קובץ לא ריק, בודק באמצעות `fontkit` את כל אותיות העברית, האותיות הסופיות, `₪`, ‏`״`, ‏`׳` ורווחים, מחשב SHA-256 ושומר cache בזיכרון. אין fallback לגופן מערכת, CDN, Helvetica או Arial.
+- ה־font fingerprint המשולב הוא `82cd146489d3b75db5f7a89d9e62fbde8bf643847a70977a0168e0dd7f89648a`.
+- `bidi-js` מפעיל את Unicode Bidirectional Algorithm על שכבת התצוגה בלבד. ה־snapshot, ה־ActualText ושכבת החיפוש נשארים Unicode לוגי; אין `split().reverse()`, היפוך מילים או היפוך מספרים.
+- סכומים, תאריכים, מספרי תיק, טלפונים, כתובות ומחרוזות עברית/אנגלית מעורבות נבדקו חזותית ונשמרו בסדר תקין.
+
+### Cache ו־Pagination
+
+- `PDF_RENDERER_VERSION` הועלה ל־`3`; טבלת `case_versions` שומרת `pdf_renderer_version`, ‏`pdf_font_fingerprint` ו־`pdf_generated_at` דרך `drizzle/0009_slow_the_hand.sql`.
+- MinIO שומר גם renderer version, fingerprint, generated-at ו־content hash. PDF חסר או מיושן נוצר מחדש רק מתוך ה־snapshot ה־immutable של אותה גרסה, תוך שמירת timestamp דטרמיניסטי והחלפת קובץ ה־PDF בלבד.
+- Preview, PDF מוסווה, PDF מלא ו־PDF בתוך ZIP משתמשים באותו renderer. רגנרציה של PDF פגום אומתה כ־byte-identical ל־Preview.
+- כל endpoints של PDF/ZIP מחזירים `Cache-Control: no-store`; ה־Frontend מבטל Object URL קודם ויוצר Blob URL חדש.
+- `ensureSpace`, ‏`addContentPage`, ‏`drawPageHeader` ו־`drawPageFooter` מונעות page break כפול או Footer בעמוד נפרד. התרחיש המורחב ירד מ־9 עמודים ל־4 עמודים מוסווים ול־5 עמודים מלאים, ללא עמוד ריק או עמוד Footer בלבד.
+
+### הוכחות ובדיקות
+
+- PDF.js חילץ במדויק: `תיק מימון מוסווה לבחינה`, ‏`תקציר העסקה`, ‏`פרטים אישיים`, ‏`הכנסות`, ‏`התחייבויות`, ‏`נכס ובקשת מימון`, ‏`פירוט העסקה`, ‏`כל מסמכי החובה קיימים בתיק`.
+- Integration מאמת `/FontFile2`, ‏`/ToUnicode`, שם `NotoSansHebrew`, היעדר `�`, ‏`□`, ‏`■`, היעדר Enum באנגלית והיעדר דפים ריקים.
+- Playwright פתח את Chrome/Chromium PDF Viewer, הוריד Preview, PDF מוסווה, PDF מלא ו־ZIP, השווה Preview למסמך שהתחדש ב־MinIO ואימת את הטקסט והגופנים בכל אחד.
+- כל עמודי Docker PDF רונדרו ונבדקו חזותית. ההוכחות נמצאות ב־`output/pdf-hebrew-verification/`, כולל `masked-first-page.png`, ‏`masked-income-page.png`, ‏`masked-liabilities-page.png`, ‏`masked-deal-details-page.png` ו־`full-first-page.png`.
+
+```text
+npm run typecheck         PASS
+npm run lint              PASS
+npm run test:unit         PASS — 90/90
+npm run test:integration  PASS — 85/85
+npm run test:e2e #1       PASS — 10/10
+npm run test:e2e #2       PASS — 10/10
+npm run test:e2e #3       PASS — 10/10
+npm run build             PASS — fonts copied to dist-server, production bundle scan passed
+docker compose ps         PASS — 7/7 healthy
+```

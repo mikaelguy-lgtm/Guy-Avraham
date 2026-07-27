@@ -1,5 +1,5 @@
-import {existsSync} from "node:fs";
 import PDFDocument from "pdfkit";
+import {createRequire} from "node:module";
 import type {FullCaseBorrowerSnapshot, FullCaseLiabilitySnapshot, FullCaseSnapshot, MaskedCaseSnapshot, VersionDocumentSnapshot} from "../domain/lenderDelivery.js";
 import type {AnonymousSubmissionSnapshot} from "../domain/types.js";
 import {requiredDocumentLabel} from "../domain/requiredDocuments.js";
@@ -8,24 +8,9 @@ import {
   formatDocumentType, formatEmploymentType, formatLiabilityType, formatMaritalStatus, formatPropertyType
 } from "../utils/formatters.js";
 import {snapshotDisplayEntries} from "../utils/snapshotDisplay.js";
+import {loadPdfHebrewFonts, PDF_BOLD_FONT_NAME, PDF_REGULAR_FONT_NAME, PDF_RENDERER_VERSION} from "./pdfFonts.js";
 
-const regularFontCandidates = [
-  process.env.PDF_FONT_PATH,
-  "C:/Windows/Fonts/arial.ttf",
-  "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-  "/usr/share/fonts/noto/NotoSansHebrew-Regular.ttf",
-  "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
-  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-].filter(Boolean) as string[];
-
-const boldFontCandidates = [
-  process.env.PDF_BOLD_FONT_PATH,
-  "C:/Windows/Fonts/arialbd.ttf",
-  "/usr/share/fonts/noto/NotoSans-Bold.ttf",
-  "/usr/share/fonts/noto/NotoSansHebrew-Bold.ttf",
-  "/usr/share/fonts/truetype/noto/NotoSansHebrew-Bold.ttf",
-  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-].filter(Boolean) as string[];
+export {PDF_RENDERER_VERSION} from "./pdfFonts.js";
 
 const colors = {
   navy: "#071a2b", blue: "#0b2940", cyan: "#06b6d4", cyanSoft: "#e6f8fb", gold: "#d4af37",
@@ -33,23 +18,129 @@ const colors = {
 };
 
 const page = {left: 42, right: 553, top: 118, bottom: 760, width: 511};
-
-function resolveFont(candidates: string[], description: string): string {
-  const font = candidates.find(existsSync);
-  if (!font) throw new Error(`SYNCASH_PDF_${description}_FONT_NOT_FOUND`);
-  return font;
+const require = createRequire(import.meta.url);
+const bidiFactory = require("bidi-js") as () => {
+  getEmbeddingLevels(text: string, direction?: "ltr" | "rtl"): {levels: Uint8Array; paragraphs: Array<{start: number; end: number; level: number}>};
+  getReorderedString(text: string, levels: {levels: Uint8Array; paragraphs: Array<{start: number; end: number; level: number}>}, start?: number, end?: number): string;
+};
+const bidi = bidiFactory();
+export function formatPdfBidi(value: string | number | null | undefined, direction: "rtl" | "ltr" = "rtl"): string {
+  const text = value === null || value === undefined || value === "" ? "לא צוין" : String(value);
+  const normalized = text.normalize("NFC");
+  return direction === "ltr" ? normalized : normalized;
 }
 
-function createDocument(title: string): PDFKit.PDFDocument {
-  const document = new PDFDocument({size: "A4", margin: 42, bufferPages: true, info: {Title: title, Author: "SynCash", Subject: "SynCash financing case"}});
-  document.registerFont("SynCash", resolveFont(regularFontCandidates, "HEBREW"));
-  document.registerFont("SynCashBold", resolveFont(boldFontCandidates, "HEBREW_BOLD"));
-  document.font("SynCash");
+export function formatVisiblePdfText(value: string, direction: "rtl" | "ltr" = "rtl"): string {
+  const normalized = value.normalize("NFC");
+  if (direction === "ltr") return normalized;
+  return normalized.split("\n").map((line) => bidi.getReorderedString(line, bidi.getEmbeddingLevels(line, "rtl"))).join("\n");
+}
+
+function visualTextWidth(document: PDFKit.PDFDocument, value: string, characterSpacing = 0): number {
+  const characters = [...formatVisiblePdfText(value)];
+  return characters.reduce((width, character) => width + document.widthOfString(character), 0) + Math.max(0, characters.length - 1) * characterSpacing;
+}
+
+function wrapLogicalRtlText(document: PDFKit.PDFDocument, value: string, width: number): string {
+  const lines: string[] = [];
+  for (const paragraph of value.normalize("NFC").split(/\r?\n/u)) {
+    const words = paragraph.trim().split(/\s+/u).filter(Boolean);
+    if (words.length === 0) {
+      lines.push("");
+      continue;
+    }
+    let line = "";
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && visualTextWidth(document, candidate) > width) {
+        lines.push(line);
+        line = word;
+      } else line = candidate;
+    }
+    lines.push(line);
+  }
+  return lines.join("\n");
+}
+
+function createDocument(title: string, producedAt: Date): PDFKit.PDFDocument {
+  const fonts = loadPdfHebrewFonts();
+  const document = new PDFDocument({
+    size: "A4",
+    margin: 42,
+    bufferPages: true,
+    info: {Title: title, Author: "SynCash", Subject: "SynCash financing case", CreationDate: producedAt, ModDate: producedAt}
+  });
+  const documentInfo = document.info as PDFKit.DocumentInfo & Record<string, string>;
+  documentInfo.PDFRendererVersion = String(PDF_RENDERER_VERSION);
+  documentInfo.PDFFontFingerprint = fonts.fingerprint;
+  document.registerFont(PDF_REGULAR_FONT_NAME, fonts.regular.buffer);
+  document.registerFont(PDF_BOLD_FONT_NAME, fonts.bold.buffer);
+  document.font(PDF_REGULAR_FONT_NAME);
   return document;
 }
 
-function rtl(value: string | number | null | undefined): string {
-  return value === null || value === undefined || value === "" ? "לא צוין" : String(value);
+function pdfText(
+  document: PDFKit.PDFDocument,
+  value: string | number | null | undefined,
+  x: number,
+  y: number,
+  options: PDFKit.Mixins.TextOptions & {direction?: "rtl" | "ltr"}
+): void {
+  const logicalText = value === null || value === undefined || value === "" ? "לא צוין" : String(value);
+  const {direction = "rtl", ...textOptions} = options;
+  document.markContent("Span", {actual: logicalText, lang: direction === "rtl" ? "he-IL" : "en"});
+  if (direction === "ltr") document.text(formatPdfBidi(logicalText, direction), x, y, textOptions);
+  else drawVisualRtlText(document, formatPdfBidi(logicalText, direction), x, y, textOptions);
+  document.endMarkedContent();
+  if (direction === "rtl" && /\s/u.test(logicalText)) drawLogicalSearchLayer(document, logicalText);
+}
+
+function drawVisualRtlText(
+  document: PDFKit.PDFDocument,
+  logicalText: string,
+  x: number,
+  y: number,
+  options: PDFKit.Mixins.TextOptions
+): void {
+  const originalX = document.x;
+  const originalY = document.y;
+  const width = options.width ?? document.page.width - x - document.page.margins.right;
+  const characterSpacing = options.characterSpacing ?? 0;
+  const lineGap = options.lineGap ?? 0;
+  const lines = logicalText.split("\n");
+  const lineHeight = document.currentLineHeight(true) + lineGap;
+  document.save().rect(x, y, width, Math.max(lineHeight, lines.length * lineHeight)).clip();
+  lines.forEach((line, lineIndex) => {
+    const visualText = formatVisiblePdfText(line);
+    const characters = [...visualText];
+    const renderedWidth = visualTextWidth(document, line, characterSpacing);
+    const align = options.align ?? "right";
+    let cursor = align === "center" ? x + (width - renderedWidth) / 2 : align === "left" ? x : x + width - renderedWidth;
+    const lineY = y + lineIndex * lineHeight;
+    for (const character of characters) {
+      const characterWidth = document.widthOfString(character);
+      if (!/\s/u.test(character)) document.text(character, cursor, lineY, {lineBreak: false});
+      cursor += characterWidth + characterSpacing;
+    }
+  });
+  document.restore();
+  document.x = originalX;
+  document.y = originalY;
+}
+
+function drawLogicalSearchLayer(document: PDFKit.PDFDocument, logicalText: string): void {
+  const originalX = document.x;
+  const originalY = document.y;
+  const tokens = logicalText.normalize("NFC").trim().split(/\s+/u).filter(Boolean);
+  document.save().fillOpacity(0).fontSize(1);
+  let cursor = 1;
+  for (const token of tokens) {
+    document.text(token, cursor, 1, {lineBreak: false});
+    cursor += document.widthOfString(token) + 0.8;
+  }
+  document.restore();
+  document.x = originalX;
+  document.y = originalY;
 }
 
 function drawLogo(document: PDFKit.PDFDocument, x: number, y: number, scale = 0.24): void {
@@ -62,19 +153,25 @@ function drawLogo(document: PDFKit.PDFDocument, x: number, y: number, scale = 0.
   document.restore();
 }
 
-function drawPageChrome(document: PDFKit.PDFDocument, title: string, subtitle: string): void {
+export function drawPageHeader(document: PDFKit.PDFDocument, title: string, subtitle: string): void {
   document.rect(0, 0, 595.28, 96).fill(colors.navy);
   document.rect(0, 92, 595.28, 4).fill(colors.gold);
   drawLogo(document, 506, 17);
-  document.font("SynCashBold").fontSize(19).fillColor(colors.white).text(rtl(title), page.left, 25, {width: 445, align: "right"});
-  document.font("SynCash").fontSize(9.5).fillColor("#b9c9d8").text(rtl(subtitle), page.left, 57, {width: 445, align: "right"});
+  document.font(PDF_BOLD_FONT_NAME).fontSize(19).fillColor(colors.white);
+  pdfText(document, title, page.left, 25, {width: 445, align: "right"});
+  document.font(PDF_REGULAR_FONT_NAME).fontSize(9.5).fillColor("#b9c9d8");
+  pdfText(document, subtitle, page.left, 57, {width: 445, align: "right"});
   document.y = page.top;
 }
 
-function ensureSpace(document: PDFKit.PDFDocument, needed: number, title: string, subtitle: string): void {
-  if (document.y + needed <= page.bottom) return;
+export function addContentPage(document: PDFKit.PDFDocument, title: string, subtitle: string): void {
   document.addPage();
-  drawPageChrome(document, title, subtitle);
+  drawPageHeader(document, title, subtitle);
+}
+
+export function ensureSpace(document: PDFKit.PDFDocument, needed: number, title: string, subtitle: string): void {
+  if (document.y + needed <= page.bottom) return;
+  addContentPage(document, title, subtitle);
 }
 
 function sectionTitle(document: PDFKit.PDFDocument, label: string, title: string, subtitle: string): void {
@@ -82,7 +179,8 @@ function sectionTitle(document: PDFKit.PDFDocument, label: string, title: string
   const y = document.y;
   document.roundedRect(page.left, y, page.width, 31, 8).fill(colors.blue);
   document.circle(page.right - 16, y + 15.5, 4).fill(colors.gold);
-  document.font("SynCashBold").fontSize(12.5).fillColor(colors.white).text(rtl(label), page.left + 12, y + 8, {width: page.width - 38, align: "right"});
+  document.font(PDF_BOLD_FONT_NAME).fontSize(12.5).fillColor(colors.white);
+  pdfText(document, label, page.left + 12, y + 8, {width: page.width - 38, align: "right"});
   document.y = y + 41;
 }
 
@@ -98,20 +196,25 @@ function fieldRows(document: PDFKit.PDFDocument, fields: PdfField[], title: stri
     row.forEach((field, column) => {
       const x = page.right - width - column * (width + gap);
       document.roundedRect(x, y, width, 45, 7).fillAndStroke(colors.paper, colors.line);
-      document.font("SynCash").fontSize(8).fillColor(colors.muted).text(rtl(field.label), x + 10, y + 8, {width: width - 20, align: "right"});
-      document.font("SynCashBold").fontSize(10.2).fillColor(colors.ink).text(field.ltr ? String(field.value ?? "לא צוין") : rtl(field.value), x + 10, y + 23, {width: width - 20, align: "right", ellipsis: true});
+      document.font(PDF_REGULAR_FONT_NAME).fontSize(8).fillColor(colors.muted);
+      pdfText(document, field.label, x + 10, y + 8, {width: width - 20, align: "right"});
+      document.font(PDF_BOLD_FONT_NAME).fontSize(10.2).fillColor(colors.ink);
+      pdfText(document, field.value, x + 10, y + 23, {width: width - 20, align: "right", ellipsis: true, direction: field.ltr ? "ltr" : "rtl"});
     });
     document.y = y + 53;
   }
 }
 
 function paragraph(document: PDFKit.PDFDocument, value: string, title: string, subtitle: string, tone: "default" | "notice" = "default"): void {
-  const text = rtl(value);
-  const height = Math.max(48, document.heightOfString(text, {width: page.width - 24, align: "right", lineGap: 3}) + 22);
+  document.font(PDF_REGULAR_FONT_NAME).fontSize(9.5);
+  const text = wrapLogicalRtlText(document, formatPdfBidi(value), page.width - 24);
+  const lineCount = text.split("\n").length;
+  const height = Math.max(48, lineCount * (document.currentLineHeight(true) + 3) + 22);
   ensureSpace(document, height + 8, title, subtitle);
   const y = document.y;
   document.roundedRect(page.left, y, page.width, height, 8).fillAndStroke(tone === "notice" ? colors.goldSoft : colors.paper, tone === "notice" ? colors.gold : colors.line);
-  document.font("SynCash").fontSize(9.5).fillColor(colors.ink).text(text, page.left + 12, y + 11, {width: page.width - 24, align: "right", lineGap: 3});
+  document.font(PDF_REGULAR_FONT_NAME).fontSize(9.5).fillColor(colors.ink);
+  pdfText(document, text, page.left + 12, y + 11, {width: page.width - 24, align: "right", lineGap: 3});
   document.y = y + height + 8;
 }
 
@@ -149,13 +252,23 @@ function documentStatusFields(documents: VersionDocumentSnapshot[], borrowers: A
   return fields;
 }
 
+export function drawPageFooter(document: PDFKit.PDFDocument, pageNumber: number, pageCount: number, producedAt: Date): void {
+  const originalBottomMargin = document.page.margins.bottom;
+  document.page.margins.bottom = 0;
+  document.rect(0, 782, 595.28, 60).fill(colors.navy);
+  document.font(PDF_REGULAR_FONT_NAME).fontSize(8).fillColor("#c9d6e2");
+  pdfText(document, `מידע סודי · הופק ${formatDate(producedAt)} · עמוד ${pageNumber} מתוך ${pageCount}`, page.left, 800, {width: page.width, height: 10, align: "center", lineBreak: false});
+  document.font(PDF_BOLD_FONT_NAME).fontSize(7).fillColor(colors.gold);
+  pdfText(document, "SYNCASH", page.left, 817, {width: page.width, height: 9, align: "center", characterSpacing: 1.4, lineBreak: false, direction: "ltr"});
+  document.page.margins.bottom = originalBottomMargin;
+}
+
 function finish(document: PDFKit.PDFDocument, producedAt: Date): void {
   const range = document.bufferedPageRange();
   for (let index = 0; index < range.count; index += 1) {
-    document.switchToPage(index);
-    document.rect(0, 782, 595.28, 60).fill(colors.navy);
-    document.font("SynCash").fontSize(8).fillColor("#c9d6e2").text(rtl(`מידע סודי · הופק ${formatDate(producedAt)} · עמוד ${index + 1} מתוך ${range.count}`), page.left, 800, {width: page.width, align: "center"});
-    document.font("SynCashBold").fontSize(7).fillColor(colors.gold).text("SYNCASH", page.left, 817, {width: page.width, align: "center", characterSpacing: 1.4});
+    document.switchToPage(range.start + index);
+    drawPageFooter(document, index + 1, range.count, producedAt);
+    if (document.bufferedPageRange().count !== range.count) throw new Error("PDF_FOOTER_CREATED_UNEXPECTED_PAGE");
   }
   document.end();
 }
@@ -177,10 +290,10 @@ function caseSubtitle(publicCaseNumber: string, versionNumber: number, createdAt
 export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata: {versionNumber: number; createdAt: Date}): Promise<Buffer> {
   const title = "תיק מימון מוסווה לבחינה";
   const subtitle = caseSubtitle(snapshot.publicCaseNumber, metadata.versionNumber, metadata.createdAt);
-  const document = createDocument(`SynCash masked case ${snapshot.publicCaseNumber}`);
+  const document = createDocument(`SynCash masked case ${snapshot.publicCaseNumber}`, metadata.createdAt);
   return toBuffer(document, () => {
-    drawPageChrome(document, title, subtitle);
-    sectionTitle(document, "תקציר התיק", title, subtitle);
+    drawPageHeader(document, title, subtitle);
+    sectionTitle(document, "תקציר העסקה", title, subtitle);
     fieldRows(document, [
       {label: "מספר תיק", value: snapshot.publicCaseNumber, ltr: true}, {label: "סטטוס", value: formatClientStatus(snapshot.status ?? "ACTIVE")},
       {label: "מספר לווים", value: snapshot.numberOfBorrowers},
@@ -224,10 +337,10 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
 export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {versionNumber: number; createdAt: Date}): Promise<Buffer> {
   const title = "תיק מימון מלא";
   const subtitle = caseSubtitle(snapshot.publicCaseNumber, metadata.versionNumber, metadata.createdAt);
-  const document = createDocument(`SynCash full case ${snapshot.publicCaseNumber}`);
+  const document = createDocument(`SynCash full case ${snapshot.publicCaseNumber}`, metadata.createdAt);
   return toBuffer(document, () => {
-    drawPageChrome(document, title, subtitle);
-    sectionTitle(document, "תקציר התיק", title, subtitle);
+    drawPageHeader(document, title, subtitle);
+    sectionTitle(document, "תקציר העסקה", title, subtitle);
     fieldRows(document, [
       {label: "מספר תיק", value: snapshot.publicCaseNumber, ltr: true}, {label: "סטטוס", value: formatClientStatus(snapshot.status ?? "ACTIVE")},
       {label: "מספר לווים", value: snapshot.numberOfBorrowers},
@@ -260,7 +373,9 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     sectionTitle(document, "פירוט העסקה", title, subtitle);
     paragraph(document, snapshot.dealDetails, title, subtitle);
     sectionTitle(document, "סטטוס מסמכי חובה", title, subtitle);
-    fieldRows(document, documentStatusFields(snapshot.documents, snapshot.borrowers), title, subtitle);
+    const requiredDocuments = documentStatusFields(snapshot.documents, snapshot.borrowers);
+    paragraph(document, requiredDocuments.every((field) => field.value === "קיים בתיק") ? "כל מסמכי החובה קיימים בתיק." : "חסרים מסמכי חובה בתיק.", title, subtitle);
+    fieldRows(document, requiredDocuments, title, subtitle);
     if (snapshot.documents.length) {
       sectionTitle(document, "מסמכים בתיק", title, subtitle);
       fieldRows(document, snapshot.documents.flatMap((item, index) => [
@@ -282,9 +397,9 @@ export async function createAnonymousPdf(snapshot: AnonymousSubmissionSnapshot):
   const createdAt = new Date();
   const title = "תיק מימון אנונימי";
   const subtitle = `תיק ${snapshot.publicCaseNumber} · הופק ${formatDate(createdAt)}`;
-  const document = createDocument(`SynCash case ${snapshot.publicCaseNumber}`);
+  const document = createDocument(`SynCash case ${snapshot.publicCaseNumber}`, createdAt);
   return toBuffer(document, () => {
-    drawPageChrome(document, title, subtitle);
+    drawPageHeader(document, title, subtitle);
     sectionTitle(document, "תקציר אנונימי", title, subtitle);
     fieldRows(document, snapshotDisplayEntries(snapshot).map(([label, value]) => ({label, value})), title, subtitle);
     paragraph(document, "המסמך אינו כולל פרטים המאפשרים לזהות את הלקוח או את היועץ.", title, subtitle, "notice");

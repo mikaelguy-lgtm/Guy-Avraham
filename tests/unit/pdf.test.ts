@@ -1,8 +1,10 @@
 import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { describe, expect, it } from "vitest";
+import {readFileSync} from "node:fs";
+import { describe, expect, it, vi } from "vitest";
 import type {FullCaseSnapshot} from "../../src/domain/lenderDelivery";
 import {CaseRedactionService} from "../../src/services/caseRedaction";
-import { createAnonymousPdf, createFullCasePdf, createMaskedCasePdf } from "../../src/services/pdf";
+import { createAnonymousPdf, createFullCasePdf, createMaskedCasePdf, formatPdfBidi, formatVisiblePdfText, PDF_RENDERER_VERSION } from "../../src/services/pdf";
+import {assertRequiredHebrewGlyphs, loadPdfHebrewFonts, PdfHebrewFontError, REQUIRED_PDF_HEBREW_CHARACTERS} from "../../src/services/pdfFonts";
 
 async function pdfContent(pdf: Buffer) {
   const document = await getDocument({data: new Uint8Array(pdf)}).promise;
@@ -15,7 +17,8 @@ async function pdfContent(pdf: Buffer) {
     const operators = await page.getOperatorList();
     pathCount += operators.fnArray.filter((operator) => operator === OPS.constructPath).length;
   }
-  return {document, text: pages.join(" "), pathCount};
+  const text = pages.join(" ");
+  return {document, pages, text, normalizedText: text.split("\u0000").join("").replace(/\s+/gu, " ").trim(), pathCount};
 }
 
 const fullSnapshot: FullCaseSnapshot = {
@@ -29,6 +32,38 @@ const fullSnapshot: FullCaseSnapshot = {
 };
 
 describe("anonymous PDF", () => {
+  it("loads only bundled Hebrew fonts and verifies every required glyph", () => {
+    const fonts = loadPdfHebrewFonts();
+    expect(fonts.regular.internalName).toBe("NotoSansHebrew-Regular");
+    expect(fonts.bold.internalName).toBe("NotoSansHebrew-Bold");
+    expect(fonts.regular.buffer.length).toBeGreaterThan(40_000);
+    expect(fonts.bold.buffer.length).toBeGreaterThan(40_000);
+    expect(fonts.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(REQUIRED_PDF_HEBREW_CHARACTERS).toContain("₪״׳");
+  });
+
+  it("rejects a generic font that has no Hebrew glyph coverage", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let caught: unknown;
+    try { assertRequiredHebrewGlyphs({hasGlyphForCodePoint: (codePoint) => codePoint < 128, glyphForCodePoint: (codePoint) => ({id: codePoint < 128 ? codePoint : 0})}, "NotoSans-Regular"); }
+    catch (thrown) { caught = thrown; }
+    expect(caught).toBeInstanceOf(PdfHebrewFontError);
+    expect((caught as PdfHebrewFontError).code).toBe("PDF_HEBREW_FONT_MISSING_GLYPHS");
+    expect(error).toHaveBeenCalledWith("PDF Hebrew font validation failed", {code: "PDF_HEBREW_FONT_MISSING_GLYPHS", fontName: "NotoSans-Regular"});
+    error.mockRestore();
+  });
+
+  it("keeps logical mixed-direction text without manual reversal", () => {
+    expect(formatPdfBidi("תיק SC-123 · סכום 1,250,000 ₪")).toContain("תיק SC-123 · סכום 1,250,000 ₪");
+    const visual = formatVisiblePdfText("תיק SC-123 · סכום 1,250,000 ₪");
+    expect(visual).toContain("SC-123");
+    expect(visual).toContain("1,250,000");
+    expect(visual).not.toContain("321-CS");
+    const source = readFileSync(new URL("../../src/services/pdf.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/split\([^)]*\)\.reverse|reverse\(\)\.join/);
+    expect(PDF_RENDERER_VERSION).toBe(3);
+  });
+
   it("is generated only from the anonymous snapshot", async () => {
     const pdf = await createAnonymousPdf({
       publicCaseNumber: "SC-SAFE-123", loanPurpose: "SECOND_HAND_PURCHASE", propertyType: "APARTMENT", propertyCity: "תל אביב",
@@ -43,20 +78,26 @@ describe("anonymous PDF", () => {
 
   it("embeds a Hebrew font and renders branded Hebrew content with a vector logo", async () => {
     const pdf = await createFullCasePdf(fullSnapshot, {versionNumber: 3, createdAt: new Date("2026-07-27T09:00:00Z")});
-    const {document, text, pathCount} = await pdfContent(pdf);
+    const {document, pages, text, normalizedText, pathCount} = await pdfContent(pdf);
     expect(document.numPages).toBeGreaterThan(1);
-    expect(text).toMatch(/[א-ת]{2,}/u);
+    expect(document.numPages).toBeLessThanOrEqual(5);
+    expect(pages.every((pageText) => pageText.replace(/SYNCASH|מידע סודי|הופק|עמוד|מתוך|\s/g, "").length > 10)).toBe(true);
+    for (const expected of ["תיק מימון מלא", "תקציר העסקה", "פרטים אישיים", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(normalizedText).toContain(expected);
     expect(text.replace(/\s/g, "")).toContain("SYNCASH");
-    expect(text).not.toContain("�");
+    expect(text).not.toMatch(/[�□■]/u);
     expect(pathCount).toBeGreaterThan(20);
     expect(pdf.toString("latin1")).toContain("/FontFile2");
+    expect(pdf.toString("latin1")).toContain("NotoSansHebrew");
   });
 
   it("keeps masked fields hidden while preserving readable Hebrew business data", async () => {
     const masked = new CaseRedactionService().redact(fullSnapshot).maskedSnapshot;
-    const pdf = await createMaskedCasePdf(masked, {versionNumber: 1, createdAt: new Date("2026-07-27T09:00:00Z")});
-    const {text} = await pdfContent(pdf);
-    for (const expected of ["תיק", "מימון", "רכישה", "דירה", "הכנסה", "התחייבויות"]) expect(text).toContain(expected);
+    const metadata = {versionNumber: 1, createdAt: new Date("2026-07-27T09:00:00Z")};
+    const pdf = await createMaskedCasePdf(masked, metadata);
+    expect(await createMaskedCasePdf(masked, metadata)).toEqual(pdf);
+    const {text, normalizedText} = await pdfContent(pdf);
+    for (const expected of ["תיק מימון מוסווה לבחינה", "תקציר העסקה", "רכישה יד שנייה", "דירה", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(normalizedText).toContain(expected);
+    expect(text).not.toMatch(/[�□■]/u);
     for (const prohibited of ["דנה", "לוי", "123456789", "0501234567", "dana@example.com", "מעסיק סודי", "יועץ פרטי"]) expect(text).not.toContain(prohibited);
   });
 });

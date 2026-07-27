@@ -3,14 +3,13 @@ import {Building2, CheckCircle2, ChevronLeft, ChevronRight, Eye, Mail, Send, Shi
 import type {Client, DeliveryBlocker, DeliveryCompany, DeliveryPreview} from "../types";
 import {ApiError, api} from "../utils/apiClient";
 import {formatCurrency, formatDate} from "../utils/formatters";
+import {openFreshPdfBlob, revokeActivePdfBlob} from "../utils/pdfBlob";
 
 type Stage = "companies" | "preview" | "confirm" | "complete";
 
 function openPdf(base64: string) {
   const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
-  const url = URL.createObjectURL(new Blob([bytes], {type: "application/pdf"}));
-  window.open(url, "_blank", "noopener,noreferrer");
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  openFreshPdfBlob(new Blob([bytes], {type: "application/pdf"}));
 }
 
 function MaskedSummary({preview}: {preview: DeliveryPreview}) {
@@ -42,6 +41,8 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [blockers, setBlockers] = useState<DeliveryBlocker[]>([]);
+
+  useEffect(() => () => revokeActivePdfBlob(), []);
 
   useEffect(() => {
     void api.clients().then((result) => {
