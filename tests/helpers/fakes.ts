@@ -12,7 +12,7 @@ export const env: AppEnv = {
   DATABASE_URL: "postgresql://unused", REDIS_URL: "redis://unused", FIREBASE_PROJECT_ID: "", FIREBASE_CLIENT_EMAIL: "",
   FIREBASE_PRIVATE_KEY: "", FIREBASE_AUTH_EMULATOR_HOST: "", SECRET_PROVIDER: "environment", GOOGLE_CLOUD_PROJECT: "", LOCAL_SECRET_STORE_PATH: "", LOCAL_SECRET_MASTER_KEY: "", FIELD_ENCRYPTION_KEY: Buffer.alloc(32, 4).toString("base64"), COOKIE_SECRET: "test-cookie-secret", SESSION_SECRET: "test-session-secret", TOKEN_HASH_SECRET: "",
   S3_ENDPOINT: "http://minio:9000", S3_REGION: "us-east-1", S3_BUCKET: "syncash-documents", S3_ACCESS_KEY_ID: "test",
-  S3_SECRET_KEY: "test-secret", S3_FORCE_PATH_STYLE: true, EMAIL_DELIVERY_ENABLED: true, SMTP_HOST: "mailpit", SMTP_PORT: 1025, SMTP_SECURE: false,
+  S3_SECRET_KEY: "test-secret", S3_FORCE_PATH_STYLE: true, EMAIL_DELIVERY_ENABLED: true, PUBLIC_REGISTRATION_ENABLED: true, EXTERNAL_PORTALS_ENABLED: true, SUPER_ADMIN_ONLY_MODE: false, SMTP_HOST: "mailpit", SMTP_PORT: 1025, SMTP_SECURE: false,
   SMTP_USER: "", SMTP_PASSWORD: "", EMAIL_FROM: "no-reply@syncash.local", EMAIL_FROM_NAME: "SynCash",
   EMAIL_REPLY_TO: "support@syncash.local", GEMINI_API_KEY: "", GEMINI_MODEL: "test-model", MAX_UPLOAD_SIZE_MB: 15,
   LENDER_INVITE_EXPIRY_HOURS: 72, PASSWORD_RESET_EXPIRY_MINUTES: 30

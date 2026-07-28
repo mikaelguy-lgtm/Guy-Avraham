@@ -77,7 +77,7 @@ export interface LenderDeliveryApplication {
   getPortalDocument(sessionToken: string, publicDocumentId: string, download: boolean, context: DeliveryContext): Promise<{body: Buffer; contentType: string; filename: string}>;
   getPortalZip(sessionToken: string, context: DeliveryContext): Promise<{body: Buffer; filename: string}>;
   logoutPortal(sessionToken: string): Promise<void>;
-  processJobs(): Promise<void>;
+  processJobs(options?: {processEmail?: boolean}): Promise<void>;
 }
 
 export interface CompanyInput {
@@ -971,11 +971,14 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     await this.pool.query("update otp_challenges set cancelled_at=now(),updated_at=now() where expires_at <= now() and used_at is null and cancelled_at is null"); await this.pool.query("update external_portal_sessions set revoked_at=now() where revoked_at is null and (expires_at <= now() or idle_expires_at <= now())");
   }
 
-  async processJobs(): Promise<void> {
+  async processJobs(options: {processEmail?: boolean} = {}): Promise<void> {
     const connection = await this.pool.connect();
     try {
       const lock = await connection.query("select pg_try_advisory_lock(8247331) locked"); if (!lock.rows[0].locked) return;
-      try { await this.processSchedules(); await this.processOutbox(); } finally { await connection.query("select pg_advisory_unlock(8247331)"); }
+      try {
+        await this.processSchedules();
+        if (options.processEmail !== false) await this.processOutbox();
+      } finally { await connection.query("select pg_advisory_unlock(8247331)"); }
     } finally { connection.release(); }
   }
 }

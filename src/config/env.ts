@@ -3,6 +3,7 @@ import { z } from "zod";
 
 const optionalText = z.string().trim().optional().default("");
 const optionalEmail = z.union([z.literal(""), z.string().email()]).optional().default("");
+const booleanText = (defaultValue: boolean) => z.string().default(String(defaultValue)).transform((value) => value === "true");
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -29,7 +30,10 @@ const schema = z.object({
   S3_ACCESS_KEY_ID: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
   S3_FORCE_PATH_STYLE: z.string().default("true").transform((value) => value === "true"),
-  EMAIL_DELIVERY_ENABLED: z.string().default("true").transform((value) => value === "true"),
+  EMAIL_DELIVERY_ENABLED: booleanText(true),
+  PUBLIC_REGISTRATION_ENABLED: booleanText(true),
+  EXTERNAL_PORTALS_ENABLED: booleanText(true),
+  SUPER_ADMIN_ONLY_MODE: booleanText(false),
   SMTP_HOST: optionalText,
   SMTP_PORT: z.coerce.number().int().positive(),
   SMTP_SECURE: z.string().default("false").transform((value) => value === "true"),

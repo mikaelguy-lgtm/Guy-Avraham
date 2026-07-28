@@ -100,7 +100,8 @@ export const api = {
   async login(email: string, password: string): Promise<CurrentUser> {
     await publicFetch<{allowed: true}>("/api/auth/login-attempt", {method: "POST"});
     await signInWithEmailAndPassword(auth, email, password);
-    return authFetch<CurrentUser>("/api/auth/me");
+    try { return await authFetch<CurrentUser>("/api/auth/me"); }
+    catch (error) { await signOut(auth).catch(() => undefined); throw error; }
   },
   async registerAdvisor(input: AdvisorRegistrationInput & {password: string}): Promise<{success: true; verificationEmailSent: true}> {
     const credential = await createUserWithEmailAndPassword(auth, input.email, input.password);

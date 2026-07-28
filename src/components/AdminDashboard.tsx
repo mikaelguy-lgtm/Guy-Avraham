@@ -17,6 +17,16 @@ type Toast = {kind: "success" | "error"; message: string; requestId?: string};
 
 const initialSettings: SmtpForm = {SMTP_HOST: "", SMTP_PORT: "", SMTP_SECURE: "false", SMTP_USER: "", EMAIL_FROM: "", EMAIL_FROM_NAME: "SynCash", EMAIL_REPLY_TO: "", smtpCredential: ""};
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const smtpSettingKeys = ["SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "SMTP_USER", "EMAIL_FROM", "EMAIL_FROM_NAME", "EMAIL_REPLY_TO"] as const;
+const smtpSettingLabels: Record<(typeof smtpSettingKeys)[number], string> = {
+  SMTP_HOST: "שרת SMTP",
+  SMTP_PORT: "פורט SMTP",
+  SMTP_SECURE: "חיבור TLS ישיר",
+  SMTP_USER: "שם משתמש SMTP",
+  EMAIL_FROM: "כתובת שולח",
+  EMAIL_FROM_NAME: "שם השולח",
+  EMAIL_REPLY_TO: "כתובת למענה"
+};
 
 function errorToast(error: unknown, fallback: string): Toast {
   if (!(error instanceof ApiError)) return {kind: "error", message: fallback};
@@ -55,7 +65,8 @@ export default function AdminDashboard({userEmail}: {userEmail: string}) {
   const [testRecipientError, setTestRecipientError] = useState("");
   useEffect(() => { void api.smtpSettings().then((result) => {
     setPasswordConfigured(Boolean(result.passwordConfigured));
-    setSettings((current) => ({...current, ...Object.fromEntries(Object.entries(result).filter(([key]) => key !== "passwordConfigured").map(([key, value]) => [key, value === null ? "" : String(value)]))} as SmtpForm));
+    const safeSettings = Object.fromEntries(smtpSettingKeys.map((key) => [key, result[key] === null ? "" : String(result[key] ?? "")]));
+    setSettings((current) => ({...current, ...safeSettings, smtpCredential: ""} as SmtpForm));
   }).catch((error) => setToast(errorToast(error, "טעינת הגדרות ה-SMTP נכשלה."))); }, []);
   const change = (key: keyof SmtpForm, value: string) => {
     setSettings((current) => ({...current, [key]: value}));
@@ -70,7 +81,7 @@ export default function AdminDashboard({userEmail}: {userEmail: string}) {
     setBusy("save");
     try {
       const {smtpCredential, ...nonSecretSettings} = settings;
-      const result = await api.updateSmtpSettings({...nonSecretSettings, smtpPassword: smtpCredential});
+      const result = await api.updateSmtpSettings({...nonSecretSettings, ...(smtpCredential ? {smtpPassword: smtpCredential} : {})});
       setPasswordConfigured(result.passwordConfigured);
       setToast({kind: "success", message: "הגדרות ה-SMTP נשמרו בהצלחה."});
     } catch (error) {
@@ -92,11 +103,11 @@ export default function AdminDashboard({userEmail}: {userEmail: string}) {
       setToast(errorToast(error, "בדיקת ה-SMTP נכשלה."));
     } finally { setBusy(null); }
   };
-  const input = (key: keyof SmtpForm, type = "text") => <label>{key}<input aria-label={key} aria-invalid={Boolean(fieldErrors[key])} type={type} value={settings[key]} onChange={(event) => change(key, event.target.value)} />{fieldErrors[key] && <span className="field-error" role="alert">{fieldErrors[key]}</span>}</label>;
-  return <main className="admin-page" dir="rtl"><nav className="breadcrumbs" aria-label="פירורי לחם"><Link to="/admin">לוח הבקרה</Link><span>›</span><Link to="/admin/settings">הגדרות מערכת</Link><span>›</span><span aria-current="page">דואר יוצא</span></nav><form className="panel form-grid" onSubmit={save} noValidate><h1>הגדרות Super Admin</h1>
-    {input("SMTP_HOST")}{input("SMTP_PORT", "number")}<label>SMTP_SECURE<select aria-label="SMTP_SECURE" value={settings.SMTP_SECURE} onChange={(event) => change("SMTP_SECURE", event.target.value)}><option value="false">false</option><option value="true">true</option></select>{fieldErrors.SMTP_SECURE && <span className="field-error" role="alert">{fieldErrors.SMTP_SECURE}</span>}</label>
+  const input = (key: (typeof smtpSettingKeys)[number], type = "text") => <label>{smtpSettingLabels[key]}<input aria-label={key} aria-invalid={Boolean(fieldErrors[key])} type={type} value={settings[key]} onChange={(event) => change(key, event.target.value)} />{fieldErrors[key] && <span className="field-error" role="alert">{fieldErrors[key]}</span>}</label>;
+  return <main className="admin-page" dir="rtl"><nav className="breadcrumbs" aria-label="פירורי לחם"><Link to="/admin">לוח הבקרה</Link><span>›</span><Link to="/admin/settings">הגדרות מערכת</Link><span>›</span><span aria-current="page">דואר יוצא</span></nav><form className="panel form-grid" onSubmit={save} noValidate><h1>הגדרות דואר יוצא</h1>
+    {input("SMTP_HOST")}{input("SMTP_PORT", "number")}<label>{smtpSettingLabels.SMTP_SECURE}<select aria-label="SMTP_SECURE" value={settings.SMTP_SECURE} onChange={(event) => change("SMTP_SECURE", event.target.value)}><option value="false">לא</option><option value="true">כן</option></select>{fieldErrors.SMTP_SECURE && <span className="field-error" role="alert">{fieldErrors.SMTP_SECURE}</span>}</label>
     {input("SMTP_USER")}{input("EMAIL_FROM", "email")}{input("EMAIL_FROM_NAME")}{input("EMAIL_REPLY_TO", "email")}
-    <label>סיסמת SMTP<input aria-label="סיסמת SMTP" autoComplete="new-password" type="password" value={settings.smtpCredential} onChange={(event) => change("smtpCredential", event.target.value)} /><span className="field-hint">ב-Gmail יש להשתמש בסיסמת אפליקציה. פורט 587 עם SMTP_SECURE=false מפעיל STARTTLS.</span></label>
+    <label>סיסמת SMTP<input aria-label="סיסמת SMTP" autoComplete="new-password" type="password" value={settings.smtpCredential} onChange={(event) => change("smtpCredential", event.target.value)} /><span className="field-hint">הערך הקיים אינו מוצג. הזן סיסמה רק כאשר ברצונך להחליף אותה.</span></label>
     <p>סיסמת SMTP מוגדרת: {passwordConfigured ? "כן" : "לא"}</p>
     <div className="form-actions"><button type="submit" disabled={busy !== null}>{busy === "save" ? "שומר…" : "שמירה"}</button><button type="button" disabled={busy !== null} onClick={openTestModal}>{busy === "test" ? "בודק…" : "בדיקת SMTP"}</button></div>
     {toast && <div className={`toast ${toast.kind}`} role={toast.kind === "error" ? "alert" : "status"} aria-live="polite"><strong>{toast.message}</strong>{toast.requestId && <small>מזהה בקשה: {toast.requestId}</small>}</div>}

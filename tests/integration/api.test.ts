@@ -111,6 +111,30 @@ describe("HTTP authentication and authorization", () => {
     expect(await localSecrets.getSecret("syncash-smtp-password")).toBe("local-test-password");
     expect(JSON.stringify(addAudit.mock.calls)).not.toContain("local-test-password");
   });
+
+  it("allows only SUPER_ADMIN when production access is restricted", async () => {
+    const restrictedEnv = {...env, EMAIL_DELIVERY_ENABLED: false, PUBLIC_REGISTRATION_ENABLED: false, EXTERNAL_PORTALS_ENABLED: false, SUPER_ADMIN_ONLY_MODE: true};
+    await request(app({}, undefined, secrets, restrictedEnv)).get("/api/auth/me").set("authorization", "Bearer super").expect(200);
+    for (const token of ["admin", "advisor", "lender"]) {
+      const response = await request(app({}, undefined, secrets, restrictedEnv)).get("/api/auth/me").set("authorization", `Bearer ${token}`).expect(403);
+      expect(response.body).toEqual(expect.objectContaining({error: "PRODUCTION_ACCESS_RESTRICTED", requestId: expect.any(String)}));
+    }
+  });
+
+  it("blocks public account creation and verification flows when registration is disabled", async () => {
+    const createAdvisorAccount = vi.fn();
+    const restrictedEnv = {...env, EMAIL_DELIVERY_ENABLED: false, PUBLIC_REGISTRATION_ENABLED: false, EXTERNAL_PORTALS_ENABLED: false, SUPER_ADMIN_ONLY_MODE: true};
+    const registration = await request(app({createAdvisorAccount}, undefined, secrets, restrictedEnv)).post("/api/auth/register-advisor")
+      .set("authorization", "Bearer new-advisor").send(registrationInput).expect(503);
+    const resend = await request(app({}, undefined, secrets, restrictedEnv)).post("/api/auth/email-verification/resend")
+      .set("authorization", "Bearer pending").expect(503);
+    const status = await request(app({}, undefined, secrets, restrictedEnv)).get("/api/auth/email-verification/status")
+      .set("authorization", "Bearer pending").expect(503);
+    for (const response of [registration, resend, status]) {
+      expect(response.body).toEqual(expect.objectContaining({error: "PUBLIC_REGISTRATION_DISABLED", requestId: expect.any(String)}));
+    }
+    expect(createAdvisorAccount).not.toHaveBeenCalled();
+  });
 });
 
 describe("advisor self-registration", () => {
@@ -229,6 +253,19 @@ describe("advisor self-registration", () => {
 });
 
 describe("SMTP administration", () => {
+  it("persists non-secret settings without replacing an existing SMTP password", async () => {
+    const setSettings = vi.fn().mockResolvedValue(undefined);
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    const localSecrets = new InMemorySecretProvider({"syncash-smtp-password": "existing-secret"});
+    const setSecret = vi.spyOn(localSecrets, "setSecret");
+    const response = await request(app({setSettings, addAudit}, undefined, localSecrets)).patch("/api/admin/settings/email")
+      .set("authorization", "Bearer super").send(smtpSettings).expect(200);
+    expect(response.body).toEqual({updated: true, passwordConfigured: true});
+    expect(setSecret).not.toHaveBeenCalled();
+    expect(await localSecrets.getSecret("syncash-smtp-password")).toBe("existing-secret");
+    expect(addAudit).toHaveBeenCalledWith(users.super.id, "SMTP_UPDATED", "system_settings", null, expect.objectContaining({passwordUpdated: false}), expect.any(String));
+  });
+
   it("uses Gmail with STARTTLS and never falls back to Mailpit", () => {
     const resolved = resolveSmtpTransportSettings(env, {
       SMTP_HOST: "smtp.gmail.com", SMTP_PORT: "587", SMTP_SECURE: "false",

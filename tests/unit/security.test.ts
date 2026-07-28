@@ -74,5 +74,23 @@ describe("security utilities", () => {
       status: 503
     });
   });
+
+  it("parses the restricted production access flags", () => {
+    const env = loadEnv({
+      ...productionEnvironment(),
+      EMAIL_DELIVERY_ENABLED: "false",
+      PUBLIC_REGISTRATION_ENABLED: "false",
+      EXTERNAL_PORTALS_ENABLED: "false",
+      SUPER_ADMIN_ONLY_MODE: "true",
+      SMTP_HOST: "",
+      EMAIL_FROM: "",
+      EMAIL_REPLY_TO: "",
+      SECRET_PROVIDER: "google",
+      GOOGLE_CLOUD_PROJECT: "project"
+    });
+    expect(env.PUBLIC_REGISTRATION_ENABLED).toBe(false);
+    expect(env.EXTERNAL_PORTALS_ENABLED).toBe(false);
+    expect(env.SUPER_ADMIN_ONLY_MODE).toBe(true);
+  });
 });
 

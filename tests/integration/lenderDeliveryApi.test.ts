@@ -24,12 +24,23 @@ function fakeDelivery(overrides: Partial<LenderDeliveryApplication> = {}): Lende
   return {...defaults, ...overrides} as LenderDeliveryApplication;
 }
 
-function application(delivery = fakeDelivery(), store: AppStore = makeStore()) {
+function application(delivery = fakeDelivery(), store: AppStore = makeStore(), environment = env) {
   const email = {send: vi.fn(), verify: vi.fn(), test: vi.fn(), reload: vi.fn()} as never;
-  return createApp({env, store, verifier, encryption: new EncryptionService(Buffer.alloc(32, 4)), storage: new MemoryStorage(), limiter: new MemoryLimiter(), secrets, email, emailVerification: new AdvisorEmailVerificationService({createVerificationLink: vi.fn()}, email, store), gemini: {analyze: vi.fn()} as never, firebaseAccounts: {deleteUser: vi.fn()}, delivery});
+  return createApp({env: environment, store, verifier, encryption: new EncryptionService(Buffer.alloc(32, 4)), storage: new MemoryStorage(), limiter: new MemoryLimiter(), secrets, email, emailVerification: new AdvisorEmailVerificationService({createVerificationLink: vi.fn()}, email, store), gemini: {analyze: vi.fn()} as never, firebaseAccounts: {deleteUser: vi.fn()}, delivery});
 }
 
 describe("secure lender delivery API", () => {
+  it("blocks lender and external portals when production portals are disabled", async () => {
+    const restrictedEnv = {...env, EMAIL_DELIVERY_ENABLED: false, PUBLIC_REGISTRATION_ENABLED: false, EXTERNAL_PORTALS_ENABLED: false, SUPER_ADMIN_ONLY_MODE: true};
+    const app = application(fakeDelivery(), makeStore(), restrictedEnv);
+    const review = await request(app).get("/api/external/review/personal-token").expect(503);
+    const invite = await request(app).post("/api/lender/invites/validate").send({token: "x".repeat(32)}).expect(503);
+    const portal = await request(app).get("/api/lender/submissions/1").set("authorization", "Bearer lender").expect(503);
+    for (const response of [review, invite, portal]) {
+      expect(response.body).toEqual(expect.objectContaining({error: "EXTERNAL_PORTALS_DISABLED", requestId: expect.any(String)}));
+    }
+  });
+
   it("allows only the owning advisor to list companies and preview a delivery", async () => {
     await request(application()).get("/api/advisor/financing-companies?clientId=1").set("authorization", "Bearer advisor").expect(200);
     await request(application()).post("/api/clients/1/delivery/preview").set("authorization", "Bearer advisor").send({companyIds: [7]}).expect(200);

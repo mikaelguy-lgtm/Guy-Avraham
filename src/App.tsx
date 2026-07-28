@@ -30,6 +30,9 @@ import {ExternalAccessPage, ExternalPortalPage, ExternalReviewPage} from "./comp
 import AdminFinancingCompaniesView from "./components/AdminFinancingCompaniesView";
 import AdminBusinessCalendarView from "./components/AdminBusinessCalendarView";
 import AdminCompanySubmissionsView from "./components/AdminCompanySubmissionsView";
+import {requireFrontendConfig} from "./config/frontend";
+
+const productionConfig = requireFrontendConfig();
 
 function InviteRoute({user, onAuthenticated}: {user: CurrentUser | null; onAuthenticated: (user: CurrentUser) => void}) {
   const {token = ""} = useParams();
@@ -49,21 +52,25 @@ export default function App() {
   }), []);
   if (!ready) return <main className="auth-shell"><SynCashLogo size="lg" /></main>;
   if (!user) return <Routes>
-    <Route path="/external/review/:token" element={<ExternalReviewPage />} />
-    <Route path="/external/access/:token" element={<ExternalAccessPage />} />
-    <Route path="/external/portal" element={<ExternalPortalPage />} />
-    <Route path="/lender/invite/:token" element={<InviteRoute user={null} onAuthenticated={setUser} />} />
-    <Route path="/register/advisor" element={<AdvisorRegistrationScreen />} />
-    <Route path="/verify-email" element={<EmailVerificationScreen onAuthenticated={setUser} />} />
+    <Route path="/external/review/:token" element={productionConfig.externalPortalsEnabled ? <ExternalReviewPage /> : <Navigate to="/login" replace />} />
+    <Route path="/external/access/:token" element={productionConfig.externalPortalsEnabled ? <ExternalAccessPage /> : <Navigate to="/login" replace />} />
+    <Route path="/external/portal" element={productionConfig.externalPortalsEnabled ? <ExternalPortalPage /> : <Navigate to="/login" replace />} />
+    <Route path="/lender/invite/:token" element={productionConfig.externalPortalsEnabled ? <InviteRoute user={null} onAuthenticated={setUser} /> : <Navigate to="/login" replace />} />
+    <Route path="/register/advisor" element={productionConfig.publicRegistrationEnabled ? <AdvisorRegistrationScreen /> : <Navigate to="/login" replace />} />
+    <Route path="/verify-email" element={productionConfig.publicRegistrationEnabled ? <EmailVerificationScreen onAuthenticated={setUser} /> : <Navigate to="/login" replace />} />
     <Route path="*" element={<AuthScreen onAuthenticated={setUser} />} />
   </Routes>;
 
+  if (productionConfig.superAdminOnlyMode && user.role !== "SUPER_ADMIN") {
+    return <main className="auth-shell" dir="rtl"><section className="panel auth-card" role="alert"><SynCashLogo size="md" /><h1>הגישה מוגבלת</h1><p>הגישה לסביבה זו זמינה כעת לסופר אדמין בלבד.</p><button type="button" onClick={() => void api.logout()}>יציאה</button></section></main>;
+  }
+
   const homePath = homePathForRole(user.role);
   return <Routes>
-    <Route path="/external/review/:token" element={<ExternalReviewPage />} />
-    <Route path="/external/access/:token" element={<ExternalAccessPage />} />
-    <Route path="/external/portal" element={<ExternalPortalPage />} />
-    <Route path="/lender/invite/:token" element={<InviteRoute user={user} onAuthenticated={setUser} />} />
+    <Route path="/external/review/:token" element={productionConfig.externalPortalsEnabled ? <ExternalReviewPage /> : <Navigate to={homePath} replace />} />
+    <Route path="/external/access/:token" element={productionConfig.externalPortalsEnabled ? <ExternalAccessPage /> : <Navigate to={homePath} replace />} />
+    <Route path="/external/portal" element={productionConfig.externalPortalsEnabled ? <ExternalPortalPage /> : <Navigate to={homePath} replace />} />
+    <Route path="/lender/invite/:token" element={productionConfig.externalPortalsEnabled ? <InviteRoute user={user} onAuthenticated={setUser} /> : <Navigate to={homePath} replace />} />
     <Route path="/admin" element={canAccessAdmin(user.role) ? <AdminLayout user={user} /> : <Navigate to={homePath} replace />}>
       <Route index element={<AdminHome user={user} />} />
       <Route path="advisors" element={user.role === "SUPER_ADMIN" ? <AdminAdvisorsView /> : <AdminSectionPage title="יועצים" description="אין הרשאה לניהול יועצים." />} />

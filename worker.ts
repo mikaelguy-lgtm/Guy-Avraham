@@ -12,7 +12,7 @@ async function processDeliveryJobs(): Promise<void> {
   if (stopping || running) return;
   running = true;
   try {
-    await runtime.delivery.processJobs();
+    await runtime.delivery.processJobs({processEmail: runtime.env.EMAIL_DELIVERY_ENABLED});
     await writeFile(heartbeatPath, new Date().toISOString(), {encoding: "utf8", mode: 0o600});
   } catch {
     console.error("Lender delivery jobs failed", {errorCode: "LENDER_DELIVERY_JOB_FAILED"});

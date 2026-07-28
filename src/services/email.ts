@@ -53,8 +53,8 @@ export class EmailService {
     this.cachedSettings = await this.settingsProvider();
   }
 
-  private async transporter(): Promise<Transporter> {
-    if (!this.env.EMAIL_DELIVERY_ENABLED) throw new SmtpServiceError("EMAIL_DELIVERY_DISABLED");
+  private async transporter(allowWhenDisabled = false): Promise<Transporter> {
+    if (!allowWhenDisabled && !this.env.EMAIL_DELIVERY_ENABLED) throw new SmtpServiceError("EMAIL_DELIVERY_DISABLED");
     const password = await this.secrets.getSecret("syncash-smtp-password");
     const settings = await this.settings();
     const user = settings.SMTP_USER ?? this.env.SMTP_USER;
@@ -84,7 +84,7 @@ export class EmailService {
   async test(to: string): Promise<EmailResult> {
     await this.reload();
     const settings = await this.settings();
-    const transport = await this.transporter();
+    const transport = await this.transporter(true);
     await transport.verify();
     const info = await transport.sendMail({
       from: {name: settings.EMAIL_FROM_NAME ?? this.env.EMAIL_FROM_NAME, address: settings.EMAIL_FROM ?? this.env.EMAIL_FROM},

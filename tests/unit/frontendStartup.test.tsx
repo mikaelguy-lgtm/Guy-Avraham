@@ -22,6 +22,27 @@ describe("frontend startup configuration", () => {
     if (result.ok) {
       expect(result.config.apiBaseUrl).toBe("https://api.staging.example");
       expect(result.config.useFirebaseEmulator).toBe(false);
+      expect(result.config.emailDeliveryEnabled).toBe(true);
+      expect(result.config.publicRegistrationEnabled).toBe(true);
+      expect(result.config.externalPortalsEnabled).toBe(true);
+      expect(result.config.superAdminOnlyMode).toBe(false);
+    }
+  });
+
+  it("parses a closed production access configuration", () => {
+    const result = validateFrontendEnvironment({
+      ...validEnvironment,
+      VITE_EMAIL_DELIVERY_ENABLED: "false",
+      VITE_PUBLIC_REGISTRATION_ENABLED: "false",
+      VITE_EXTERNAL_PORTALS_ENABLED: "false",
+      VITE_SUPER_ADMIN_ONLY_MODE: "true"
+    }, "production");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.config.emailDeliveryEnabled).toBe(false);
+      expect(result.config.publicRegistrationEnabled).toBe(false);
+      expect(result.config.externalPortalsEnabled).toBe(false);
+      expect(result.config.superAdminOnlyMode).toBe(true);
     }
   });
 

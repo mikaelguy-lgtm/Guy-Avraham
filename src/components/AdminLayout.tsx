@@ -3,6 +3,9 @@ import type { CurrentUser } from "../types";
 import { api } from "../utils/apiClient";
 import Sidebar from "./Sidebar";
 import SynCashLogo from "./SynCashLogo";
+import {requireFrontendConfig} from "../config/frontend";
+
+const emailDeliveryEnabled = requireFrontendConfig().emailDeliveryEnabled;
 
 export default function AdminLayout({user}: {user: CurrentUser}) {
   const navigate = useNavigate();
@@ -17,6 +20,7 @@ export default function AdminLayout({user}: {user: CurrentUser}) {
         <button type="button" onClick={() => void api.logout()}>יציאה</button>
       </div>
     </header>
+    {!emailDeliveryEnabled && <div className="service-status-banner" role="status">שירות הדוא״ל טרם הוגדר. הרשמה, אימות מייל, OTP והזמנות מושבתים.</div>}
     <div className="admin-layout"><Sidebar onLogout={() => void api.logout()} /><section className="admin-content"><Outlet /></section></div>
   </div>;
 }

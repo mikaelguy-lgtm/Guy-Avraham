@@ -4,6 +4,9 @@ import { api } from "../utils/apiClient";
 import { ApiError } from "../utils/apiClient";
 import type { CurrentUser } from "../types";
 import SynCashLogo from "./SynCashLogo";
+import {requireFrontendConfig} from "../config/frontend";
+
+const registrationEnabled = requireFrontendConfig().publicRegistrationEnabled;
 
 export default function AuthScreen({onAuthenticated}: {onAuthenticated: (user: CurrentUser) => void}) {
   const [email, setEmail] = useState("");
@@ -29,7 +32,7 @@ export default function AuthScreen({onAuthenticated}: {onAuthenticated: (user: C
       <label>סיסמה<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
       {error && <p className="error" role="alert">{error}</p>}
       <button disabled={busy}>{busy ? "מתחבר…" : "כניסה"}</button>
-      <p className="auth-link">עדיין אין לך חשבון? <Link to="/register/advisor">הרשמה ליועצים</Link></p>
+      {registrationEnabled && <p className="auth-link">עדיין אין לך חשבון? <Link to="/register/advisor">הרשמה ליועצים</Link></p>}
     </form>
   </main>;
 }

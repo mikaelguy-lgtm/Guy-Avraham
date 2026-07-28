@@ -346,7 +346,35 @@ function valuesEqual(left: string, right: string): boolean {
 export function createApp(services: AppServices) {
   const app = express();
   const auth = createAuthMiddleware(services.store, services.verifier);
-  const authenticated = [auth.requireFirebaseAuth, auth.loadDatabaseUser, auth.requireActiveUser];
+  const requireProductionAccess = (request: Request, response: Response, next: NextFunction): void => {
+    if (services.env.SUPER_ADMIN_ONLY_MODE && request.user?.role !== "SUPER_ADMIN") {
+      response.status(403).json({error: "PRODUCTION_ACCESS_RESTRICTED", message: "הגישה לסביבה זו מוגבלת כעת לסופר אדמין בלבד.", requestId: request.requestId});
+      return;
+    }
+    next();
+  };
+  const requirePublicRegistration = (request: Request, response: Response, next: NextFunction): void => {
+    if (!services.env.PUBLIC_REGISTRATION_ENABLED) {
+      response.status(503).json({error: "PUBLIC_REGISTRATION_DISABLED", message: "ההרשמה הציבורית אינה פעילה כעת.", requestId: request.requestId});
+      return;
+    }
+    next();
+  };
+  const requireExternalPortals = (request: Request, response: Response, next: NextFunction): void => {
+    if (!services.env.EXTERNAL_PORTALS_ENABLED) {
+      response.status(503).json({error: "EXTERNAL_PORTALS_DISABLED", message: "הגישה לפורטלים החיצוניים אינה פעילה כעת.", requestId: request.requestId});
+      return;
+    }
+    next();
+  };
+  const requireEmailDelivery = (request: Request, response: Response, next: NextFunction): void => {
+    if (!services.env.EMAIL_DELIVERY_ENABLED) {
+      response.status(503).json({error: "EMAIL_DELIVERY_DISABLED", message: "שירות שליחת הדוא״ל אינו פעיל כעת.", requestId: request.requestId});
+      return;
+    }
+    next();
+  };
+  const authenticated = [auth.requireFirebaseAuth, auth.loadDatabaseUser, auth.requireActiveUser, requireProductionAccess];
   const upload = multer({storage: multer.memoryStorage(), limits: {fileSize: services.env.MAX_UPLOAD_SIZE_MB * 1024 * 1024, files: 1}});
 
   app.disable("x-powered-by");
@@ -370,7 +398,7 @@ export function createApp(services: AppServices) {
   const loginAttemptLimit = services.env.NODE_ENV === "production" ? 10 : 100;
   app.post("/api/auth/login-attempt", rateLimit(services.limiter, "login-attempt", loginAttemptLimit, 15 * 60), (_request, response) => response.json({allowed: true}));
 
-  app.post("/api/auth/register-advisor", auth.requireFirebaseAuth, rateLimit(services.limiter, "advisor-registration", 5, 60 * 60), asyncRoute(async (request, response) => {
+  app.post("/api/auth/register-advisor", requirePublicRegistration, auth.requireFirebaseAuth, rateLimit(services.limiter, "advisor-registration", 5, 60 * 60), asyncRoute(async (request, response) => {
     await services.store.addAudit(null, "ADVISOR_REGISTRATION_STARTED", "user", null, {source: "self_service"}, request.requestId, request.ip, request.header("user-agent"));
     const parsed = advisorRegistrationApiSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -446,6 +474,10 @@ export function createApp(services: AppServices) {
       response.status(403).json({error: "USER_INACTIVE", requestId: request.requestId});
       return;
     }
+    if (services.env.SUPER_ADMIN_ONLY_MODE && user.role !== "SUPER_ADMIN") {
+      response.status(403).json({error: "PRODUCTION_ACCESS_RESTRICTED", message: "הגישה לסביבה זו מוגבלת כעת לסופר אדמין בלבד.", requestId: request.requestId});
+      return;
+    }
     await services.store.recordLogin(user.id);
     const advisor = user.role === "ADVISOR" ? activatedAdvisor ?? await services.store.getAdvisorAccount(user.id) : null;
     response.json(advisor ? publicAdvisorAccount(advisor, services.encryption) : {
@@ -455,7 +487,7 @@ export function createApp(services: AppServices) {
     });
   }));
 
-  app.post("/api/auth/email-verification/resend", auth.requireFirebaseAuth, auth.loadDatabaseUser,
+  app.post("/api/auth/email-verification/resend", requirePublicRegistration, requireEmailDelivery, auth.requireFirebaseAuth, auth.loadDatabaseUser,
     rateLimit(services.limiter, "verification-resend-minute", 1, 60), rateLimit(services.limiter, "verification-resend-hour", 5, 60 * 60),
     asyncRoute(async (request, response) => {
       const user = request.user!;
@@ -473,7 +505,7 @@ export function createApp(services: AppServices) {
       }
     }));
 
-  app.get("/api/auth/email-verification/status", auth.requireFirebaseAuth, auth.loadDatabaseUser, asyncRoute(async (request, response) => {
+  app.get("/api/auth/email-verification/status", requirePublicRegistration, auth.requireFirebaseAuth, auth.loadDatabaseUser, asyncRoute(async (request, response) => {
     const user = request.user!;
     if (user.role !== "ADVISOR") { response.status(403).json({error: "FORBIDDEN", requestId: request.requestId}); return; }
     const latest = await services.store.getLatestEmailLog(user.id, ADVISOR_EMAIL_VERIFICATION_TEMPLATE);
@@ -719,6 +751,7 @@ export function createApp(services: AppServices) {
     }
   }));
 
+  app.use("/api/lender", requireExternalPortals);
   app.post("/api/lender/invites/validate", rateLimit(services.limiter, "invite-validation", 20, 60), asyncRoute(async (request, response) => {
     const {token} = z.object({token: z.string().min(20).max(200)}).parse(request.body);
     const invite = await services.store.validateInvite(hashToken(token));
@@ -895,7 +928,7 @@ export function createApp(services: AppServices) {
     response.json(publicAdvisorAccount(updated, services.encryption));
   }));
 
-  app.post("/api/admin/advisors/:id/resend-verification", ...authenticated, auth.requireSuperAdmin,
+  app.post("/api/admin/advisors/:id/resend-verification", ...authenticated, auth.requireSuperAdmin, requireEmailDelivery,
     rateLimit(services.limiter, "admin-verification-resend", 5, 60 * 60), asyncRoute(async (request, response) => {
       const advisor = await services.store.getAdvisorAccount(Number(request.params.id));
       if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
@@ -977,7 +1010,7 @@ export function createApp(services: AppServices) {
       if (!cookie || !header || !valuesEqual(cookie, header)) { response.status(403).json({error: "CSRF_VALIDATION_FAILED", message: "אימות הבקשה נכשל.", requestId: request.requestId}); return; }
       next();
     };
-    app.use("/api/external", (_request, response, next) => {
+    app.use("/api/external", requireExternalPortals, (_request, response, next) => {
       response.setHeader("Cache-Control", "no-store, max-age=0"); response.setHeader("Pragma", "no-cache"); response.setHeader("X-Robots-Tag", "noindex, nofollow"); response.setHeader("Referrer-Policy", "no-referrer"); response.setHeader("X-Frame-Options", "DENY"); next();
     });
 
@@ -990,7 +1023,7 @@ export function createApp(services: AppServices) {
     app.post("/api/clients/:clientId/delivery/preview", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
       const input = z.object({companyIds: z.array(z.number().int().positive()).min(1).max(30)}).strict().parse(request.body); response.json(await delivery.preview(request.authorizedClientId!, input.companyIds, advisorActor(request)));
     }));
-    app.post("/api/clients/:clientId/delivery/send", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, rateLimit(services.limiter, "lender-delivery-send", 10, 60), asyncRoute(async (request, response) => {
+    app.post("/api/clients/:clientId/delivery/send", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, requireEmailDelivery, rateLimit(services.limiter, "lender-delivery-send", 10, 60), asyncRoute(async (request, response) => {
       const input = z.object({companyIds: z.array(z.number().int().positive()).min(1).max(30), idempotencyKey: z.string().uuid(), previewConfirmation: z.string().min(40).max(4000)}).strict().parse(request.body); response.status(201).json(await delivery.send(request.authorizedClientId!, input, advisorActor(request), context(request)));
     }));
     app.get("/api/clients/:clientId/company-responses", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.listClientResponses(request.authorizedClientId!, advisorActor(request))); }));

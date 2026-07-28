@@ -10,6 +10,10 @@ export type FrontendConfig = {
   };
   useFirebaseEmulator: boolean;
   firebaseAuthEmulatorUrl: string | null;
+  publicRegistrationEnabled: boolean;
+  externalPortalsEnabled: boolean;
+  superAdminOnlyMode: boolean;
+  emailDeliveryEnabled: boolean;
 };
 
 export type FrontendConfigurationIssue = {
@@ -92,7 +96,11 @@ export function validateFrontendEnvironment(source: PublicEnvironment, mode: str
         appId: String(source.VITE_FIREBASE_APP_ID)
       },
       useFirebaseEmulator,
-      firebaseAuthEmulatorUrl
+      firebaseAuthEmulatorUrl,
+      publicRegistrationEnabled: source.VITE_PUBLIC_REGISTRATION_ENABLED !== "false",
+      externalPortalsEnabled: source.VITE_EXTERNAL_PORTALS_ENABLED !== "false",
+      superAdminOnlyMode: source.VITE_SUPER_ADMIN_ONLY_MODE === "true",
+      emailDeliveryEnabled: source.VITE_EMAIL_DELIVERY_ENABLED !== "false"
     }
   };
 }
