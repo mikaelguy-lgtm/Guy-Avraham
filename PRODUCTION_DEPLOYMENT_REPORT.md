@@ -6,9 +6,9 @@ Target: `app.syncash.co.il`
 
 Branch: `codex-syncash-production-rebuild`
 
-Prepared release: `49813949b9f2`
+Prepared release: `48233d9dba6d`
 
-Status: **Infrastructure and maintenance site are active; application activation remains blocked by the encryption-key format and SMTP configuration.**
+Status: **Infrastructure, the private application runtime and the maintenance site are active; public activation remains blocked by SMTP configuration.**
 
 ## Production State
 
@@ -17,12 +17,12 @@ Status: **Infrastructure and maintenance site are active; application activation
 | PostgreSQL | PASS | Healthy, migrated, private network only, dedicated volume, no seed data |
 | Redis | PASS | Healthy, authenticated, private network only, dedicated volume |
 | MinIO | PASS | Healthy, private network only, dedicated volume and application bucket initialized |
-| API | BLOCKED | Intentionally stopped because the configured field-encryption secret is not a base64-encoded 32-byte key |
+| API | PASS | Healthy on loopback only; private runtime verification passed and public Nginx access remains blocked |
 | Frontend | PASS | Healthy on loopback only; direct SPA routes passed |
 | Worker | DISABLED | Intentionally stopped while email delivery is disabled |
 | Firebase | PASS | ADC, Admin SDK, Email/Password, ID-token verification and authorized domain passed |
 | Secret Manager access | PASS | Both required existing secrets are readable with the configured read-only identity |
-| Encryption secret format | FAIL | The existing value is readable but does not decode to exactly 32 bytes |
+| Encryption secret format | PASS | A new version of the existing secret is canonical Base64 and decodes to exactly 32 bytes |
 | Nginx | PASS | Configuration test and reload passed |
 | Maintenance mode | PASS | HTTP redirects permanently to HTTPS; HTTPS and all public API routes return the Hebrew maintenance page with status 503 |
 | DNS | PASS | The application host resolves to the Production server through the server resolver, Google DNS and Cloudflare DNS |
@@ -35,9 +35,9 @@ Status: **Infrastructure and maintenance site are active; application activation
 ## Database Verification
 
 - `db:check`: passed against the isolated SynCash Production database.
-- Drizzle migrations: passed once without running a seed.
+- Drizzle migrations: passed idempotently during the controlled releases without running a seed.
 - Tables, indexes and constraints: passed.
-- Notification database flow: passed inside a rolled-back transaction.
+- Notification database flow: passed with an ephemeral Production validation user and complete cleanup.
 - Production users, clients and email outbox: empty after verification.
 - `DATABASE_URL`: validated to target only the Compose PostgreSQL service.
 
@@ -52,10 +52,12 @@ Status: **Infrastructure and maintenance site are active; application activation
 - Hebrew font embedding and extracted Unicode text: passed.
 - ZIP generation and archive integrity: passed.
 - MinIO temporary upload, download checksum and cleanup: passed.
-- Encryption/decryption implementation roundtrip with an ephemeral validation key: passed.
-- Internal SSE broker flow: passed.
+- Encryption/decryption roundtrip with the active Production key, including a temporary encrypted database value and cleanup: passed.
+- PostgreSQL, Redis, MinIO, Firebase Admin and Secret Manager runtime connections: passed.
+- Authenticated live SSE connection through the running API: passed; the ephemeral Firebase and database user was removed.
+- Notifications create, read and mark-as-read flow: passed; the temporary notification was removed.
 - Frontend routes `/`, `/login`, `/register/advisor`, `/verify-email`, `/advisor`, `/admin` and lender invitation fallback: passed on loopback.
-- API-dependent upload routes, authenticated notifications and live SSE endpoint remain blocked until the Production encryption key is corrected.
+- API health, authenticated runtime services, temporary upload/download and private realtime flows passed while all public API routes remained behind maintenance mode.
 
 ## Security Verification
 
@@ -66,6 +68,7 @@ Status: **Infrastructure and maintenance site are active; application activation
 - UFW, Fail2ban, Nginx and Docker are active.
 - Production images use restart policies and bounded JSON log rotation.
 - Release and image scans found no Production environment secrets or private credential values.
+- API log scanning found no encryption, authentication or secret errors and no configured sensitive values.
 - Frontend image contains no Firebase Emulator, Mailpit, local development endpoint or E2E marker.
 - API image contains no tests, source tree or environment files.
 - Mailpit is not installed or running in Production.
@@ -89,11 +92,9 @@ Status: **Infrastructure and maintenance site are active; application activation
 
 ## Remaining Activation Gates
 
-1. Replace the existing `syncash-field-encryption-key` secret with a base64-encoded cryptographically random 32-byte key. Do not place the value in Git or the server environment file.
-2. Re-run the prepared release and complete API health, authenticated upload/download, live notifications and live SSE checks.
-3. Configure the real Production SMTP provider and sender values; keep email delivery disabled until an authenticated send succeeds.
-4. Verify actual inbound delivery to the support mailbox. DNS is ready, but mailbox receipt was not tested from this environment.
-5. Enable email delivery and the worker only after SMTP verification succeeds.
-6. Replace the maintenance Nginx site with the reviewed live proxy configuration, run `nginx -t`, and reload Nginx without restarting it.
+1. Configure the real Production SMTP provider and sender values; keep email delivery disabled until an authenticated send succeeds.
+2. Verify actual inbound delivery to the support mailbox. DNS is ready, but mailbox receipt was not tested from this environment.
+3. Enable email delivery and the worker only after SMTP verification succeeds.
+4. Replace the maintenance Nginx site with the reviewed live proxy configuration, run `nginx -t`, and reload Nginx without restarting it.
 
-The Production application is **not** marked complete, no email was sent, no seed or customer data was created, and maintenance mode remains enabled.
+The Production application is **not** marked complete, no email was sent, no seed or customer data was created, and maintenance mode remains enabled. The API is healthy but is not publicly reachable through Nginx.
