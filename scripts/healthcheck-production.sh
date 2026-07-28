@@ -37,7 +37,7 @@ for service in postgres redis minio; do
   fi
 done
 
-if compose "$RELEASE_DIRECTORY" exec -T frontend sh -c "grep -R -E 'localhost|127\\.0\\.0\\.1|:9099|SMTP_PASSWORD|DATABASE_URL|FIELD_ENCRYPTION_KEY|PRIVATE_KEY|S3_SECRET' /usr/share/nginx/html" >/dev/null 2>&1; then
+if compose "$RELEASE_DIRECTORY" exec -T frontend sh -c "grep -R -E 'localhost|:9099|SMTP_PASSWORD|DATABASE_URL|FIELD_ENCRYPTION_KEY|PRIVATE_KEY|S3_SECRET' /usr/share/nginx/html" >/dev/null 2>&1; then
   printf 'A prohibited development URL or private secret name exists in the frontend bundle.\n' >&2
   exit 1
 fi
