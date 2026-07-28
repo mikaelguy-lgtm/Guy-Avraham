@@ -30,9 +30,8 @@ if [[ -f /etc/letsencrypt/live/app.syncash.co.il/fullchain.pem ]] && \
 fi
 
 for service in postgres redis minio; do
-  if [[ -n "$(compose "$RELEASE_DIRECTORY" port "$service" 5432 2>/dev/null || true)" || \
-        -n "$(compose "$RELEASE_DIRECTORY" port "$service" 6379 2>/dev/null || true)" || \
-        -n "$(compose "$RELEASE_DIRECTORY" port "$service" 9000 2>/dev/null || true)" ]]; then
+  container_id="$(compose "$RELEASE_DIRECTORY" ps -q "$service")"
+  if docker inspect --format '{{json .NetworkSettings.Ports}}' "$container_id" | grep -Eq '"HostPort":"[^"]+"'; then
     printf 'Private service %s unexpectedly exposes a host port.\n' "$service" >&2
     exit 1
   fi
