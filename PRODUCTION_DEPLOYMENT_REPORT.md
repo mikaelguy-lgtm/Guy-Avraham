@@ -6,9 +6,9 @@ Target: `app.syncash.co.il`
 
 Branch: `codex-syncash-production-rebuild`
 
-Prepared release: `48233d9dba6d`
+Prepared release: `616bd048be211d5641318f724d98e5a53f4d776a`
 
-Status: **Infrastructure, the private application runtime and the maintenance site are active; public activation remains blocked by Brevo SMTP account activation.**
+Status: **The application is available over HTTPS in controlled SUPER_ADMIN-only mode. Public registration, external portals and all email delivery remain disabled until SMTP activation is completed.**
 
 ## Production State
 
@@ -17,14 +17,14 @@ Status: **Infrastructure, the private application runtime and the maintenance si
 | PostgreSQL | PASS | Healthy, migrated, private network only, dedicated volume, no seed data |
 | Redis | PASS | Healthy, authenticated, private network only, dedicated volume |
 | MinIO | PASS | Healthy, private network only, dedicated volume and application bucket initialized |
-| API | PASS | Healthy on loopback only; private runtime verification passed and public Nginx access remains blocked |
-| Frontend | PASS | Healthy on loopback only; direct SPA routes passed |
-| Worker | PASS | Healthy with email delivery enabled; the empty queue has no retries or errors |
+| API | PASS | Healthy on loopback behind Nginx; authenticated SUPER_ADMIN access and public safety gates passed |
+| Frontend | PASS | Healthy on loopback behind Nginx; login, dashboard, settings and direct SPA routes passed |
+| Worker | PASS | Healthy for non-email work; email jobs are suspended and the empty queue has no retries or errors |
 | Firebase | PASS | ADC, Admin SDK, Email/Password, ID-token verification and authorized domain passed |
 | Secret Manager access | PASS | Encryption, Firebase and SMTP secrets are readable with the configured runtime identity |
 | Encryption secret format | PASS | A new version of the existing secret is canonical Base64 and decodes to exactly 32 bytes |
 | Nginx | PASS | Configuration test and reload passed |
-| Maintenance mode | PASS | HTTP redirects permanently to HTTPS; HTTPS and all public API routes return the Hebrew maintenance page with status 503 |
+| Maintenance mode | OFF | Removed after `nginx -t`; HTTPS exposes only the controlled login flow and existing SUPER_ADMIN access |
 | DNS | PASS | The application host resolves to the Production server through the server resolver, Google DNS and Cloudflare DNS |
 | TLS | PASS | Valid certificate installed; HTTPS validation and renewal dry-run passed |
 | ImprovMX DNS | PASS | Both required MX records are present |
@@ -39,14 +39,14 @@ Status: **Infrastructure, the private application runtime and the maintenance si
 - Drizzle migrations: passed idempotently during the controlled releases without running a seed.
 - Tables, indexes and constraints: passed.
 - Notification database flow: passed with an ephemeral Production validation user and complete cleanup.
-- Production users, clients and email outbox: empty after verification.
+- Production contains one active SUPER_ADMIN synchronized with Firebase; clients and email outbox remain empty.
 - `DATABASE_URL`: validated to target only the Compose PostgreSQL service.
 
 ## Runtime Verification
 
 - Server-side DNS resolution through the system resolver, Google DNS (`8.8.8.8`) and Cloudflare DNS (`1.1.1.1`) returned only the Production server address.
 - Plain HTTP returns a permanent `308` redirect to the equivalent HTTPS URL while preserving the ACME challenge path.
-- Public HTTPS certificate validation passed without bypasses; the Hebrew maintenance page returns status 503 and public API routes remain unavailable.
+- Public HTTPS certificate validation passed without bypasses; Nginx serves the application and preserves the permanent HTTP-to-HTTPS redirect.
 - Certbot automatic renewal is enabled and active; the simulated renewal completed successfully.
 - Full Hebrew PDF generation from the Production API image: passed.
 - Masked Hebrew PDF generation from the Production API image: passed.
@@ -57,8 +57,9 @@ Status: **Infrastructure, the private application runtime and the maintenance si
 - PostgreSQL, Redis, MinIO, Firebase Admin and Secret Manager runtime connections: passed.
 - Authenticated live SSE connection through the running API: passed; the ephemeral Firebase and database user was removed.
 - Notifications create, read and mark-as-read flow: passed; the temporary notification was removed.
-- Frontend routes `/`, `/login`, `/register/advisor`, `/verify-email`, `/advisor`, `/admin` and lender invitation fallback: passed on loopback.
-- API health, authenticated runtime services, temporary upload/download and private realtime flows passed while all public API routes remained behind maintenance mode.
+- Direct refreshes for `/`, `/login`, `/register/advisor`, `/verify-email`, `/advisor`, `/admin`, `/admin/settings`, `/admin/settings/smtp` and lender invitation fallback return the SPA successfully.
+- Real-browser verification passed for SUPER_ADMIN login, dashboard, system settings, SMTP settings, save without a new password, navigation, session preservation, refresh and logout.
+- The disabled-email Hebrew notice is visible after login. Browser console and network verification found no unexpected errors.
 
 ## Security Verification
 
@@ -75,17 +76,19 @@ Status: **Infrastructure, the private application runtime and the maintenance si
 - Mailpit is not installed or running in Production.
 - The replaced SMTP key was removed from Brevo; the exposed Secret Manager version is disabled and only the rotated version is active.
 - The SMTP password is not stored in the environment file, release tree, image or Git history.
+- SMTP settings are restricted to SUPER_ADMIN in both frontend and backend. The password is never returned to the browser, and a blank password field does not replace the stored secret.
+- Saving non-secret SMTP settings without a password produced an `SMTP_UPDATED` audit record with `passwordUpdated=false`; no password or secret key exists in `system_settings`.
+- `SUPER_ADMIN_ONLY_MODE=true`, public registration is disabled, and external review, lender invitation, OTP and public verification flows are blocked.
 
 ## SMTP Activation State
 
 - The approved Brevo relay host, STARTTLS port, SMTP user, sender address, sender name and reply-to address are configured.
-- `EMAIL_DELIVERY_ENABLED=true` is active and the Worker is healthy.
+- `EMAIL_DELIVERY_ENABLED=false` is active and the Worker is healthy for non-email tasks.
 - The runtime Service Account can read the rotated SMTP secret from Google Secret Manager.
-- Nodemailer `verify()` passes through STARTTLS on port 587.
-- Brevo rejects `DATA` with a provider account-activation response, so no test message was accepted or delivered.
-- No `PRODUCTION_SMTP_TEST` email log was created and no duplicate or retry was generated.
-- The Worker queue is empty and Worker logs contain no SMTP, secret or authentication errors.
-- Public registration remains unavailable behind maintenance mode.
+- Email delivery is not attempted automatically. The outbox contains zero records, zero attempts and zero sent messages.
+- The existing SMTP secret remains unchanged. Manual SMTP testing remains available only to SUPER_ADMIN for the future controlled activation step.
+- Worker and API logs contain no runtime errors, SMTP retries, secret exposure or authentication failures.
+- Public registration and external portals remain disabled independently of Nginx maintenance mode.
 
 ## Backups and Rollback
 
@@ -97,9 +100,9 @@ Status: **Infrastructure, the private application runtime and the maintenance si
 
 ## Remaining Activation Gates
 
-1. Request and receive Brevo SMTP account activation; credentials, sender and domain authentication are already configured.
-2. Repeat the exact Production test email and verify Brevo delivery, ImprovMX receipt and SPF/DKIM/DMARC headers.
+1. Activate an approved SMTP provider configuration through the SUPER_ADMIN email settings screen and complete a successful manual test email.
+2. Enable email delivery only after delivery, receipt and SPF/DKIM/DMARC verification pass.
 3. Complete registration verification, OTP, lender invitation, notification queue and Worker retry delivery checks, then clean their temporary data.
-4. Replace the maintenance Nginx site with the reviewed live proxy configuration only after all activation gates pass, run `nginx -t`, and reload Nginx without restarting it.
+4. Review and explicitly enable public registration and external portals only after their email-dependent flows pass.
 
-The Production application is **not** marked complete, Brevo accepted no email, no seed or customer data was created, and maintenance mode remains enabled. The API and Worker are healthy but the API is not publicly reachable through Nginx.
+The Production application is available only for the existing SUPER_ADMIN. No seed, demo or customer data was created; email delivery, public registration and external portals remain disabled. All six containers are healthy and the HTTPS application is reachable through Nginx.
