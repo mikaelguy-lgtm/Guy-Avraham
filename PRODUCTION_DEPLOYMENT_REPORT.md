@@ -6,7 +6,7 @@ Target: `app.syncash.co.il`
 
 Branch: `codex-syncash-production-rebuild`
 
-Deployed release: `790129f376db0d965f49367b614ba2da3256787a`
+Deployed release: `5c21d6ae6fa7259bd3c74aa6eaba45325a8fb87b`
 
 Status: **The application is available over HTTPS in controlled SUPER_ADMIN-only mode. Public registration, external portals and all email delivery remain disabled until SMTP activation is completed.**
 
@@ -102,6 +102,16 @@ Status: **The application is available over HTTPS in controlled SUPER_ADMIN-only
 - SUPER_ADMIN-only RBAC, rate limiting, SSRF protection, audit events and sanitized request IDs cover every configuration action.
 - The Production SUPER_ADMIN screen rendered successfully after deployment. Gmail and Brevo presets, custom editable transport controls, password masking and disabled Test/Activate actions before a valid tested draft were verified without entering or exposing a credential.
 - All six Production containers remained healthy after the controlled deployment; HTTPS health, login and direct SMTP settings routes passed. Email delivery, registration and external portals remain disabled.
+
+### Gmail draft save incident
+
+- The visible request identifier ending in `f12c4be-354a-4448-b67d-a3cc30d03048` matched the audited Production request `1f12c4be-354a-4448-b67d-a3cc30d03048` on `PATCH /api/admin/settings/email`.
+- Secret Manager successfully created a new secret version and PostgreSQL successfully stored the Gmail draft and audit event, but Google returned the version resource with the numeric Project identifier. The response-time verification accepted only the textual Project identifier, threw `INVALID_SECRET_VERSION`, and the sanitized global handler returned HTTP `500` with `INTERNAL_SERVER_ERROR`.
+- Release `5c21d6ae6fa7259bd3c74aa6eaba45325a8fb87b` canonicalizes trusted version resources to the configured Project, safely handles legacy numeric references, and no longer converts a successful secret write into a failed browser response.
+- The two affected draft references were normalized in PostgreSQL without reading or changing secret values. Both references validate and the existing draft now reports that its SMTP password is configured.
+- Gmail App Password input removes ordinary spaces only and requires 16 remaining characters. A failed save keeps the password field populated for retry on the same page; a successful save clears it.
+- The Production screen now presents an explicit Draft, Tested and Active progress bar with numbered actions, visible lock states, explanatory text and responsive layouts for mobile, tablet and desktop.
+- No SMTP test or activation was performed during this repair. Email delivery remains disabled and no email-dependent public flow was enabled.
 
 ## Backups and Rollback
 
