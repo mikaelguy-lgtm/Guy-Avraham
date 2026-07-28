@@ -640,6 +640,10 @@ export function createApp(services: AppServices) {
   }));
 
   app.post("/api/clients/:clientId/submissions", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    if (!services.env.EMAIL_DELIVERY_ENABLED) {
+      response.status(503).json({error: "EMAIL_DELIVERY_DISABLED", message: "שירות שליחת הדוא״ל אינו פעיל כעת.", requestId: request.requestId});
+      return;
+    }
     const input = z.object({lenderIds: z.array(z.number().int().positive()).min(1).max(20)}).parse(request.body);
     if (await services.store.hasIncompleteLegacyLiabilities(request.authorizedClientId!)) {
       response.status(422).json({
@@ -687,6 +691,10 @@ export function createApp(services: AppServices) {
   }));
 
   app.post("/api/submissions/:id/retry-delivery", ...authenticated, auth.requireRole("ADVISOR"), rateLimit(services.limiter, "submission-retry", 10, 60), asyncRoute(async (request, response) => {
+    if (!services.env.EMAIL_DELIVERY_ENABLED) {
+      response.status(503).json({error: "EMAIL_DELIVERY_DISABLED", message: "שירות שליחת הדוא״ל אינו פעיל כעת.", requestId: request.requestId});
+      return;
+    }
     const advisorId = request.user!.advisorId;
     if (!advisorId) { response.status(403).json({error: "ADVISOR_PROFILE_REQUIRED"}); return; }
     const token = randomBytes(32).toString("base64url");

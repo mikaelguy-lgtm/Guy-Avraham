@@ -87,6 +87,9 @@ export class AdvisorEmailVerificationService implements EmailVerificationService
       const smtpFailure = sanitizeSmtpFailure(error);
       const linkFailure = smtpFailure.code === "SMTP_TEST_FAILED";
       const failure = linkFailure ? {code: "VERIFICATION_LINK_OR_DELIVERY_FAILED", status: 502} : smtpFailure;
+      if (failure.code === "EMAIL_DELIVERY_DISABLED") {
+        throw new EmailVerificationDeliveryError(failure.code, failure.status);
+      }
       await this.logs.addEmailLog({
         recipient: user.email,
         template: ADVISOR_EMAIL_VERIFICATION_TEMPLATE,

@@ -2,6 +2,7 @@ import "dotenv/config";
 import { z } from "zod";
 
 const optionalText = z.string().trim().optional().default("");
+const optionalEmail = z.union([z.literal(""), z.string().email()]).optional().default("");
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -19,20 +20,24 @@ const schema = z.object({
   LOCAL_SECRET_STORE_PATH: optionalText,
   LOCAL_SECRET_MASTER_KEY: optionalText,
   FIELD_ENCRYPTION_KEY: optionalText,
+  COOKIE_SECRET: optionalText,
+  SESSION_SECRET: optionalText,
+  TOKEN_HASH_SECRET: optionalText,
   S3_ENDPOINT: z.string().url(),
   S3_REGION: z.string().min(1).default("us-east-1"),
   S3_BUCKET: z.string().min(3),
   S3_ACCESS_KEY_ID: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
   S3_FORCE_PATH_STYLE: z.string().default("true").transform((value) => value === "true"),
-  SMTP_HOST: z.string().min(1),
+  EMAIL_DELIVERY_ENABLED: z.string().default("true").transform((value) => value === "true"),
+  SMTP_HOST: optionalText,
   SMTP_PORT: z.coerce.number().int().positive(),
   SMTP_SECURE: z.string().default("false").transform((value) => value === "true"),
   SMTP_USER: optionalText,
   SMTP_PASSWORD: optionalText,
-  EMAIL_FROM: z.string().email(),
+  EMAIL_FROM: optionalEmail,
   EMAIL_FROM_NAME: z.string().min(1),
-  EMAIL_REPLY_TO: z.string().email(),
+  EMAIL_REPLY_TO: optionalEmail,
   GEMINI_API_KEY: optionalText,
   GEMINI_MODEL: z.string().min(1).default("gemini-2.5-flash"),
   MAX_UPLOAD_SIZE_MB: z.coerce.number().int().min(1).max(50).default(15),
@@ -50,6 +55,13 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   }
 
   const env = parsed.data;
+  if (env.EMAIL_DELIVERY_ENABLED) {
+    const requiredEmailSettings = ["SMTP_HOST", "EMAIL_FROM", "EMAIL_REPLY_TO"] as const;
+    const missingEmailSettings = requiredEmailSettings.filter((key) => !env[key]);
+    if (missingEmailSettings.length > 0) {
+      throw new Error(`Missing email delivery environment variables: ${missingEmailSettings.join(", ")}`);
+    }
+  }
   if (env.FIELD_ENCRYPTION_KEY) {
     const key = Buffer.from(env.FIELD_ENCRYPTION_KEY, "base64");
     if (key.length !== 32) {
@@ -58,7 +70,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   }
 
   if (env.NODE_ENV === "production") {
-    const required = ["FIREBASE_PROJECT_ID", "FIREBASE_CLIENT_EMAIL"] as const;
+    const required = ["FIREBASE_PROJECT_ID", "FIREBASE_CLIENT_EMAIL", "COOKIE_SECRET", "SESSION_SECRET", "TOKEN_HASH_SECRET"] as const;
     const missing = required.filter((key) => !env[key]);
     if (missing.length > 0) {
       throw new Error(`Missing production environment variables: ${missing.join(", ")}`);

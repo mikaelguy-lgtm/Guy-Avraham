@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hashToken } from "../../src/utils/crypto";
-import { sanitizeEmailError } from "../../src/services/email";
+import { sanitizeEmailError, sanitizeSmtpFailure, SmtpServiceError } from "../../src/services/email";
 import { loadEnv } from "../../src/config/env";
 
 describe("security utilities", () => {
@@ -23,6 +23,9 @@ describe("security utilities", () => {
     EMAIL_FROM: "no-reply@example.com",
     EMAIL_FROM_NAME: "SynCash",
     EMAIL_REPLY_TO: "support@example.com",
+    COOKIE_SECRET: "cookie-secret",
+    SESSION_SECRET: "session-secret",
+    TOKEN_HASH_SECRET: "token-secret",
     GEMINI_MODEL: "model"
   });
 
@@ -53,6 +56,23 @@ describe("security utilities", () => {
 
   it("requires a Google Cloud project for the production Google provider", () => {
     expect(() => loadEnv({...productionEnvironment(), SECRET_PROVIDER: "google"})).toThrow(/GOOGLE_CLOUD_PROJECT/);
+  });
+
+  it("allows production startup with email delivery explicitly disabled", () => {
+    const env = loadEnv({
+      ...productionEnvironment(),
+      EMAIL_DELIVERY_ENABLED: "false",
+      SMTP_HOST: "",
+      EMAIL_FROM: "",
+      EMAIL_REPLY_TO: "",
+      SECRET_PROVIDER: "google",
+      GOOGLE_CLOUD_PROJECT: "project"
+    });
+    expect(env.EMAIL_DELIVERY_ENABLED).toBe(false);
+    expect(sanitizeSmtpFailure(new SmtpServiceError("EMAIL_DELIVERY_DISABLED"))).toMatchObject({
+      code: "EMAIL_DELIVERY_DISABLED",
+      status: 503
+    });
   });
 });
 

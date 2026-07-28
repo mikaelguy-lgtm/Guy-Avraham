@@ -516,6 +516,18 @@ describe("invites", () => {
 describe("submission delivery", () => {
   const snapshotSource = {publicCaseNumber: "SC-1", loanPurpose: "SECOND_HAND_PURCHASE", propertyType: "APARTMENT", propertyCity: "תל אביב", propertyValue: 2_000_000, requestedAmount: 1_000_000, numberOfBorrowers: 2, borrowerRelationship: "MARRIED", employmentTypes: ["SALARIED", "SELF_EMPLOYED"], borrowerBirthDatesEncrypted: [null, null], borrowerBirthDates: [new Date("1985-06-15"), new Date("1987-08-20")], totalMonthlyIncome: 50_000, liabilityCount: 1, totalLiabilityBalance: 400_000, totalMonthlyPayments: 6_000, liabilityTypeBreakdown: {MORTGAGE: 1}};
 
+  it("blocks delivery before creating a submission when production email is disabled", async () => {
+    const createSubmission = vi.fn();
+    const response = await request(app(
+      {createSubmission},
+      undefined,
+      secrets,
+      {...env, EMAIL_DELIVERY_ENABLED: false, SMTP_HOST: "", EMAIL_FROM: "", EMAIL_REPLY_TO: ""}
+    )).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(503);
+    expect(response.body).toEqual(expect.objectContaining({error: "EMAIL_DELIVERY_DISABLED", requestId: expect.any(String)}));
+    expect(createSubmission).not.toHaveBeenCalled();
+  });
+
   it("marks a successful SMTP delivery as SENT without creating an automatic response", async () => {
     const markSent = vi.fn().mockResolvedValue(undefined);
     const createResponse = vi.fn();

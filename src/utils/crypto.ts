@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 const VERSION = "v1";
 
@@ -32,6 +32,8 @@ export class EncryptionService {
 }
 
 export function hashToken(token: string): string {
+  const secret = process.env.TOKEN_HASH_SECRET;
+  if (secret) return createHmac("sha256", secret).update(token, "utf8").digest("hex");
   return createHash("sha256").update(token, "utf8").digest("hex");
 }
 

@@ -22,7 +22,8 @@ require_environment_names \
   POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD DATABASE_URL REDIS_PASSWORD REDIS_URL \
   S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_KEY \
   SECRET_PROVIDER GOOGLE_CLOUD_PROJECT GOOGLE_APPLICATION_CREDENTIALS FIREBASE_PROJECT_ID FIREBASE_CLIENT_EMAIL \
-  SMTP_HOST SMTP_PORT SMTP_USER EMAIL_FROM EMAIL_REPLY_TO \
+  COOKIE_SECRET SESSION_SECRET TOKEN_HASH_SECRET \
+  EMAIL_DELIVERY_ENABLED SMTP_PORT \
   VITE_API_BASE_URL VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID \
   VITE_FIREBASE_STORAGE_BUCKET VITE_FIREBASE_MESSAGING_SENDER_ID VITE_FIREBASE_APP_ID BACKUP_ENCRYPTION_PASSPHRASE
 
@@ -37,6 +38,9 @@ fi
 if [[ "$VITE_USE_FIREBASE_EMULATOR" != "false" || -n "${FIREBASE_AUTH_EMULATOR_HOST:-}" ]]; then
   printf 'Firebase Emulator is forbidden in production.\n' >&2
   exit 1
+fi
+if [[ "$EMAIL_DELIVERY_ENABLED" == "true" ]]; then
+  require_environment_names SMTP_HOST SMTP_USER EMAIL_FROM EMAIL_REPLY_TO
 fi
 if grep -Eq 'localhost|127\.0\.0\.1|mailpit|firebase-auth' "$SYNCASH_ENV_FILE"; then
   printf 'Development endpoints are forbidden in the production environment file.\n' >&2
@@ -54,7 +58,12 @@ compose "$RELEASE_DIRECTORY" up -d postgres redis minio
 for service in postgres redis minio; do wait_for_service_health "$RELEASE_DIRECTORY" "$service" 180; done
 compose "$RELEASE_DIRECTORY" run --rm --no-deps api node dist-server/src/server/productionSecrets.js
 "$SCRIPT_DIRECTORY/migrate-production.sh"
-compose "$RELEASE_DIRECTORY" up -d api worker frontend
+compose "$RELEASE_DIRECTORY" up -d api frontend
+if [[ "$EMAIL_DELIVERY_ENABLED" == "true" ]]; then
+  compose "$RELEASE_DIRECTORY" up -d worker
+else
+  compose "$RELEASE_DIRECTORY" stop worker >/dev/null 2>&1 || true
+fi
 "$SCRIPT_DIRECTORY/healthcheck-production.sh"
 
 if [[ -L "$SYNCASH_ROOT/current" ]]; then

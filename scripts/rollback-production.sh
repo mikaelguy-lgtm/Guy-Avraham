@@ -25,7 +25,9 @@ exec 9>"$SYNCASH_ROOT/shared/locks/deploy.lock"
 flock -n 9 || { printf 'A SynCash deployment or rollback is already running.\n' >&2; exit 1; }
 load_release_sha "$target"
 compose "$target" config --quiet
-compose "$target" up -d --no-build postgres redis minio api worker frontend
+services=(postgres redis minio api frontend)
+if [[ "$EMAIL_DELIVERY_ENABLED" == "true" ]]; then services+=(worker); fi
+compose "$target" up -d --no-build "${services[@]}"
 "$target/scripts/healthcheck-production.sh"
 ln -sfn "$target" "$SYNCASH_ROOT/current.next"
 mv -Tf "$SYNCASH_ROOT/current.next" "$SYNCASH_ROOT/current"

@@ -8,7 +8,9 @@ RELEASE_DIRECTORY="$(release_directory)"
 load_production_environment
 load_release_sha "$RELEASE_DIRECTORY"
 
-for service in postgres redis minio api worker frontend; do
+services=(postgres redis minio api frontend)
+if [[ "$EMAIL_DELIVERY_ENABLED" == "true" ]]; then services+=(worker); fi
+for service in "${services[@]}"; do
   wait_for_service_health "$RELEASE_DIRECTORY" "$service" 30
 done
 

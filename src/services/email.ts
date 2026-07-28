@@ -24,7 +24,7 @@ export function resolveSmtpTransportSettings(env: AppEnv, settings: SmtpSettings
 }
 
 export class SmtpServiceError extends Error {
-  constructor(readonly code: "SMTP_PASSWORD_NOT_CONFIGURED") {
+  constructor(readonly code: "SMTP_PASSWORD_NOT_CONFIGURED" | "EMAIL_DELIVERY_DISABLED") {
     super(code);
   }
 }
@@ -54,6 +54,7 @@ export class EmailService {
   }
 
   private async transporter(): Promise<Transporter> {
+    if (!this.env.EMAIL_DELIVERY_ENABLED) throw new SmtpServiceError("EMAIL_DELIVERY_DISABLED");
     const password = await this.secrets.getSecret("syncash-smtp-password");
     const settings = await this.settings();
     const user = settings.SMTP_USER ?? this.env.SMTP_USER;
@@ -101,6 +102,9 @@ export function sanitizeMessageId(messageId: string): string {
 }
 
 export function sanitizeSmtpFailure(error: unknown): SanitizedSmtpFailure {
+  if (error instanceof SmtpServiceError && error.code === "EMAIL_DELIVERY_DISABLED") {
+    return {code: "EMAIL_DELIVERY_DISABLED", message: "שירות שליחת הדוא״ל אינו פעיל כעת.", status: 503};
+  }
   if (error instanceof SmtpServiceError && error.code === "SMTP_PASSWORD_NOT_CONFIGURED") {
     return {code: "SMTP_CREDENTIAL_NOT_CONFIGURED", message: "לא הוגדרה סיסמת SMTP.", status: 409};
   }
