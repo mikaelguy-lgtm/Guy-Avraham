@@ -12,9 +12,9 @@ const provider = createSecretProvider(env.SECRET_PROVIDER, {
 });
 const requiredSecrets = [
   "syncash-field-encryption-key",
-  "syncash-firebase-private-key",
-  "syncash-smtp-password"
+  "syncash-firebase-private-key"
 ];
+if (env.EMAIL_DELIVERY_ENABLED) requiredSecrets.push("syncash-smtp-password");
 const missing: string[] = [];
 for (const secretName of requiredSecrets) {
   if (!await provider.isConfigured(secretName)) missing.push(secretName);
