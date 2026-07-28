@@ -24,9 +24,9 @@ Status: **Infrastructure and maintenance site are active; application activation
 | Secret Manager access | PASS | Both required existing secrets are readable with the configured read-only identity |
 | Encryption secret format | FAIL | The existing value is readable but does not decode to exactly 32 bytes |
 | Nginx | PASS | Configuration test and reload passed |
-| Maintenance mode | PASS | HTTP, HTTPS and all public API routes return the Hebrew maintenance page with status 503 |
-| DNS | PASS | The application host resolves to the Production server |
-| TLS | PASS | Valid certificate installed; renewal dry-run passed |
+| Maintenance mode | PASS | HTTP redirects permanently to HTTPS; HTTPS and all public API routes return the Hebrew maintenance page with status 503 |
+| DNS | PASS | The application host resolves to the Production server through the server resolver, Google DNS and Cloudflare DNS |
+| TLS | PASS | Valid certificate installed; HTTPS validation and renewal dry-run passed |
 | ImprovMX DNS | PASS | Both required MX records are present |
 | Brevo DNS | PASS | Sending domain, verification, DKIM, DMARC, image and tracking records are present |
 | Backups | PASS | Daily encrypted backup, checksum, lock and retention policy are active |
@@ -43,6 +43,10 @@ Status: **Infrastructure and maintenance site are active; application activation
 
 ## Runtime Verification
 
+- Server-side DNS resolution through the system resolver, Google DNS (`8.8.8.8`) and Cloudflare DNS (`1.1.1.1`) returned only the Production server address.
+- Plain HTTP returns a permanent `308` redirect to the equivalent HTTPS URL while preserving the ACME challenge path.
+- Public HTTPS certificate validation passed without bypasses; the Hebrew maintenance page returns status 503 and public API routes remain unavailable.
+- Certbot automatic renewal is enabled and active; the simulated renewal completed successfully.
 - Full Hebrew PDF generation from the Production API image: passed.
 - Masked Hebrew PDF generation from the Production API image: passed.
 - Hebrew font embedding and extracted Unicode text: passed.
