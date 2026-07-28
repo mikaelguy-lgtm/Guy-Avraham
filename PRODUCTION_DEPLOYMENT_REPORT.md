@@ -8,7 +8,7 @@ Branch: `codex-syncash-production-rebuild`
 
 Prepared release: `48233d9dba6d`
 
-Status: **Infrastructure, the private application runtime and the maintenance site are active; public activation remains blocked by SMTP configuration.**
+Status: **Infrastructure, the private application runtime and the maintenance site are active; public activation remains blocked by Brevo SMTP account activation.**
 
 ## Production State
 
@@ -19,9 +19,9 @@ Status: **Infrastructure, the private application runtime and the maintenance si
 | MinIO | PASS | Healthy, private network only, dedicated volume and application bucket initialized |
 | API | PASS | Healthy on loopback only; private runtime verification passed and public Nginx access remains blocked |
 | Frontend | PASS | Healthy on loopback only; direct SPA routes passed |
-| Worker | DISABLED | Intentionally stopped while email delivery is disabled |
+| Worker | PASS | Healthy with email delivery enabled; the empty queue has no retries or errors |
 | Firebase | PASS | ADC, Admin SDK, Email/Password, ID-token verification and authorized domain passed |
-| Secret Manager access | PASS | Both required existing secrets are readable with the configured read-only identity |
+| Secret Manager access | PASS | Encryption, Firebase and SMTP secrets are readable with the configured runtime identity |
 | Encryption secret format | PASS | A new version of the existing secret is canonical Base64 and decodes to exactly 32 bytes |
 | Nginx | PASS | Configuration test and reload passed |
 | Maintenance mode | PASS | HTTP redirects permanently to HTTPS; HTTPS and all public API routes return the Hebrew maintenance page with status 503 |
@@ -29,6 +29,7 @@ Status: **Infrastructure, the private application runtime and the maintenance si
 | TLS | PASS | Valid certificate installed; HTTPS validation and renewal dry-run passed |
 | ImprovMX DNS | PASS | Both required MX records are present |
 | Brevo DNS | PASS | Sending domain, verification, DKIM, DMARC, image and tracking records are present |
+| Brevo SMTP | BLOCKED | STARTTLS and SMTP authentication pass, but Brevo rejects message data because SMTP sending is not activated for the account |
 | Backups | PASS | Daily encrypted backup, checksum, lock and retention policy are active |
 | Restore test | PASS | Isolated PostgreSQL and MinIO restore test passed and temporary resources were removed |
 
@@ -72,14 +73,18 @@ Status: **Infrastructure, the private application runtime and the maintenance si
 - Frontend image contains no Firebase Emulator, Mailpit, local development endpoint or E2E marker.
 - API image contains no tests, source tree or environment files.
 - Mailpit is not installed or running in Production.
+- The replaced SMTP key was removed from Brevo; the exposed Secret Manager version is disabled and only the rotated version is active.
+- The SMTP password is not stored in the environment file, release tree, image or Git history.
 
-## Email-Disabled Mode
+## SMTP Activation State
 
-- `EMAIL_DELIVERY_ENABLED=false` is active.
-- Missing SMTP variables remain intentionally empty: `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `EMAIL_REPLY_TO`.
-- Email sending and financing-case delivery return a clear 503 service response before creating a submission or sending a message.
-- Email verification does not create a failed email log when delivery is administratively disabled.
-- The worker is not started, so pending email jobs cannot be consumed or marked as sent/failed.
+- The approved Brevo relay host, STARTTLS port, SMTP user, sender address, sender name and reply-to address are configured.
+- `EMAIL_DELIVERY_ENABLED=true` is active and the Worker is healthy.
+- The runtime Service Account can read the rotated SMTP secret from Google Secret Manager.
+- Nodemailer `verify()` passes through STARTTLS on port 587.
+- Brevo rejects `DATA` with a provider account-activation response, so no test message was accepted or delivered.
+- No `PRODUCTION_SMTP_TEST` email log was created and no duplicate or retry was generated.
+- The Worker queue is empty and Worker logs contain no SMTP, secret or authentication errors.
 - Public registration remains unavailable behind maintenance mode.
 
 ## Backups and Rollback
@@ -92,9 +97,9 @@ Status: **Infrastructure, the private application runtime and the maintenance si
 
 ## Remaining Activation Gates
 
-1. Configure the real Production SMTP provider and sender values; keep email delivery disabled until an authenticated send succeeds.
-2. Verify actual inbound delivery to the support mailbox. DNS is ready, but mailbox receipt was not tested from this environment.
-3. Enable email delivery and the worker only after SMTP verification succeeds.
-4. Replace the maintenance Nginx site with the reviewed live proxy configuration, run `nginx -t`, and reload Nginx without restarting it.
+1. Request and receive Brevo SMTP account activation; credentials, sender and domain authentication are already configured.
+2. Repeat the exact Production test email and verify Brevo delivery, ImprovMX receipt and SPF/DKIM/DMARC headers.
+3. Complete registration verification, OTP, lender invitation, notification queue and Worker retry delivery checks, then clean their temporary data.
+4. Replace the maintenance Nginx site with the reviewed live proxy configuration only after all activation gates pass, run `nginx -t`, and reload Nginx without restarting it.
 
-The Production application is **not** marked complete, no email was sent, no seed or customer data was created, and maintenance mode remains enabled. The API is healthy but is not publicly reachable through Nginx.
+The Production application is **not** marked complete, Brevo accepted no email, no seed or customer data was created, and maintenance mode remains enabled. The API and Worker are healthy but the API is not publicly reachable through Nginx.
