@@ -1,92 +1,95 @@
 # SynCash Production Deployment Report
 
-Report date: 2026-07-27
+Report date: 2026-07-28
 
-Target: `app.syncash.co.il` on `169.58.83.2`
+Target: `app.syncash.co.il`
 
 Branch: `codex-syncash-production-rebuild`
 
-Status: **Firebase Production connected; public startup remains blocked by SMTP and DNS gates**
+Prepared release: `49813949b9f2`
 
-Prepared release candidate: `f9578b410278`
+Status: **Infrastructure and maintenance site are active; application activation remains blocked by the encryption-key format and SMTP configuration.**
 
-## Completed
+## Production State
 
-- Audited the new dedicated Ubuntu 24.04 server before changes.
-- Confirmed no existing applications, containers, databases, volumes, custom Nginx sites, or certificates were present.
-- Created and separately verified the `syncash` deployment user before hardening SSH.
-- Installed Docker Engine, Compose, Nginx, Certbot, UFW, Fail2ban, ShellCheck, and backup prerequisites without a general OS upgrade or reboot.
-- Enabled 4 GiB swap, Asia/Jerusalem timezone, UFW rules for SSH/HTTP/HTTPS, Fail2ban, and key-only SSH for `syncash`.
-- Prepared isolated Compose project `syncash-prod`, networks, volumes, loopback ports, SHA-tagged images, resource limits, health checks, security options, and log rotation.
-- Split API and delivery jobs into separate Production processes while preserving the development on-demand behavior.
-- Prepared PostgreSQL migration, encrypted backup, isolated restore-test, health, rollback, Nginx, and systemd timer scripts.
-- Validated the Production Compose model on the target server and passed ShellCheck for deployment scripts.
-- Built `syncash-api:f9578b410278` and `syncash-frontend:f9578b410278` on the target server from an exact `git archive` of the tested commit and the authoritative Firebase Production Web App configuration.
-- Verified the API image contains the compiled API, worker, and migration artifacts.
-- Verified the frontend image starts read-only, returns a healthy response, and contains no prohibited development/private markers.
-- Installed and reloaded the isolated Nginx HTTP server block after `nginx -t` passed. It currently returns 502 by design because Production containers are not started before the external configuration gate.
-- Installed the dedicated Firebase Production service-account credential outside the release tree with owner-only permissions.
-- Configured Application Default Credentials, the Production Firebase project, the Firebase client identity, and the authoritative Firebase Web App configuration in the protected server environment.
-- Kept the Firebase Emulator disabled and removed the legacy emulator/credential-path variables from the Production environment.
-- Updated the API and worker runtime identity so the non-root processes can read the owner-only credential without weakening file permissions.
+| Component | Status | Notes |
+| --- | --- | --- |
+| PostgreSQL | PASS | Healthy, migrated, private network only, dedicated volume, no seed data |
+| Redis | PASS | Healthy, authenticated, private network only, dedicated volume |
+| MinIO | PASS | Healthy, private network only, dedicated volume and application bucket initialized |
+| API | BLOCKED | Intentionally stopped because the configured field-encryption secret is not a base64-encoded 32-byte key |
+| Frontend | PASS | Healthy on loopback only; direct SPA routes passed |
+| Worker | DISABLED | Intentionally stopped while email delivery is disabled |
+| Firebase | PASS | ADC, Admin SDK, Email/Password, ID-token verification and authorized domain passed |
+| Secret Manager access | PASS | Both required existing secrets are readable with the configured read-only identity |
+| Encryption secret format | FAIL | The existing value is readable but does not decode to exactly 32 bytes |
+| Nginx | PASS | Configuration test and reload passed |
+| Maintenance mode | PASS | HTTP, HTTPS and all public API routes return the Hebrew maintenance page with status 503 |
+| DNS | PASS | The application host resolves to the Production server |
+| TLS | PASS | Valid certificate installed; renewal dry-run passed |
+| ImprovMX DNS | PASS | Both required MX records are present |
+| Brevo DNS | PASS | Sending domain, verification, DKIM, DMARC, image and tracking records are present |
+| Backups | PASS | Daily encrypted backup, checksum, lock and retention policy are active |
+| Restore test | PASS | Isolated PostgreSQL and MinIO restore test passed and temporary resources were removed |
 
-## Verification Results
+## Database Verification
 
-- `npm ci`: passed.
-- `npm run typecheck`: passed.
-- `npm run lint`: passed with zero warnings.
-- `npm run test:unit`: 97/97 passed.
-- `npm run test:integration`: 86/86 passed.
-- `npm run test:e2e`: 19/19 passed in a real Chromium browser.
-- `npm run build`: passed; the repository Production bundle safety scan passed.
-- `docker compose config --quiet`: passed on the target server using non-secret placeholders.
-- `shellcheck`: passed for every Production shell script.
-- Google Application Default Credentials: passed against the Production project.
-- Google Secret Manager read-only access: passed for the field-encryption and Firebase-key secrets; no secret value was retained or emitted.
-- Firebase Admin SDK initialization and Firebase Authentication access: passed.
-- Firebase ID token mint, verification, and immediate temporary-user cleanup: passed.
-- Firebase Email/Password provider and the required authorized domain: passed.
-- Firebase Web App configuration: passed against the authoritative Production project configuration.
-- Firebase Emulator exclusion: passed.
-- Firebase-enabled API and frontend release images: passed; the frontend bundle includes the Production project and excludes emulator endpoints.
-- Runtime ADC access under the non-root Production UID: passed with the owner-only credential mount.
-- `npm run db:check`: cannot run from the Windows host because the local development URL uses the Docker-internal hostname `postgres` and the Docker Desktop CLI/WSL integration is unavailable. The Production check remains gated behind creation of the real isolated PostgreSQL service.
-- `npm audit --omit=dev`: reports 13 transitive advisories. The remaining chains are upstream in Google/Firebase libraries plus a React Router RSC advisory; this application is a Vite SPA and does not enable React Server Components. No unsafe major override, forced downgrade, or `npm audit fix --force` was applied.
+- `db:check`: passed against the isolated SynCash Production database.
+- Drizzle migrations: passed once without running a seed.
+- Tables, indexes and constraints: passed.
+- Notification database flow: passed inside a rolled-back transaction.
+- Production users, clients and email outbox: empty after verification.
+- `DATABASE_URL`: validated to target only the Compose PostgreSQL service.
 
-## Isolation
+## Runtime Verification
 
-- Compose project: `syncash-prod`.
-- Networks: `syncash-prod-internal`, `syncash-prod-edge`.
-- Volumes: `syncash-prod-postgres-data`, `syncash-prod-redis-data`, `syncash-prod-minio-data`.
-- Frontend/API host targets: `127.0.0.1:3180`, `127.0.0.1:3181`.
-- PostgreSQL, Redis, MinIO API, and MinIO Console are not published to the host or Internet.
-- Mailpit, Firebase Emulator, Vite, Playwright, and test containers are excluded.
+- Full Hebrew PDF generation from the Production API image: passed.
+- Masked Hebrew PDF generation from the Production API image: passed.
+- Hebrew font embedding and extracted Unicode text: passed.
+- ZIP generation and archive integrity: passed.
+- MinIO temporary upload, download checksum and cleanup: passed.
+- Encryption/decryption implementation roundtrip with an ephemeral validation key: passed.
+- Internal SSE broker flow: passed.
+- Frontend routes `/`, `/login`, `/register/advisor`, `/verify-email`, `/advisor`, `/admin` and lender invitation fallback: passed on loopback.
+- API-dependent upload routes, authenticated notifications and live SSE endpoint remain blocked until the Production encryption key is corrected.
 
-## Current External Blockers
+## Security Verification
 
-- DNS: `app.syncash.co.il` does not yet resolve to `169.58.83.2`.
-- Real Production SMTP host/user/password/sender/reply-to and mail-domain records are not available.
-- Compatible upstream releases eliminating the remaining npm transitive advisories are not currently available; this risk must be accepted or resolved before the opening gate.
+- Production environment permissions: owner-only.
+- Google credential permissions: owner-only and outside the release tree.
+- PostgreSQL, Redis and MinIO expose no host or Internet ports.
+- API and Frontend use loopback host bindings only.
+- UFW, Fail2ban, Nginx and Docker are active.
+- Production images use restart policies and bounded JSON log rotation.
+- Release and image scans found no Production environment secrets or private credential values.
+- Frontend image contains no Firebase Emulator, Mailpit, local development endpoint or E2E marker.
+- API image contains no tests, source tree or environment files.
+- Mailpit is not installed or running in Production.
 
-No development credential, emulator, Mailpit endpoint, fabricated secret, or Production customer data was used. No application containers, migrations, SSL issuance, Production email, or public opening were attempted while these blockers remain.
+## Email-Disabled Mode
 
-Docker long-running service status: no SynCash Production containers started. Final API and frontend images are built and ready; PostgreSQL, Redis, MinIO, API, worker, and frontend remain intentionally stopped.
+- `EMAIL_DELIVERY_ENABLED=false` is active.
+- Missing SMTP variables remain intentionally empty: `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `EMAIL_REPLY_TO`.
+- Email sending and financing-case delivery return a clear 503 service response before creating a submission or sending a message.
+- Email verification does not create a failed email log when delivery is administratively disabled.
+- The worker is not started, so pending email jobs cannot be consumed or marked as sent/failed.
+- Public registration remains unavailable behind maintenance mode.
 
-## DNS Action
+## Backups and Rollback
 
-Create only this record:
+- Daily encrypted PostgreSQL, MinIO and Production configuration backup is scheduled through systemd.
+- Daily retention is 14 days; weekly retention is 28 days.
+- Checksums and exclusive locks are enforced.
+- The restore test uses isolated temporary containers, network and volumes and removes them afterward.
+- Release rollback preserves named volumes and does not reverse migrations automatically.
 
-- Type: A
-- Host: `app`
-- Value: `169.58.83.2`
-- TTL: 300 or provider default
+## Remaining Activation Gates
 
-The existing `syncash.co.il` and `www.syncash.co.il` records remain untouched.
+1. Replace the existing `syncash-field-encryption-key` secret with a base64-encoded cryptographically random 32-byte key. Do not place the value in Git or the server environment file.
+2. Re-run the prepared release and complete API health, authenticated upload/download, live notifications and live SSE checks.
+3. Configure the real Production SMTP provider and sender values; keep email delivery disabled until an authenticated send succeeds.
+4. Verify actual inbound delivery to the support mailbox. DNS is ready, but mailbox receipt was not tested from this environment.
+5. Enable email delivery and the worker only after SMTP verification succeeds.
+6. Replace the maintenance Nginx site with the reviewed live proxy configuration, run `nginx -t`, and reload Nginx without restarting it.
 
-## Rollback
-
-The release rollback switches only SynCash images and the `/opt/syncash/current` symlink. It preserves named volumes and does not reverse migrations automatically. Server baseline files are stored under `/opt/syncash/backups/pre-deploy-*`.
-
-## Declaration
-
-No non-SynCash application, container, volume, network, domain, database, or configuration file was deleted, stopped, modified, or overwritten. The server was new and dedicated; only SynCash-specific files and baseline security services were added.
+The Production application is **not** marked complete, no email was sent, no seed or customer data was created, and maintenance mode remains enabled.
