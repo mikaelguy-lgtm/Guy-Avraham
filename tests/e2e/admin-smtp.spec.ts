@@ -24,11 +24,35 @@ test("SUPER_ADMIN manages a versioned SMTP configuration without silent failures
   await expect(page).toHaveURL(/\/admin\/settings\/smtp$/);
   await page.reload();
   await expect(page.getByRole("heading", {name: "הגדרות דואר יוצא"})).toBeVisible();
+  await expect(page.getByRole("button", {name: "1. שמירה כטיוטה"})).toBeEnabled();
+
+  const groupedGmailPassword = "abcd efgh ijkl mnop";
+  let failNextDraftSave = true;
+  await page.route("**/api/admin/settings/email", async (route) => {
+    if (route.request().method() !== "PATCH" || !failNextDraftSave) { await route.continue(); return; }
+    failNextDraftSave = false;
+    await route.fulfill({status: 503, contentType: "application/json", body: JSON.stringify({error: "SMTP_SECRET_WRITE_FAILED", message: "לא ניתן היה לשמור את הסיסמה בצורה מאובטחת.", requestId: "smtp-save-retry-request"})});
+  });
+  await page.getByLabel("ספק דוא״ל").selectOption("GMAIL");
+  await expect(page.getByLabel("ספק דוא״ל")).toHaveValue("GMAIL");
+  await page.getByLabel("כתובת Gmail").fill("advisor@gmail.com");
+  await page.getByLabel("כתובת שולח").fill("advisor@gmail.com");
+  await page.getByLabel("Google App Password").fill(groupedGmailPassword);
+  await page.getByRole("button", {name: "1. שמירה כטיוטה"}).click();
+  await expect(page.getByRole("alert")).toContainText("לא ניתן היה לשמור את הסיסמה בצורה מאובטחת");
+  await expect(page.getByRole("alert")).toContainText("smtp-save-retry-request");
+  await expect(page.getByLabel("Google App Password")).toHaveValue(groupedGmailPassword);
+  await page.unroute("**/api/admin/settings/email");
+  await page.getByRole("button", {name: "1. שמירה כטיוטה"}).click();
+  await expect(page.getByRole("status")).toContainText("הטיוטה נשמרה בהצלחה");
+  await expect(page.getByLabel("Google App Password")).toHaveValue("");
+  await expect(page.getByText("סיסמת SMTP מוגדרת בטיוטה:")).toContainText("כן");
+  await expect(page.getByText("ניתן להפעיל רק לאחר בדיקת SMTP מוצלחת")).toBeVisible();
 
   await page.getByLabel("ספק דוא״ל").selectOption("CUSTOM");
   await page.getByLabel("פורט").fill("70000");
-  await page.getByRole("button", {name: "שמירה כטיוטה"}).click();
-  await expect(page.getByRole("alert")).toContainText("יש להזין פורט בין 1 ל־65535");
+  await expect(page.getByRole("button", {name: "1. שמירה כטיוטה"})).toBeDisabled();
+  await expect(page.getByText("יש להשלים את כל שדות החובה בצורה תקינה")).toBeVisible();
 
   await page.getByLabel("שרת SMTP").fill("mailpit");
   await page.getByLabel("פורט").fill("1025");
@@ -40,29 +64,29 @@ test("SUPER_ADMIN manages a versioned SMTP configuration without silent failures
   await page.getByLabel("כתובת יעד לבדיקת SMTP").fill(email);
   const localTestPassword = `local-mailpit-${Date.now()}`;
   await page.getByLabel("סיסמת SMTP").fill(localTestPassword);
-  await page.getByRole("button", {name: "שמירה כטיוטה"}).click();
+  await page.getByRole("button", {name: "1. שמירה כטיוטה"}).click();
   await expect(page.getByRole("button", {name: "שומר טיוטה…"})).toBeDisabled();
-  await expect(page.getByRole("status")).toContainText("נשמרה כטיוטה");
+  await expect(page.getByRole("status")).toContainText("הטיוטה נשמרה בהצלחה");
   await expect(page.getByLabel("סיסמת SMTP")).toHaveValue("");
   await expect(page.getByText("סיסמת SMTP מוגדרת בטיוטה:")).toContainText("כן");
 
-  await page.getByRole("button", {name: "בדיקת SMTP ושליחת מייל"}).click();
-  await expect(page.getByRole("button", {name: "בודק ושולח…"})).toBeDisabled();
+  await page.getByRole("button", {name: "2. בדיקת SMTP ושליחת מייל"}).click();
+  await expect(page.getByRole("button", {name: "בודק חיבור ושולח הודעת ניסיון..."})).toBeDisabled();
   await expect(page.getByRole("status")).toContainText("הודעת הבדיקה נשלחה בהצלחה");
-  await expect(page.getByRole("button", {name: "הפעלת ההגדרה"})).toBeEnabled();
-  await page.getByRole("button", {name: "הפעלת ההגדרה"}).click();
+  await expect(page.getByRole("button", {name: "3. הפעלת ההגדרה"})).toBeEnabled();
+  await page.getByRole("button", {name: "3. הפעלת ההגדרה"}).click();
   await expect(page.getByRole("status")).toContainText("הופעלה בהצלחה");
   await expect(page.getByText("ספק פעיל").locator("..")).toContainText("SMTP מותאם אישית");
 
   await page.getByLabel("שם השולח").fill("SynCash Local SMTP Updated");
-  await page.getByRole("button", {name: "שמירה כטיוטה"}).click();
-  await expect(page.getByRole("status")).toContainText("נשמרה כטיוטה");
+  await page.getByRole("button", {name: "1. שמירה כטיוטה"}).click();
+  await expect(page.getByRole("status")).toContainText("הטיוטה נשמרה בהצלחה");
   await expect(page.getByText("סיסמת SMTP מוגדרת בטיוטה:")).toContainText("כן");
 
   await page.route("**/api/admin/settings/email/*/test", async (route) => {
     await route.fulfill({status: 502, contentType: "application/json", body: JSON.stringify({error: "SMTP_AUTH_FAILED", message: "שם המשתמש או סיסמת ה-SMTP שגויים.", requestId: "smtp-e2e-request"})});
   });
-  await page.getByRole("button", {name: "בדיקת SMTP ושליחת מייל"}).click();
+  await page.getByRole("button", {name: "2. בדיקת SMTP ושליחת מייל"}).click();
   await expect(page.getByRole("alert")).toContainText("שם המשתמש או סיסמת ה-SMTP שגויים");
   await expect(page.getByRole("alert")).toContainText("smtp-e2e-request");
 

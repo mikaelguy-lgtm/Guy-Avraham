@@ -126,6 +126,43 @@ describe("HTTP authentication and authorization", () => {
     expect(JSON.stringify(addAudit.mock.calls)).not.toContain("local-test-password");
   });
 
+  it("normalizes grouped Gmail App Password spaces before creating the secret version", async () => {
+    const setSecret = vi.fn().mockResolvedValue("projects/syncash-production/secrets/syncash-smtp-password/versions/7");
+    const secretProvider: SecretProvider = {getSecret: vi.fn(), isConfigured: vi.fn(), setSecret};
+    const response = await request(app({}, undefined, secretProvider)).patch("/api/admin/settings/email")
+      .set("authorization", "Bearer super").send({
+        ...smtpSettings,
+        provider: "GMAIL",
+        host: "smtp.gmail.com",
+        port: 587,
+        securityMode: "STARTTLS",
+        username: "advisor@gmail.com",
+        fromEmail: "advisor@gmail.com",
+        smtpPassword: "abcd efgh ijkl mnop"
+      }).expect(200);
+    expect(response.body.draft).toEqual(expect.objectContaining({provider: "GMAIL", passwordConfigured: true}));
+    expect(setSecret).toHaveBeenCalledWith("syncash-smtp-password", "abcdefghijklmnop");
+    expect(JSON.stringify(response.body)).not.toContain("abcdefghijklmnop");
+  });
+
+  it("rejects an invalid Gmail App Password format before writing a secret", async () => {
+    const setSecret = vi.fn();
+    const secretProvider: SecretProvider = {getSecret: vi.fn(), isConfigured: vi.fn(), setSecret};
+    const response = await request(app({}, undefined, secretProvider)).patch("/api/admin/settings/email")
+      .set("authorization", "Bearer super").send({
+        ...smtpSettings,
+        provider: "GMAIL",
+        host: "smtp.gmail.com",
+        port: 587,
+        securityMode: "STARTTLS",
+        username: "advisor@gmail.com",
+        fromEmail: "advisor@gmail.com",
+        smtpPassword: "too short"
+      }).expect(422);
+    expect(response.body).toEqual(expect.objectContaining({error: "GMAIL_APP_PASSWORD_INVALID", requestId: expect.any(String)}));
+    expect(setSecret).not.toHaveBeenCalled();
+  });
+
   it("allows only SUPER_ADMIN when production access is restricted", async () => {
     const restrictedEnv = {...env, EMAIL_DELIVERY_ENABLED: false, PUBLIC_REGISTRATION_ENABLED: false, EXTERNAL_PORTALS_ENABLED: false, SUPER_ADMIN_ONLY_MODE: true};
     await request(app({}, undefined, secrets, restrictedEnv)).get("/api/auth/me").set("authorization", "Bearer super").expect(200);

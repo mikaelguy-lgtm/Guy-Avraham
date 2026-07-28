@@ -125,8 +125,9 @@ export class GoogleSecretManagerProvider implements SecretProvider {
 
   async getSecret(name: string, version?: string | null): Promise<string | null> {
     const latest = `projects/${this.projectId}/secrets/${name}/versions/latest`;
-    const versionName = version && version !== "latest" ? version : latest;
-    if (!versionName.startsWith(`projects/${this.projectId}/secrets/${name}/versions/`)) throw new Error("INVALID_SECRET_VERSION");
+    const versionName = version && version !== "latest"
+      ? normalizeGoogleSecretVersionReference(this.projectId, name, version)
+      : latest;
     const [secretVersion] = await this.client.accessSecretVersion({
       name: versionName
     });
@@ -154,12 +155,19 @@ export class GoogleSecretManagerProvider implements SecretProvider {
         payload: {data: Buffer.from(value, "utf8")}
       });
     }
-    return result.name ?? null;
+    if (!result.name) throw new Error("SECRET_VERSION_REFERENCE_MISSING");
+    return normalizeGoogleSecretVersionReference(this.projectId, name, result.name);
   }
 
   async isConfigured(name: string, version?: string | null): Promise<boolean> {
     return Boolean(await this.getSecret(name, version));
   }
+}
+
+export function normalizeGoogleSecretVersionReference(projectId: string, secretName: string, reference: string): string {
+  const match = /^projects\/[^/]+\/secrets\/([^/]+)\/versions\/([0-9]+)$/.exec(reference);
+  if (!match || match[1] !== secretName) throw new Error("INVALID_SECRET_VERSION");
+  return `projects/${projectId}/secrets/${secretName}/versions/${match[2]}`;
 }
 
 export class InMemorySecretProvider implements SecretProvider {

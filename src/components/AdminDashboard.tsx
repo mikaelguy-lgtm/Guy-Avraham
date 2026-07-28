@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Check, LoaderCircle, LockKeyhole } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
   ApiError,
@@ -84,6 +85,8 @@ function validateSettings(settings: SmtpForm): Record<string, string> {
   const port = Number(settings.port);
   if (!Number.isInteger(port) || port < 1 || port > 65_535) errors.port = "יש להזין פורט בין 1 ל־65535.";
   if ((settings.provider === "GMAIL" || settings.provider === "BREVO") && !settings.username.trim()) errors.username = "יש להזין שם משתמש SMTP.";
+  if (settings.provider === "GMAIL" && settings.username.trim() && !emailPattern.test(settings.username)) errors.username = "כתובת Gmail אינה תקינה.";
+  if (settings.provider === "GMAIL" && settings.smtpCredential && settings.smtpCredential.replace(/ /g, "").length !== 16) errors.smtpCredential = "יש להזין Google App Password תקינה בת 16 תווים.";
   if (!emailPattern.test(settings.fromEmail)) errors.fromEmail = "כתובת השולח אינה תקינה.";
   if (!settings.fromName.trim()) errors.fromName = "יש להזין שם שולח.";
   if (!emailPattern.test(settings.replyTo)) errors.replyTo = "כתובת המענה אינה תקינה.";
@@ -135,7 +138,7 @@ export default function AdminDashboard({userEmail}: {userEmail: string}) {
     if (Object.keys(errors).length > 0) return;
     setBusy("save");
     try {
-      const result = await api.updateSmtpSettings({
+      await api.updateSmtpSettings({
         provider: settings.provider,
         host: settings.host,
         port: Number(settings.port),
@@ -149,9 +152,11 @@ export default function AdminDashboard({userEmail}: {userEmail: string}) {
       });
       setSettings((current) => ({...current, smtpCredential: ""}));
       await load();
-      setToast({kind: "success", message: `ההגדרה נשמרה כטיוטה מספר ${result.draft.id}.`});
+      setToast({kind: "success", message: "הטיוטה נשמרה בהצלחה"});
     } catch (error) {
-      setSettings((current) => ({...current, smtpCredential: ""}));
+      if (error instanceof ApiError && error.fieldErrors.smtpPassword) {
+        setFieldErrors((current) => ({...current, smtpCredential: error.fieldErrors.smtpPassword}));
+      }
       setToast(errorToast(error, "שמירת הגדרות ה-SMTP נכשלה."));
     } finally {
       setBusy(null);
@@ -207,6 +212,10 @@ export default function AdminDashboard({userEmail}: {userEmail: string}) {
   const passwordLabel = settings.provider === "GMAIL" ? "Google App Password" : settings.provider === "BREVO" ? "Brevo SMTP Key" : "סיסמת SMTP";
   const usernameLabel = settings.provider === "GMAIL" ? "כתובת Gmail" : settings.provider === "BREVO" ? "SMTP Login" : "שם משתמש SMTP";
   const fieldsLocked = settings.provider !== "CUSTOM";
+  const draftSaved = Boolean(data?.draft);
+  const smtpTested = data?.draft?.status === "TESTED" || Boolean(data?.active);
+  const smtpActive = Boolean(data?.active);
+  const saveDisabled = busy !== null || Object.keys(validateSettings(settings)).length > 0;
 
   return <main className="admin-page smtp-admin-page" dir="rtl">
     <nav className="breadcrumbs" aria-label="פירורי לחם"><Link to="/admin">לוח הבקרה</Link><span>›</span><Link to="/admin/settings">הגדרות מערכת</Link><span>›</span><span aria-current="page">דואר יוצא</span></nav>
@@ -226,13 +235,19 @@ export default function AdminDashboard({userEmail}: {userEmail: string}) {
     <form className="panel smtp-configuration-form" onSubmit={save} noValidate>
       <header className="smtp-form-heading"><div><h2>טיוטת הגדרה</h2><p>שינויים כאן אינם משפיעים על השירות הפעיל עד להפעלה.</p></div>{data?.draft && <span className={`status-pill ${data.draft.status.toLowerCase()}`}>{statusLabels[data.draft.status]}</span>}</header>
 
+      <ol className="smtp-stepper" aria-label="שלבי הגדרת שירות הדוא״ל">
+        <li className={draftSaved ? "done" : "active"}><span>{draftSaved ? <Check size={17} /> : "1"}</span><strong>טיוטה</strong></li>
+        <li className={smtpTested ? "done" : draftSaved ? "active" : "locked"}><span>{smtpTested ? <Check size={17} /> : "2"}</span><strong>נבדקה</strong></li>
+        <li className={smtpActive ? "done active" : smtpTested ? "active" : "locked"}><span>{smtpActive ? <Check size={17} /> : "3"}</span><strong>פעילה</strong></li>
+      </ol>
+
       <div className="smtp-form-grid">
         <label>ספק דוא״ל<select aria-label="ספק דוא״ל" value={settings.provider} onChange={(event) => selectProvider(event.target.value as EmailProvider)}><option value="GMAIL">Gmail</option><option value="BREVO">Brevo</option><option value="CUSTOM">SMTP מותאם אישית</option></select></label>
         <label>שרת SMTP<input aria-label="שרת SMTP" value={settings.host} disabled={fieldsLocked} onChange={(event) => change("host", event.target.value)} />{fieldErrors.host && <span className="field-error" role="alert">{fieldErrors.host}</span>}</label>
         <label>פורט<input aria-label="פורט" type="number" value={settings.port} disabled={fieldsLocked} onChange={(event) => change("port", event.target.value)} />{fieldErrors.port && <span className="field-error" role="alert">{fieldErrors.port}</span>}</label>
         <label>אבטחת חיבור<select aria-label="אבטחת חיבור" value={settings.securityMode} disabled={fieldsLocked} onChange={(event) => change("securityMode", event.target.value)}><option value="NONE">ללא הצפנה</option><option value="STARTTLS">STARTTLS</option><option value="TLS">TLS ישיר</option></select></label>
         <label>{usernameLabel}<input aria-label={usernameLabel} value={settings.username} onChange={(event) => {change("username", event.target.value); if (settings.provider === "GMAIL" && (!settings.fromEmail || settings.fromEmail === settings.username)) change("fromEmail", event.target.value);}} />{fieldErrors.username && <span className="field-error" role="alert">{fieldErrors.username}</span>}</label>
-        <label>{passwordLabel}<input aria-label={passwordLabel} autoComplete="new-password" type="password" value={settings.smtpCredential} onChange={(event) => change("smtpCredential", event.target.value)} /><span className="field-hint">השאר ריק כדי לשמור את הסיסמה הקיימת. הערך לעולם אינו מוחזר למסך.</span></label>
+        <label>{passwordLabel}<input aria-label={passwordLabel} autoComplete="new-password" type="password" value={settings.smtpCredential} onChange={(event) => change("smtpCredential", event.target.value)} />{fieldErrors.smtpCredential && <span className="field-error" role="alert">{fieldErrors.smtpCredential}</span>}<span className="field-hint">השאר ריק כדי לשמור את הסיסמה הקיימת. ב-Gmail ניתן להדביק App Password עם או בלי רווחים. הערך לעולם אינו מוחזר למסך.</span></label>
         <label>כתובת שולח<input aria-label="כתובת שולח" type="email" value={settings.fromEmail} onChange={(event) => change("fromEmail", event.target.value)} />{fieldErrors.fromEmail && <span className="field-error" role="alert">{fieldErrors.fromEmail}</span>}</label>
         <label>שם השולח<input aria-label="שם השולח" value={settings.fromName} onChange={(event) => change("fromName", event.target.value)} />{fieldErrors.fromName && <span className="field-error" role="alert">{fieldErrors.fromName}</span>}</label>
         <label>כתובת למענה<input aria-label="כתובת למענה" type="email" value={settings.replyTo} onChange={(event) => change("replyTo", event.target.value)} />{fieldErrors.replyTo && <span className="field-error" role="alert">{fieldErrors.replyTo}</span>}</label>
@@ -240,10 +255,19 @@ export default function AdminDashboard({userEmail}: {userEmail: string}) {
       </div>
 
       <div className="smtp-password-state"><span>סיסמת SMTP מוגדרת בטיוטה: <strong>{data?.draft?.passwordConfigured ? "כן" : "לא"}</strong></span>{data?.draft?.passwordConfigured && <button type="button" className="danger-button" disabled={busy !== null} onClick={() => void clearPassword()}>{busy === "clear" ? "מוחק…" : "מחיקת סיסמת SMTP"}</button>}</div>
-      <div className="smtp-flow-actions">
-        <button type="submit" disabled={busy !== null}>{busy === "save" ? "שומר טיוטה…" : "שמירה כטיוטה"}</button>
-        <button type="button" className="secondary-button" disabled={busy !== null || !data?.draft} onClick={() => void runTest()}>{busy === "test" ? "בודק ושולח…" : "בדיקת SMTP ושליחת מייל"}</button>
-        <button type="button" disabled={busy !== null || data?.draft?.status !== "TESTED"} onClick={() => void activate()}>{busy === "activate" ? "מפעיל…" : "הפעלת ההגדרה"}</button>
+      <div className="smtp-action-bar">
+        <div className="smtp-action-step">
+          <button type="submit" className="smtp-action-primary" disabled={saveDisabled} aria-busy={busy === "save"}>{busy === "save" && <LoaderCircle className="spin" size={18} />}{busy === "save" ? "שומר טיוטה…" : "1. שמירה כטיוטה"}</button>
+          {saveDisabled && busy === null && <small>יש להשלים את כל שדות החובה בצורה תקינה</small>}
+        </div>
+        <div className="smtp-action-step">
+          <button type="button" className="smtp-action-secondary" disabled={busy !== null || !data?.draft} aria-busy={busy === "test"} onClick={() => void runTest()}>{busy === "test" ? <LoaderCircle className="spin" size={18} /> : !data?.draft ? <LockKeyhole size={18} /> : null}{busy === "test" ? "בודק חיבור ושולח הודעת ניסיון..." : "2. בדיקת SMTP ושליחת מייל"}</button>
+          {!data?.draft && <small><LockKeyhole size={14} />יש לשמור תחילה את ההגדרות כטיוטה</small>}
+        </div>
+        <div className="smtp-action-step">
+          <button type="button" className="smtp-action-activate" disabled={busy !== null || data?.draft?.status !== "TESTED"} aria-busy={busy === "activate"} onClick={() => void activate()}>{busy === "activate" ? <LoaderCircle className="spin" size={18} /> : data?.draft?.status !== "TESTED" ? <LockKeyhole size={18} /> : null}{busy === "activate" ? "מפעיל…" : "3. הפעלת ההגדרה"}</button>
+          {data?.draft?.status !== "TESTED" && <small><LockKeyhole size={14} />ניתן להפעיל רק לאחר בדיקת SMTP מוצלחת</small>}
+        </div>
       </div>
       {data?.draft?.lastTestFailureCode && <p className="smtp-failure-summary" role="alert">הבדיקה האחרונה נכשלה: {errorToast(new ApiError(data.draft.lastTestFailureCode, 502), "בדיקת ה-SMTP נכשלה.").message}</p>}
     </form>

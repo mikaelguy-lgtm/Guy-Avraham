@@ -75,9 +75,24 @@ const smtpSettingsSchema = z.object({
   if ((value.provider === "GMAIL" || value.provider === "BREVO") && value.securityMode !== "STARTTLS") {
     context.addIssue({code: "custom", path: ["securityMode"], message: "הספק שנבחר מחייב STARTTLS."});
   }
+  if (value.provider === "GMAIL" && value.username && !z.string().email().safeParse(value.username).success) {
+    context.addIssue({code: "custom", path: ["username"], message: "כתובת Gmail אינה תקינה."});
+  }
 });
 
 const smtpTestSchema = z.object({recipientEmail: z.string().trim().email().max(320)}).strict();
+
+function normalizeSmtpPassword(provider: "GMAIL" | "BREVO" | "CUSTOM", value?: string): string | null {
+  if (!value) return null;
+  const normalized = provider === "GMAIL" ? value.replace(/ /g, "") : value.trim();
+  return normalized ? normalized : null;
+}
+
+async function isSecretConfigured(secrets: SecretProvider, name: string | null, version?: string | null): Promise<boolean> {
+  if (!name) return false;
+  try { return await secrets.isConfigured(name, version); }
+  catch { return false; }
+}
 
 function smtpSettingsFromConfiguration(configuration: EmailConfigurationRecord): Record<string, string | null> {
   return {
@@ -921,7 +936,7 @@ export function createApp(services: AppServices) {
     const draft = configurations.find((configuration) => ["DRAFT", "TESTED", "FAILED"].includes(configuration.status)) ?? null;
     const toPublic = async (configuration: EmailConfigurationRecord) => publicEmailConfiguration(
       configuration,
-      Boolean(configuration.secretName && await services.secrets.isConfigured(configuration.secretName, configuration.secretVersion))
+      await isSecretConfigured(services.secrets, configuration.secretName, configuration.secretVersion)
     );
     const legacySettings = Object.fromEntries((await services.store.getSettings("SMTP")).map((setting) => [setting.key, setting.value]));
     response.json({
@@ -938,7 +953,7 @@ export function createApp(services: AppServices) {
         fromEmail: legacySettings.EMAIL_FROM ?? services.env.EMAIL_FROM,
         fromName: legacySettings.EMAIL_FROM_NAME ?? services.env.EMAIL_FROM_NAME,
         replyTo: legacySettings.EMAIL_REPLY_TO ?? services.env.EMAIL_REPLY_TO,
-        passwordConfigured: await services.secrets.isConfigured("syncash-smtp-password")
+        passwordConfigured: await isSecretConfigured(services.secrets, "syncash-smtp-password")
       }
     });
   }));
@@ -953,10 +968,19 @@ export function createApp(services: AppServices) {
       return;
     }
     const base = input.baseConfigurationId ? await services.store.getEmailConfiguration(input.baseConfigurationId) : await services.store.getActiveEmailConfiguration();
-    const password = input.smtpPassword?.trim() ? input.smtpPassword : null;
+    const password = normalizeSmtpPassword(input.provider, input.smtpPassword);
+    if (input.provider === "GMAIL" && password && password.length !== 16) {
+      response.status(422).json({
+        error: "GMAIL_APP_PASSWORD_INVALID",
+        message: "Google App Password חייבת להכיל 16 תווים לאחר הסרת רווחים.",
+        fieldErrors: {smtpPassword: "יש להזין Google App Password תקינה בת 16 תווים."},
+        requestId: request.requestId
+      });
+      return;
+    }
     let secretName = base?.secretName ?? null;
     let secretVersion = base?.secretVersion ?? null;
-    if (!secretName && await services.secrets.isConfigured("syncash-smtp-password")) {
+    if (!secretName && await isSecretConfigured(services.secrets, "syncash-smtp-password")) {
       secretName = "syncash-smtp-password";
       secretVersion = "latest";
     }
@@ -965,6 +989,7 @@ export function createApp(services: AppServices) {
       try {
         secretName = "syncash-smtp-password";
         secretVersion = await services.secrets.setSecret(secretName, password);
+        if (!secretVersion) throw new Error("SECRET_VERSION_REFERENCE_MISSING");
       } catch (error: unknown) {
         const permissionDenied = typeof error === "object" && error !== null && "code" in error && Number(error.code) === 7;
         const errorCode = permissionDenied ? "SMTP_SECRET_WRITE_FORBIDDEN" : "SMTP_SECRET_WRITE_FAILED";
@@ -988,7 +1013,7 @@ export function createApp(services: AppServices) {
       userId: request.user!.id
     });
     await services.store.addAudit(request.user!.id, "SMTP_DRAFT_CREATED", "email_configuration", configuration.id, {provider: configuration.provider, passwordUpdated: Boolean(password)}, request.requestId);
-    response.json({draft: publicEmailConfiguration(configuration, Boolean(secretName && await services.secrets.isConfigured(secretName, secretVersion)))});
+    response.json({draft: publicEmailConfiguration(configuration, password ? true : await isSecretConfigured(services.secrets, secretName, secretVersion))});
   }));
 
   app.delete("/api/admin/settings/email/:id/password", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
