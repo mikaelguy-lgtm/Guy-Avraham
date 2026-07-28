@@ -29,9 +29,22 @@ export async function createServerRuntime() {
   const store = new PostgresStore();
   const storage = new S3StorageService(env);
   await storage.initialize();
-  const email = new EmailService(env, secrets, async () => Object.fromEntries(
-    (await store.getSettings("SMTP")).map((setting) => [setting.key, setting.value])
-  ));
+  const email = new EmailService(env, secrets, async () => {
+    const active = await store.getActiveEmailConfiguration();
+    if (active) return {
+      SMTP_CONFIGURATION_STATUS: active.status,
+      SMTP_HOST: active.host,
+      SMTP_PORT: String(active.port),
+      SMTP_SECURITY_MODE: active.securityMode,
+      SMTP_USER: active.username,
+      EMAIL_FROM: active.fromEmail,
+      EMAIL_FROM_NAME: active.fromName,
+      EMAIL_REPLY_TO: active.replyTo,
+      SMTP_SECRET_NAME: active.secretName,
+      SMTP_SECRET_VERSION: active.secretVersion
+    };
+    return Object.fromEntries((await store.getSettings("SMTP")).map((setting) => [setting.key, setting.value]));
+  });
   const encryption = new EncryptionService(Buffer.from(encryptionKey, "base64"));
   const deliveryEvents = new DeliveryEventBroker();
   const delivery = new PostgresLenderDeliveryService({

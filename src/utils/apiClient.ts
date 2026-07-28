@@ -38,6 +38,35 @@ async function publicFetch<T>(path: string, options: RequestInit = {}): Promise<
   return response.json() as Promise<T>;
 }
 
+export type EmailProvider = "GMAIL" | "BREVO" | "CUSTOM";
+export type EmailSecurityMode = "NONE" | "STARTTLS" | "TLS";
+export type EmailConfigurationStatus = "DRAFT" | "TESTED" | "ACTIVE" | "FAILED" | "SUPERSEDED";
+export interface EmailConfigurationView {
+  id: number;
+  provider: EmailProvider;
+  status: EmailConfigurationStatus;
+  host: string;
+  port: number;
+  securityMode: EmailSecurityMode;
+  username: string;
+  fromEmail: string;
+  fromName: string;
+  replyTo: string;
+  passwordConfigured: boolean;
+  lastTestedAt: string | null;
+  lastTestFailureCode: string | null;
+  activatedAt: string | null;
+  updatedAt: string;
+}
+export type EmailConfigurationBootstrap = Omit<EmailConfigurationView, "id" | "status" | "lastTestedAt" | "lastTestFailureCode" | "activatedAt" | "updatedAt">;
+export interface EmailSettingsResponse {
+  active: EmailConfigurationView | null;
+  draft: EmailConfigurationView | null;
+  history: EmailConfigurationView[];
+  canRollback: boolean;
+  bootstrap: EmailConfigurationBootstrap;
+}
+
 async function externalFetch<T>(path: string, options: RequestInit = {}, csrfToken?: string): Promise<T> {
   const headers = new Headers(options.headers);
   if (!(options.body instanceof FormData)) headers.set("content-type", "application/json");
@@ -160,9 +189,13 @@ export const api = {
   revealedData: (id: number) => authFetch<{approvedFields: string[]; approvedDocumentIds: number[]; data: Record<string, string>}>(`/api/lender/submissions/${id}/revealed-data`),
   createOffer: (id: number, offer: Record<string, unknown>) => authFetch(`/api/lender/submissions/${id}/offers`, {method: "POST", body: JSON.stringify(offer)}),
   analyze: (clientId: number, question: string) => authFetch<{answer: string}>(`/api/clients/${clientId}/analysis`, {method: "POST", body: JSON.stringify({question})}),
-  smtpSettings: () => authFetch<Record<string, string | boolean | null>>("/api/admin/settings/email"),
-  updateSmtpSettings: (settings: Record<string, string>) => authFetch<{updated: boolean; passwordConfigured: boolean}>("/api/admin/settings/email", {method: "PATCH", body: JSON.stringify(settings)}),
-  testSmtp: (recipientEmail?: string) => authFetch<{messageId: string}>("/api/admin/settings/email/test", {method: "POST", body: JSON.stringify({recipientEmail})}),
+  smtpSettings: () => authFetch<EmailSettingsResponse>("/api/admin/settings/email"),
+  emailDeliveryStatus: () => authFetch<{active: boolean}>("/api/email/status"),
+  updateSmtpSettings: (settings: Record<string, unknown>) => authFetch<{draft: EmailConfigurationView}>("/api/admin/settings/email", {method: "PATCH", body: JSON.stringify(settings)}),
+  clearSmtpPassword: (configurationId: number) => authFetch<{draft: EmailConfigurationView}>(`/api/admin/settings/email/${configurationId}/password`, {method: "DELETE"}),
+  testSmtp: (configurationId: number, recipientEmail: string) => authFetch<{messageId: string; draft: EmailConfigurationView}>(`/api/admin/settings/email/${configurationId}/test`, {method: "POST", body: JSON.stringify({recipientEmail})}),
+  activateSmtp: (configurationId: number) => authFetch<{active: EmailConfigurationView}>(`/api/admin/settings/email/${configurationId}/activate`, {method: "POST"}),
+  rollbackSmtp: () => authFetch<{active: EmailConfigurationView}>("/api/admin/settings/email/rollback", {method: "POST"}),
   notifications: () => authFetch<NotificationRecord[]>("/api/notifications"),
   markNotificationRead: (id: number) => authFetch(`/api/notifications/${id}/read`, {method: "PATCH"}),
   markAllNotificationsRead: () => authFetch<{read: true; count: number}>("/api/notifications/read-all", {method: "PATCH"}),

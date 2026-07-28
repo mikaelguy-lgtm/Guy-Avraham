@@ -90,6 +90,15 @@ Status: **The application is available over HTTPS in controlled SUPER_ADMIN-only
 - Worker and API logs contain no runtime errors, SMTP retries, secret exposure or authentication failures.
 - Public registration and external portals remain disabled independently of Nginx maintenance mode.
 
+## Dynamic SMTP Upgrade
+
+- The request identified in the UI as `4081…` was traced to missing runtime permission for adding a new Secret Manager version; the API previously returned a generic sanitized `500`.
+- SMTP settings now use a PostgreSQL-backed Draft/Test/Activate lifecycle with an immutable Secret Manager version reference.
+- API and Worker resolve the active configuration dynamically for every delivery cycle; activation and rollback require no restart or environment change.
+- Failed drafts do not replace or disable the active configuration.
+- Gmail and Brevo presets enforce STARTTLS on port 587; custom SMTP supports explicit no-encryption, STARTTLS and direct TLS modes.
+- SUPER_ADMIN-only RBAC, rate limiting, SSRF protection, audit events and sanitized request IDs cover every configuration action.
+
 ## Backups and Rollback
 
 - Daily encrypted PostgreSQL, MinIO and Production configuration backup is scheduled through systemd.

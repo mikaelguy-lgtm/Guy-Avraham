@@ -71,6 +71,13 @@
       "when": 1785144181653,
       "tag": "0009_slow_the_hand",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785258063966,
+      "tag": "0010_smart_valeria_richards",
+      "breakpoints": true
     }
   ]
 }

@@ -114,8 +114,6 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     await request.delete(`${mailpitOrigin}/api/v1/messages`);
     const admin = await loginInNewContext(browser, adminEmail, adminPassword); contexts.push(admin.context); adminAuthorization = admin.authorization;
     await expect(admin.page.getByRole("heading", {name: "לוח הבקרה"})).toBeVisible();
-    const smtpConfiguration = await request.patch(`${apiOrigin}/api/admin/settings/email`, {headers: {authorization: adminAuthorization}, data: {SMTP_HOST: "mailpit", SMTP_PORT: "1025", SMTP_SECURE: "false", SMTP_USER: "", EMAIL_FROM: "no-reply@syncash.local", EMAIL_FROM_NAME: "SynCash Local SMTP", EMAIL_REPLY_TO: "support@syncash.local"}});
-    expect(smtpConfiguration.ok()).toBe(true);
     const companyResponse = await request.post(`${apiOrigin}/api/admin/financing-companies`, {headers: {authorization: adminAuthorization}, data: {name: companyName, legalName: null, companyNumber: null, phone: null, address: null, website: null, activityAreas: ["משכנתאות", "איחוד הלוואות"], adminNotes: "הערת בדיקה מוצפנת", active: false}});
     expect(companyResponse.ok()).toBe(true); const companyId = (await companyResponse.json()).id as number; companyIds.push(companyId);
     for (const [firstName, email, isPrimary] of [["נועה", contactA, true], ["דוד", contactB, false]] as const) {

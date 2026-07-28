@@ -7,6 +7,7 @@ import {
   borrowers,
   clients,
   documents,
+  emailConfigurations,
   emailLogs,
   employmentRecords,
   identityRevealRequests,
@@ -259,6 +260,49 @@ export interface DocumentRecord {
   deletedAt: Date | null;
 }
 
+export type EmailProvider = "GMAIL" | "BREVO" | "CUSTOM";
+export type EmailSecurityMode = "NONE" | "STARTTLS" | "TLS";
+export type EmailConfigurationStatus = "DRAFT" | "TESTED" | "ACTIVE" | "FAILED" | "SUPERSEDED";
+
+export interface EmailConfigurationRecord {
+  id: number;
+  provider: EmailProvider;
+  status: EmailConfigurationStatus;
+  host: string;
+  port: number;
+  securityMode: EmailSecurityMode;
+  username: string | null;
+  fromEmail: string;
+  fromName: string;
+  replyTo: string;
+  secretName: string | null;
+  secretVersion: string | null;
+  previousConfigurationId: number | null;
+  lastTestedAt: Date | null;
+  lastTestFailureCode: string | null;
+  activatedAt: Date | null;
+  supersededAt: Date | null;
+  createdByUserId: number;
+  updatedByUserId: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CreateEmailConfigurationRecord {
+  provider: EmailProvider;
+  host: string;
+  port: number;
+  securityMode: EmailSecurityMode;
+  username: string | null;
+  fromEmail: string;
+  fromName: string;
+  replyTo: string;
+  secretName: string | null;
+  secretVersion: string | null;
+  previousConfigurationId: number | null;
+  userId: number;
+}
+
 export interface InviteValidation {
   tokenId: number;
   submissionId: number;
@@ -328,6 +372,14 @@ export interface AppStore extends AuthorizationDirectory {
   listClientOffers(clientId: number): Promise<unknown[]>;
   getSettings(category: string): Promise<Array<{key: string; value: string | null; isSecret: boolean}>>;
   setSettings(category: string, values: Record<string, string>, userId: number): Promise<void>;
+  listEmailConfigurations(): Promise<EmailConfigurationRecord[]>;
+  getEmailConfiguration(id: number): Promise<EmailConfigurationRecord | null>;
+  getActiveEmailConfiguration(): Promise<EmailConfigurationRecord | null>;
+  createEmailConfiguration(values: CreateEmailConfigurationRecord): Promise<EmailConfigurationRecord>;
+  clearEmailConfigurationPassword(id: number, userId: number): Promise<EmailConfigurationRecord | null>;
+  markEmailConfigurationTest(id: number, status: "TESTED" | "FAILED", failureCode: string | null, userId: number): Promise<EmailConfigurationRecord | null>;
+  activateEmailConfiguration(id: number, userId: number): Promise<EmailConfigurationRecord | null>;
+  rollbackEmailConfiguration(userId: number): Promise<EmailConfigurationRecord | null>;
   addEmailLog(values: {recipient: string; template?: string; userId?: number; requestId?: string; messageId?: string; status: "SENT" | "FAILED"; sanitizedError?: string}): Promise<void>;
   getLatestEmailLog(userId: number, template: string): Promise<{recipient: string; template: string | null; messageId: string | null; status: string; sentAt: Date | null; failedAt: Date | null; requestId: string | null} | null>;
   listEmailLogs(recipient: string): Promise<Array<{recipient: string; template: string | null; messageId: string | null; status: string; sentAt: Date | null; failedAt: Date | null; requestId: string | null}>>;
@@ -1215,6 +1267,95 @@ export class PostgresStore implements AppStore {
     const [row] = await db.update(notifications).set({readAt: new Date(), updatedAt: new Date()})
       .where(and(eq(notifications.id, id), eq(notifications.userId, userId))).returning({id: notifications.id});
     return Boolean(row);
+  }
+
+  async listEmailConfigurations(): Promise<EmailConfigurationRecord[]> {
+    return db.select().from(emailConfigurations).orderBy(desc(emailConfigurations.updatedAt)).limit(20);
+  }
+
+  async getEmailConfiguration(id: number): Promise<EmailConfigurationRecord | null> {
+    const [configuration] = await db.select().from(emailConfigurations).where(eq(emailConfigurations.id, id)).limit(1);
+    return configuration ?? null;
+  }
+
+  async getActiveEmailConfiguration(): Promise<EmailConfigurationRecord | null> {
+    const [configuration] = await db.select().from(emailConfigurations).where(eq(emailConfigurations.status, "ACTIVE")).limit(1);
+    return configuration ?? null;
+  }
+
+  async createEmailConfiguration(values: CreateEmailConfigurationRecord): Promise<EmailConfigurationRecord> {
+    const [configuration] = await db.insert(emailConfigurations).values({
+      provider: values.provider,
+      host: values.host,
+      port: values.port,
+      securityMode: values.securityMode,
+      username: values.username,
+      fromEmail: values.fromEmail,
+      fromName: values.fromName,
+      replyTo: values.replyTo,
+      secretName: values.secretName,
+      secretVersion: values.secretVersion,
+      previousConfigurationId: values.previousConfigurationId,
+      createdByUserId: values.userId,
+      updatedByUserId: values.userId
+    }).returning();
+    return configuration;
+  }
+
+  async clearEmailConfigurationPassword(id: number, userId: number): Promise<EmailConfigurationRecord | null> {
+    const [configuration] = await db.update(emailConfigurations).set({
+      secretName: null,
+      secretVersion: null,
+      status: "DRAFT",
+      lastTestedAt: null,
+      lastTestFailureCode: null,
+      updatedByUserId: userId,
+      updatedAt: new Date()
+    }).where(and(eq(emailConfigurations.id, id), inArray(emailConfigurations.status, ["DRAFT", "TESTED", "FAILED"]))).returning();
+    return configuration ?? null;
+  }
+
+  async markEmailConfigurationTest(id: number, status: "TESTED" | "FAILED", failureCode: string | null, userId: number): Promise<EmailConfigurationRecord | null> {
+    const [configuration] = await db.update(emailConfigurations).set({
+      status,
+      lastTestedAt: new Date(),
+      lastTestFailureCode: failureCode,
+      updatedByUserId: userId,
+      updatedAt: new Date()
+    }).where(and(eq(emailConfigurations.id, id), inArray(emailConfigurations.status, ["DRAFT", "TESTED", "FAILED"]))).returning();
+    return configuration ?? null;
+  }
+
+  async activateEmailConfiguration(id: number, userId: number): Promise<EmailConfigurationRecord | null> {
+    return db.transaction(async (transaction) => {
+      const [target] = await transaction.select().from(emailConfigurations).where(eq(emailConfigurations.id, id)).limit(1);
+      if (!target || target.status !== "TESTED") return null;
+      const [active] = await transaction.select().from(emailConfigurations).where(eq(emailConfigurations.status, "ACTIVE")).limit(1);
+      if (active) {
+        await transaction.update(emailConfigurations).set({status: "SUPERSEDED", supersededAt: new Date(), updatedByUserId: userId, updatedAt: new Date()}).where(eq(emailConfigurations.id, active.id));
+      }
+      const [activated] = await transaction.update(emailConfigurations).set({
+        status: "ACTIVE",
+        previousConfigurationId: active?.id ?? target.previousConfigurationId,
+        activatedAt: new Date(),
+        supersededAt: null,
+        updatedByUserId: userId,
+        updatedAt: new Date()
+      }).where(eq(emailConfigurations.id, id)).returning();
+      return activated ?? null;
+    });
+  }
+
+  async rollbackEmailConfiguration(userId: number): Promise<EmailConfigurationRecord | null> {
+    return db.transaction(async (transaction) => {
+      const [active] = await transaction.select().from(emailConfigurations).where(eq(emailConfigurations.status, "ACTIVE")).limit(1);
+      if (!active?.previousConfigurationId) return null;
+      const [previous] = await transaction.select().from(emailConfigurations).where(eq(emailConfigurations.id, active.previousConfigurationId)).limit(1);
+      if (!previous) return null;
+      await transaction.update(emailConfigurations).set({status: "SUPERSEDED", supersededAt: new Date(), updatedByUserId: userId, updatedAt: new Date()}).where(eq(emailConfigurations.id, active.id));
+      const [restored] = await transaction.update(emailConfigurations).set({status: "ACTIVE", supersededAt: null, activatedAt: new Date(), updatedByUserId: userId, updatedAt: new Date()}).where(eq(emailConfigurations.id, previous.id)).returning();
+      return restored ?? null;
+    });
   }
 
   async markAllNotificationsRead(userId: number): Promise<number> {

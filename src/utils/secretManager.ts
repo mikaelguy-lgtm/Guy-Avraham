@@ -1,12 +1,12 @@
 import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface SecretProvider {
-  getSecret(name: string): Promise<string | null>;
-  setSecret?(name: string, value: string): Promise<void>;
-  isConfigured(name: string): Promise<boolean>;
+  getSecret(name: string, version?: string | null): Promise<string | null>;
+  setSecret?(name: string, value: string): Promise<string | null>;
+  isConfigured(name: string, version?: string | null): Promise<boolean>;
 }
 
 const ENV_MAP: Record<string, string> = {
@@ -29,7 +29,8 @@ export class EnvironmentSecretProvider implements SecretProvider {
     return this.source[environmentName(name)] ?? null;
   }
 
-  async isConfigured(name: string): Promise<boolean> {
+  async isConfigured(name: string, version?: string | null): Promise<boolean> {
+    void version;
     return Boolean(await this.getSecret(name));
   }
 }
@@ -90,23 +91,27 @@ export class LocalEncryptedSecretProvider implements SecretProvider {
     await rename(temporaryPath, this.filePath);
   }
 
-  async getSecret(name: string): Promise<string | null> {
+  async getSecret(name: string, version?: string | null): Promise<string | null> {
     const values = await this.readValues();
+    if (version && version !== "latest") return values[`version:${version}`] ?? null;
     return values[name] ?? this.source[environmentName(name)] ?? null;
   }
 
-  async setSecret(name: string, value: string): Promise<void> {
+  async setSecret(name: string, value: string): Promise<string> {
     if (!/^[a-z0-9-]{1,120}$/.test(name)) throw new Error("INVALID_SECRET_NAME");
+    const version = `local/${name}/${randomUUID()}`;
     this.writeQueue = this.writeQueue.catch(() => undefined).then(async () => {
       const values = await this.readValues();
       values[name] = value;
+      values[`version:${version}`] = value;
       await this.writeValues(values);
     });
     await this.writeQueue;
+    return version;
   }
 
-  async isConfigured(name: string): Promise<boolean> {
-    return Boolean(await this.getSecret(name));
+  async isConfigured(name: string, version?: string | null): Promise<boolean> {
+    return Boolean(await this.getSecret(name, version));
   }
 }
 
@@ -118,17 +123,24 @@ export class GoogleSecretManagerProvider implements SecretProvider {
     if (!projectId) throw new Error("GOOGLE_CLOUD_PROJECT is required for Google Secret Manager");
   }
 
-  async getSecret(name: string): Promise<string | null> {
-    const [version] = await this.client.accessSecretVersion({
-      name: `projects/${this.projectId}/secrets/${name}/versions/latest`
+  async getSecret(name: string, version?: string | null): Promise<string | null> {
+    const latest = `projects/${this.projectId}/secrets/${name}/versions/latest`;
+    const versionName = version && version !== "latest" ? version : latest;
+    if (!versionName.startsWith(`projects/${this.projectId}/secrets/${name}/versions/`)) throw new Error("INVALID_SECRET_VERSION");
+    const [secretVersion] = await this.client.accessSecretVersion({
+      name: versionName
     });
-    return version.payload?.data?.toString() ?? null;
+    return secretVersion.payload?.data?.toString() ?? null;
   }
 
-  async setSecret(name: string, value: string): Promise<void> {
+  async setSecret(name: string, value: string): Promise<string | null> {
     const parent = `projects/${this.projectId}`;
+    let result;
     try {
-      await this.client.getSecret({name: `${parent}/secrets/${name}`});
+      [result] = await this.client.addSecretVersion({
+        parent: `${parent}/secrets/${name}`,
+        payload: {data: Buffer.from(value, "utf8")}
+      });
     } catch (error: unknown) {
       const code = typeof error === "object" && error !== null && "code" in error ? Number(error.code) : 0;
       if (code !== 5) throw error;
@@ -137,35 +149,41 @@ export class GoogleSecretManagerProvider implements SecretProvider {
         secretId: name,
         secret: {replication: {automatic: {}}}
       });
+      [result] = await this.client.addSecretVersion({
+        parent: `${parent}/secrets/${name}`,
+        payload: {data: Buffer.from(value, "utf8")}
+      });
     }
-    await this.client.addSecretVersion({
-      parent: `${parent}/secrets/${name}`,
-      payload: {data: Buffer.from(value, "utf8")}
-    });
+    return result.name ?? null;
   }
 
-  async isConfigured(name: string): Promise<boolean> {
-    return Boolean(await this.getSecret(name));
+  async isConfigured(name: string, version?: string | null): Promise<boolean> {
+    return Boolean(await this.getSecret(name, version));
   }
 }
 
 export class InMemorySecretProvider implements SecretProvider {
   private readonly values = new Map<string, string>();
+  private readonly versions = new Map<string, string>();
 
   constructor(initialValues: Record<string, string> = {}) {
     for (const [key, value] of Object.entries(initialValues)) this.values.set(key, value);
   }
 
-  async getSecret(name: string): Promise<string | null> {
+  async getSecret(name: string, version?: string | null): Promise<string | null> {
+    if (version && version !== "latest") return this.versions.get(version) ?? null;
     return this.values.get(name) ?? null;
   }
 
-  async setSecret(name: string, value: string): Promise<void> {
+  async setSecret(name: string, value: string): Promise<string> {
+    const version = `memory/${name}/${randomUUID()}`;
     this.values.set(name, value);
+    this.versions.set(version, value);
+    return version;
   }
 
-  async isConfigured(name: string): Promise<boolean> {
-    return this.values.has(name);
+  async isConfigured(name: string, version?: string | null): Promise<boolean> {
+    return Boolean(await this.getSecret(name, version));
   }
 }
 

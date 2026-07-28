@@ -37,6 +37,9 @@ export const contactInvitationStatusEnum = pgEnum("contact_invitation_status", [
 export const otpPurposeEnum = pgEnum("otp_purpose", ["INTEREST_DECISION", "PORTAL_ACCESS"]);
 export const outboxStatusEnum = pgEnum("outbox_status", ["PENDING", "PROCESSING", "SENT", "FAILED", "CANCELLED"]);
 export const submissionActorTypeEnum = pgEnum("submission_actor_type", ["ADVISOR", "ADMIN", "COMPANY_CONTACT", "SYSTEM"]);
+export const emailProviderEnum = pgEnum("email_provider", ["GMAIL", "BREVO", "CUSTOM"]);
+export const emailSecurityModeEnum = pgEnum("email_security_mode", ["NONE", "STARTTLS", "TLS"]);
+export const emailConfigurationStatusEnum = pgEnum("email_configuration_status", ["DRAFT", "TESTED", "ACTIVE", "FAILED", "SUPERSEDED"]);
 
 const timestamps = {
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow(),
@@ -393,6 +396,32 @@ export const systemSettings = pgTable("system_settings", {
   updatedByUserId: integer("updated_by_user_id").references(() => users.id),
   ...timestamps
 });
+
+export const emailConfigurations = pgTable("email_configurations", {
+  id: serial("id").primaryKey(),
+  provider: emailProviderEnum("provider").notNull(),
+  status: emailConfigurationStatusEnum("status").notNull().default("DRAFT"),
+  host: varchar("host", {length: 253}).notNull(),
+  port: integer("port").notNull(),
+  securityMode: emailSecurityModeEnum("security_mode").notNull(),
+  username: varchar("username", {length: 320}),
+  fromEmail: varchar("from_email", {length: 320}).notNull(),
+  fromName: varchar("from_name", {length: 200}).notNull(),
+  replyTo: varchar("reply_to", {length: 320}).notNull(),
+  secretName: varchar("secret_name", {length: 120}),
+  secretVersion: varchar("secret_version", {length: 512}),
+  previousConfigurationId: integer("previous_configuration_id"),
+  lastTestedAt: timestamp("last_tested_at", {withTimezone: true}),
+  lastTestFailureCode: varchar("last_test_failure_code", {length: 80}),
+  activatedAt: timestamp("activated_at", {withTimezone: true}),
+  supersededAt: timestamp("superseded_at", {withTimezone: true}),
+  createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+  updatedByUserId: integer("updated_by_user_id").notNull().references(() => users.id),
+  ...timestamps
+}, (table) => [
+  index("email_configurations_status_idx").on(table.status, table.updatedAt),
+  uniqueIndex("email_configurations_single_active_uq").on(table.status).where(sql`${table.status} = 'ACTIVE'`)
+]);
 
 export const lenderContacts = pgTable("lender_contacts", {
   id: serial("id").primaryKey(),

@@ -15,10 +15,13 @@ describe("LocalEncryptedSecretProvider", () => {
     const filePath = join(directory, "secrets.bin");
     const masterKey = randomBytes(32).toString("base64");
     const provider = new LocalEncryptedSecretProvider(filePath, masterKey, {});
-    await provider.setSecret("syncash-smtp-password", "local-secret-value");
-    expect(await provider.getSecret("syncash-smtp-password")).toBe("local-secret-value");
+    const firstVersion = await provider.setSecret("syncash-smtp-password", "local-secret-value");
+    const secondVersion = await provider.setSecret("syncash-smtp-password", "new-local-secret-value");
+    expect(await provider.getSecret("syncash-smtp-password")).toBe("new-local-secret-value");
+    expect(await provider.getSecret("syncash-smtp-password", firstVersion)).toBe("local-secret-value");
+    expect(await provider.getSecret("syncash-smtp-password", secondVersion)).toBe("new-local-secret-value");
     expect((await readFile(filePath)).includes(Buffer.from("local-secret-value"))).toBe(false);
-    expect(await new LocalEncryptedSecretProvider(filePath, masterKey, {}).getSecret("syncash-smtp-password")).toBe("local-secret-value");
+    expect(await new LocalEncryptedSecretProvider(filePath, masterKey, {}).getSecret("syncash-smtp-password", firstVersion)).toBe("local-secret-value");
   });
 
   it("falls back to environment values for read-only startup secrets", async () => {

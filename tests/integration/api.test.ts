@@ -6,17 +6,20 @@ import { AdvisorEmailVerificationService, type EmailVerificationService } from "
 import { EncryptionService } from "../../src/utils/crypto";
 import { InMemorySecretProvider, type SecretProvider } from "../../src/utils/secretManager";
 import { env, makeStore, MemoryLimiter, MemoryStorage, secrets, users, verifier } from "../helpers/fakes";
+import type { EmailConfigurationRecord } from "../../src/services/store";
 
 type TestEmailService = {
   verify: ReturnType<typeof vi.fn>;
   send: ReturnType<typeof vi.fn>;
   test: ReturnType<typeof vi.fn>;
   reload: ReturnType<typeof vi.fn>;
+  isDeliveryActive: ReturnType<typeof vi.fn>;
 };
 
 function app(overrides: Parameters<typeof makeStore>[0] = {}, emailService?: Partial<TestEmailService> | EmailService, secretProvider: SecretProvider = secrets, environment = env, verificationService?: EmailVerificationService) {
   const store = makeStore(overrides);
-  const email = (emailService ?? {verify: vi.fn(), send: vi.fn().mockResolvedValue({messageId: "message-1"}), test: vi.fn().mockResolvedValue({messageId: "message-1"}), reload: vi.fn()}) as EmailService;
+  const defaultEmail = {verify: vi.fn(), send: vi.fn().mockResolvedValue({messageId: "message-1"}), test: vi.fn().mockResolvedValue({messageId: "message-1"}), reload: vi.fn(), isDeliveryActive: vi.fn().mockResolvedValue(environment.EMAIL_DELIVERY_ENABLED)};
+  const email = emailService instanceof EmailService ? emailService : {...defaultEmail, ...(emailService ?? {})} as unknown as EmailService;
   return createApp({
     env: environment, store, verifier, encryption: new EncryptionService(Buffer.alloc(32, 4)),
     storage: new MemoryStorage(), limiter: new MemoryLimiter(), secrets: secretProvider,
@@ -28,14 +31,25 @@ function app(overrides: Parameters<typeof makeStore>[0] = {}, emailService?: Par
 }
 
 const smtpSettings = {
-  SMTP_HOST: "mailpit",
-  SMTP_PORT: "1025",
-  SMTP_SECURE: "false",
-  SMTP_USER: "",
-  EMAIL_FROM: "no-reply@syncash.local",
-  EMAIL_FROM_NAME: "SynCash",
-  EMAIL_REPLY_TO: "support@syncash.local"
+  provider: "CUSTOM",
+  host: "mailpit",
+  port: 1025,
+  securityMode: "NONE",
+  username: null,
+  fromEmail: "no-reply@syncash.local",
+  fromName: "SynCash",
+  replyTo: "support@syncash.local"
 };
+
+function emailConfiguration(overrides: Partial<EmailConfigurationRecord> = {}): EmailConfigurationRecord {
+  return {
+    id: 1, provider: "CUSTOM", status: "DRAFT", host: "mailpit", port: 1025, securityMode: "NONE", username: null,
+    fromEmail: "no-reply@syncash.local", fromName: "SynCash", replyTo: "support@syncash.local",
+    secretName: "syncash-smtp-password", secretVersion: "latest", previousConfigurationId: null,
+    lastTestedAt: null, lastTestFailureCode: null, activatedAt: null, supersededAt: null,
+    createdByUserId: users.super.id, updatedByUserId: users.super.id, createdAt: new Date(), updatedAt: new Date(), ...overrides
+  };
+}
 
 const registrationInput = {
   firstName: "דנה", lastName: "לוי", email: "new-advisor@example.com", phone: "0501234567",
@@ -96,18 +110,18 @@ describe("HTTP authentication and authorization", () => {
   it.each(["admin", "advisor", "lender"])("blocks %s from all SMTP administration endpoints", async (token) => {
     await request(app()).patch("/api/admin/settings/email").set("authorization", `Bearer ${token}`).send(smtpSettings).expect(403);
     await request(app()).patch("/api/admin/settings/email").set("authorization", `Bearer ${token}`).send({...smtpSettings, smtpPassword: "not-used"}).expect(403);
-    await request(app()).post("/api/admin/settings/email/test").set("authorization", `Bearer ${token}`).send({recipientEmail: "blocked@example.test"}).expect(403);
+    await request(app()).post("/api/admin/settings/email/1/test").set("authorization", `Bearer ${token}`).send({recipientEmail: "blocked@example.test"}).expect(403);
+    await request(app()).post("/api/admin/settings/email/1/activate").set("authorization", `Bearer ${token}`).expect(403);
+    await request(app()).post("/api/admin/settings/email/rollback").set("authorization", `Bearer ${token}`).expect(403);
   });
 
-  it("allows SUPER_ADMIN to persist SMTP settings and password without returning the password", async () => {
-    const setSettings = vi.fn().mockResolvedValue(undefined);
+  it("allows SUPER_ADMIN to create an SMTP draft and password version without returning the password", async () => {
     const addAudit = vi.fn().mockResolvedValue(undefined);
     const localSecrets = new InMemorySecretProvider();
-    const response = await request(app({setSettings, addAudit}, undefined, localSecrets)).patch("/api/admin/settings/email")
+    const response = await request(app({addAudit}, undefined, localSecrets)).patch("/api/admin/settings/email")
       .set("authorization", "Bearer super").send({...smtpSettings, smtpPassword: "local-test-password"}).expect(200);
-    expect(response.body).toEqual({updated: true, passwordConfigured: true});
+    expect(response.body.draft).toEqual(expect.objectContaining({status: "DRAFT", passwordConfigured: true}));
     expect(JSON.stringify(response.body)).not.toContain("local-test-password");
-    expect(setSettings).toHaveBeenCalledWith("SMTP", smtpSettings, users.super.id);
     expect(await localSecrets.getSecret("syncash-smtp-password")).toBe("local-test-password");
     expect(JSON.stringify(addAudit.mock.calls)).not.toContain("local-test-password");
   });
@@ -177,7 +191,7 @@ describe("advisor self-registration", () => {
     const send = vi.fn().mockResolvedValueOnce({messageId: "first-message"}).mockResolvedValueOnce({messageId: "second-message"});
     const addEmailLog = vi.fn().mockResolvedValue(undefined);
     const store = makeStore({createAdvisorAccount: async () => registeredAdvisor, addEmailLog});
-    const email = {send} as unknown as EmailService;
+    const email = {send, isDeliveryActive: vi.fn().mockResolvedValue(true)} as unknown as EmailService;
     const verification = new AdvisorEmailVerificationService({createVerificationLink}, email, store);
     const application = createApp({
       env, store, verifier, encryption: new EncryptionService(Buffer.alloc(32, 4)), storage: new MemoryStorage(),
@@ -196,7 +210,7 @@ describe("advisor self-registration", () => {
   it("delivers the verification template to Mailpit and stores its sanitized message id", async () => {
     const addEmailLog = vi.fn().mockResolvedValue(undefined);
     const localEnv = {...env, SMTP_HOST: "127.0.0.1", SMTP_PORT: 1025, SMTP_SECURE: false, SMTP_USER: ""};
-    const email = new EmailService(localEnv, new InMemorySecretProvider(), async () => ({...smtpSettings, SMTP_HOST: "127.0.0.1"}));
+    const email = new EmailService(localEnv, new InMemorySecretProvider(), async () => ({SMTP_HOST: "127.0.0.1", SMTP_PORT: "1025", SMTP_SECURITY_MODE: "NONE", SMTP_USER: null, EMAIL_FROM: "no-reply@syncash.local", EMAIL_FROM_NAME: "SynCash", EMAIL_REPLY_TO: "support@syncash.local"}));
     const response = await request(app({createAdvisorAccount: async () => registeredAdvisor, addEmailLog}, email, new InMemorySecretProvider(), localEnv))
       .post("/api/auth/register-advisor").set("authorization", "Bearer new-advisor").send(registrationInput).expect(201);
     expect(response.body).toEqual({success: true, verificationEmailSent: true});
@@ -254,40 +268,47 @@ describe("advisor self-registration", () => {
 
 describe("SMTP administration", () => {
   it("persists non-secret settings without replacing an existing SMTP password", async () => {
-    const setSettings = vi.fn().mockResolvedValue(undefined);
     const addAudit = vi.fn().mockResolvedValue(undefined);
+    const active = emailConfiguration({status: "ACTIVE", activatedAt: new Date()});
+    const createEmailConfiguration = vi.fn().mockImplementation(async (values) => emailConfiguration({id: 2, ...values, status: "DRAFT"}));
     const localSecrets = new InMemorySecretProvider({"syncash-smtp-password": "existing-secret"});
     const setSecret = vi.spyOn(localSecrets, "setSecret");
-    const response = await request(app({setSettings, addAudit}, undefined, localSecrets)).patch("/api/admin/settings/email")
-      .set("authorization", "Bearer super").send(smtpSettings).expect(200);
-    expect(response.body).toEqual({updated: true, passwordConfigured: true});
+    const response = await request(app({getActiveEmailConfiguration: async () => active, createEmailConfiguration, addAudit}, undefined, localSecrets)).patch("/api/admin/settings/email")
+      .set("authorization", "Bearer super").send({...smtpSettings, baseConfigurationId: active.id}).expect(200);
+    expect(response.body.draft).toEqual(expect.objectContaining({status: "DRAFT", passwordConfigured: true}));
     expect(setSecret).not.toHaveBeenCalled();
     expect(await localSecrets.getSecret("syncash-smtp-password")).toBe("existing-secret");
-    expect(addAudit).toHaveBeenCalledWith(users.super.id, "SMTP_UPDATED", "system_settings", null, expect.objectContaining({passwordUpdated: false}), expect.any(String));
+    expect(addAudit).toHaveBeenCalledWith(users.super.id, "SMTP_DRAFT_CREATED", "email_configuration", 2, expect.objectContaining({passwordUpdated: false}), expect.any(String));
   });
 
-  it("uses Gmail with STARTTLS and never falls back to Mailpit", () => {
-    const resolved = resolveSmtpTransportSettings(env, {
-      SMTP_HOST: "smtp.gmail.com", SMTP_PORT: "587", SMTP_SECURE: "false",
-      SMTP_USER: "advisor@gmail.com"
-    }, "not-a-real-password");
-    expect(resolved).toEqual(expect.objectContaining({host: "smtp.gmail.com", port: 587, secure: false, requireTLS: true}));
-    expect(JSON.stringify(resolved)).not.toContain("mailpit");
+  it.each([
+    ["Gmail", "smtp.gmail.com"],
+    ["Brevo", "smtp-relay.brevo.com"]
+  ])("uses %s with port 587 and STARTTLS", (_provider, host) => {
+    const resolved = resolveSmtpTransportSettings(env, {SMTP_HOST: host, SMTP_PORT: "587", SMTP_SECURITY_MODE: "STARTTLS", SMTP_USER: "smtp-user"}, "not-a-real-password");
+    expect(resolved).toEqual(expect.objectContaining({host, port: 587, secure: false, requireTLS: true, ignoreTLS: false}));
+  });
+
+  it("supports custom direct TLS without applying STARTTLS", () => {
+    const resolved = resolveSmtpTransportSettings(env, {SMTP_HOST: "smtp.example.com", SMTP_PORT: "465", SMTP_SECURITY_MODE: "TLS", SMTP_USER: "smtp-user"}, "not-a-real-password");
+    expect(resolved).toEqual(expect.objectContaining({port: 465, secure: true, requireTLS: false, ignoreTLS: false}));
   });
 
   it("returns a clear failure when the SMTP password is missing", async () => {
     const addEmailLog = vi.fn().mockResolvedValue(undefined);
-    const email = {test: vi.fn().mockRejectedValue(new SmtpServiceError("SMTP_PASSWORD_NOT_CONFIGURED")), reload: vi.fn()};
-    const response = await request(app({addEmailLog}, email)).post("/api/admin/settings/email/test")
+    const configuration = emailConfiguration({secretName: null, secretVersion: null});
+    const email = {test: vi.fn().mockRejectedValue(new SmtpServiceError("SMTP_PASSWORD_NOT_CONFIGURED")), reload: vi.fn(), isDeliveryActive: vi.fn()};
+    const response = await request(app({getEmailConfiguration: async () => configuration, markEmailConfigurationTest: async () => configuration, addEmailLog}, email)).post("/api/admin/settings/email/1/test")
       .set("authorization", "Bearer super").send({recipientEmail: "super@example.test"}).expect(409);
     expect(response.body).toEqual(expect.objectContaining({error: "SMTP_CREDENTIAL_NOT_CONFIGURED", requestId: expect.any(String)}));
-    expect(addEmailLog).toHaveBeenCalledWith({recipient: "super@example.test", status: "FAILED", sanitizedError: "SMTP_CREDENTIAL_NOT_CONFIGURED"});
+    expect(addEmailLog).toHaveBeenCalledWith(expect.objectContaining({recipient: "super@example.test", template: "SMTP_CONFIGURATION_TEST", status: "FAILED", sanitizedError: "SMTP_CREDENTIAL_NOT_CONFIGURED"}));
   });
 
   it("sanitizes invalid Gmail credentials and never reports success", async () => {
     const addEmailLog = vi.fn().mockResolvedValue(undefined);
-    const email = {test: vi.fn().mockRejectedValue(Object.assign(new Error("535 password=private"), {code: "EAUTH", responseCode: 535})), reload: vi.fn()};
-    const response = await request(app({addEmailLog}, email)).post("/api/admin/settings/email/test")
+    const configuration = emailConfiguration({provider: "GMAIL", host: "smtp.gmail.com", port: 587, securityMode: "STARTTLS", username: "user@gmail.com"});
+    const email = {test: vi.fn().mockRejectedValue(Object.assign(new Error("535 password=private"), {code: "EAUTH", responseCode: 535})), reload: vi.fn(), isDeliveryActive: vi.fn()};
+    const response = await request(app({getEmailConfiguration: async () => configuration, markEmailConfigurationTest: async () => configuration, addEmailLog}, email)).post("/api/admin/settings/email/1/test")
       .set("authorization", "Bearer super").send({recipientEmail: "super@example.test"}).expect(502);
     expect(response.body).toEqual(expect.objectContaining({error: "SMTP_AUTH_FAILED", requestId: expect.any(String)}));
     expect(response.body).not.toHaveProperty("messageId");
@@ -298,18 +319,38 @@ describe("SMTP administration", () => {
     const recipient = `smtp-test-${Date.now()}@syncash.local`;
     const addEmailLog = vi.fn().mockResolvedValue(undefined);
     const localEnv = {...env, SMTP_HOST: "127.0.0.1", SMTP_PORT: 1025, SMTP_SECURE: false, SMTP_USER: ""};
-    const email = new EmailService(localEnv, new InMemorySecretProvider(), async () => ({
-      ...smtpSettings,
-      SMTP_HOST: "127.0.0.1"
-    }));
-    const response = await request(app({addEmailLog}, email, new InMemorySecretProvider(), localEnv)).post("/api/admin/settings/email/test")
+    const configuration = emailConfiguration({host: "127.0.0.1", secretName: null, secretVersion: null});
+    const tested = emailConfiguration({...configuration, status: "TESTED", lastTestedAt: new Date()});
+    const email = new EmailService(localEnv, new InMemorySecretProvider());
+    const response = await request(app({getEmailConfiguration: async () => configuration, markEmailConfigurationTest: async () => tested, addEmailLog}, email, new InMemorySecretProvider(), localEnv)).post("/api/admin/settings/email/1/test")
       .set("authorization", "Bearer super").send({recipientEmail: recipient}).expect(200);
     expect(response.body.messageId).toEqual(expect.any(String));
-    expect(addEmailLog).toHaveBeenCalledWith({recipient, messageId: response.body.messageId, status: "SENT"});
+    expect(response.body.draft.status).toBe("TESTED");
+    expect(addEmailLog).toHaveBeenCalledWith(expect.objectContaining({recipient, template: "SMTP_CONFIGURATION_TEST", messageId: response.body.messageId, status: "SENT"}));
     await expect.poll(async () => {
       const listing = await fetch("http://localhost:8025/api/v1/messages").then((result) => result.json()) as {messages?: Array<{To?: Array<{Address?: string}>}>};
       return listing.messages?.some((message) => message.To?.some((target) => target.Address === recipient)) ?? false;
     }).toBe(true);
+  });
+
+  it("activates only a tested draft and supports rollback", async () => {
+    const tested = emailConfiguration({id: 2, status: "TESTED", lastTestedAt: new Date()});
+    const activated = emailConfiguration({id: 2, status: "ACTIVE", activatedAt: new Date(), previousConfigurationId: 1});
+    const previous = emailConfiguration({id: 1, status: "ACTIVE", activatedAt: new Date()});
+    const addAudit = vi.fn();
+    const email = {reload: vi.fn(), test: vi.fn(), isDeliveryActive: vi.fn(), send: vi.fn(), verify: vi.fn()};
+    const activate = await request(app({getEmailConfiguration: async () => tested, activateEmailConfiguration: async () => activated, addAudit}, email)).post("/api/admin/settings/email/2/activate").set("authorization", "Bearer super").expect(200);
+    expect(activate.body.active.status).toBe("ACTIVE");
+    const rollback = await request(app({rollbackEmailConfiguration: async () => previous, addAudit}, email)).post("/api/admin/settings/email/rollback").set("authorization", "Bearer super").expect(200);
+    expect(rollback.body.active.id).toBe(1);
+    expect(email.reload).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks private SMTP endpoints in production", async () => {
+    const productionEnv = {...env, NODE_ENV: "production" as const};
+    const response = await request(app({}, undefined, secrets, productionEnv)).patch("/api/admin/settings/email")
+      .set("authorization", "Bearer super").send({...smtpSettings, host: "127.0.0.1", port: 587}).expect(422);
+    expect(response.body).toEqual(expect.objectContaining({error: "SMTP_HOST_NOT_ALLOWED", requestId: expect.any(String)}));
   });
 
   it("never exposes a password through responses or server logs", async () => {
@@ -319,7 +360,7 @@ describe("SMTP administration", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
       const response = await request(app({}, undefined, secretProvider)).patch("/api/admin/settings/email")
-        .set("authorization", "Bearer super").send({...smtpSettings, smtpPassword: password}).expect(500);
+        .set("authorization", "Bearer super").send({...smtpSettings, smtpPassword: password}).expect(503);
       expect(JSON.stringify(response.body)).not.toContain(password);
       expect(JSON.stringify(consoleError.mock.calls)).not.toContain(password);
     } finally {

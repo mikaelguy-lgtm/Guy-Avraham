@@ -19,7 +19,7 @@ import { rateLimit, type RateLimitStore } from "../services/rateLimiter.js";
 import { buildAnonymousSubmissionSnapshot } from "../services/snapshot.js";
 import type {
   AppStore, ClientIncomeMutationRecord, ClientLiabilitiesMutationRecord, ClientMutationRecord,
-  ClientPersonalMutationRecord, ClientPropertyMutationRecord, LiabilityMutationRecord
+  ClientPersonalMutationRecord, ClientPropertyMutationRecord, EmailConfigurationRecord, LiabilityMutationRecord
 } from "../services/store.js";
 import type { StorageService } from "../services/storage.js";
 import { sanitizeEmailError, sanitizeSmtpFailure, type EmailService } from "../services/email.js";
@@ -31,6 +31,7 @@ import type { SecretProvider } from "../utils/secretManager.js";
 import {DeliveryError} from "../domain/lenderDelivery.js";
 import type {LenderDeliveryApplication} from "../services/lenderDelivery.js";
 import type {DeliveryEventBroker} from "../services/deliveryEvents.js";
+import {validateSmtpEndpoint} from "../services/smtpSecurity.js";
 
 export interface AppServices {
   env: AppEnv;
@@ -57,15 +58,61 @@ function routeParam(request: Request, name: string): string {
 }
 
 const smtpSettingsSchema = z.object({
-  SMTP_HOST: z.string().trim().min(1).max(253),
-  SMTP_PORT: z.string().regex(/^\d+$/).refine((value) => Number(value) >= 1 && Number(value) <= 65_535),
-  SMTP_SECURE: z.enum(["true", "false"]),
-  SMTP_USER: z.string().trim().max(320),
-  EMAIL_FROM: z.string().trim().email().max(320),
-  EMAIL_FROM_NAME: z.string().trim().min(1).max(200),
-  EMAIL_REPLY_TO: z.string().trim().email().max(320),
+  provider: z.enum(["GMAIL", "BREVO", "CUSTOM"]),
+  host: z.string().trim().min(1).max(253),
+  port: z.coerce.number().int().min(1).max(65_535),
+  securityMode: z.enum(["NONE", "STARTTLS", "TLS"]),
+  username: z.string().trim().max(320).nullable().optional(),
+  fromEmail: z.string().trim().email().max(320),
+  fromName: z.string().trim().min(1).max(200),
+  replyTo: z.string().trim().email().max(320),
+  baseConfigurationId: z.coerce.number().int().positive().optional(),
   smtpPassword: z.string().max(500).optional()
-}).strict();
+}).strict().superRefine((value, context) => {
+  if ((value.provider === "GMAIL" || value.provider === "BREVO") && !value.username) {
+    context.addIssue({code: "custom", path: ["username"], message: "יש להזין שם משתמש SMTP."});
+  }
+  if ((value.provider === "GMAIL" || value.provider === "BREVO") && value.securityMode !== "STARTTLS") {
+    context.addIssue({code: "custom", path: ["securityMode"], message: "הספק שנבחר מחייב STARTTLS."});
+  }
+});
+
+const smtpTestSchema = z.object({recipientEmail: z.string().trim().email().max(320)}).strict();
+
+function smtpSettingsFromConfiguration(configuration: EmailConfigurationRecord): Record<string, string | null> {
+  return {
+    SMTP_CONFIGURATION_STATUS: configuration.status,
+    SMTP_HOST: configuration.host,
+    SMTP_PORT: String(configuration.port),
+    SMTP_SECURITY_MODE: configuration.securityMode,
+    SMTP_USER: configuration.username,
+    EMAIL_FROM: configuration.fromEmail,
+    EMAIL_FROM_NAME: configuration.fromName,
+    EMAIL_REPLY_TO: configuration.replyTo,
+    SMTP_SECRET_NAME: configuration.secretName,
+    SMTP_SECRET_VERSION: configuration.secretVersion
+  };
+}
+
+function publicEmailConfiguration(configuration: EmailConfigurationRecord, passwordConfigured: boolean) {
+  return {
+    id: configuration.id,
+    provider: configuration.provider,
+    status: configuration.status,
+    host: configuration.host,
+    port: configuration.port,
+    securityMode: configuration.securityMode,
+    username: configuration.username ?? "",
+    fromEmail: configuration.fromEmail,
+    fromName: configuration.fromName,
+    replyTo: configuration.replyTo,
+    passwordConfigured,
+    lastTestedAt: configuration.lastTestedAt?.toISOString() ?? null,
+    lastTestFailureCode: configuration.lastTestFailureCode,
+    activatedAt: configuration.activatedAt?.toISOString() ?? null,
+    updatedAt: configuration.updatedAt.toISOString()
+  };
+}
 
 const advisorStatusSchema = z.object({status: z.enum(["ACTIVE", "SUSPENDED", "DISABLED"])}).strict();
 const companySchema = z.object({name: z.string().trim().min(2).max(200), legalName: z.string().trim().max(250).nullable().optional(), companyNumber: z.string().trim().max(50).nullable().optional(), phone: z.string().trim().max(50).nullable().optional(), address: z.string().trim().max(500).nullable().optional(), website: z.string().trim().url().max(500).nullable().optional(), activityAreas: z.array(z.string().trim().min(1).max(100)).max(30), adminNotes: z.string().trim().max(4000).nullable().optional(), active: z.boolean()}).strict();
@@ -367,13 +414,13 @@ export function createApp(services: AppServices) {
     }
     next();
   };
-  const requireEmailDelivery = (request: Request, response: Response, next: NextFunction): void => {
-    if (!services.env.EMAIL_DELIVERY_ENABLED) {
+  const requireEmailDelivery = asyncRoute(async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    if (!await services.email.isDeliveryActive()) {
       response.status(503).json({error: "EMAIL_DELIVERY_DISABLED", message: "שירות שליחת הדוא״ל אינו פעיל כעת.", requestId: request.requestId});
       return;
     }
     next();
-  };
+  });
   const authenticated = [auth.requireFirebaseAuth, auth.loadDatabaseUser, auth.requireActiveUser, requireProductionAccess];
   const upload = multer({storage: multer.memoryStorage(), limits: {fileSize: services.env.MAX_UPLOAD_SIZE_MB * 1024 * 1024, files: 1}});
 
@@ -550,6 +597,9 @@ export function createApp(services: AppServices) {
     await services.store.addAudit(request.user!.id, "CLIENT_FULL_UPDATED", "client", request.authorizedClientId!, {section: "full", fields: ["personal", "income", "liabilities", "property", "dealDetails"]}, request.requestId);
     response.json(await publicClient(client, services.store, services.encryption));
   }));
+  app.get("/api/email/status", ...authenticated, asyncRoute(async (_request, response) => {
+    response.json({active: await services.email.isDeliveryActive()});
+  }));
 
   app.patch("/api/clients/:id/personal", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientPersonalInputSchema.parse(request.body);
@@ -671,11 +721,7 @@ export function createApp(services: AppServices) {
     response.json(await services.store.listClientSubmissions(request.authorizedClientId!));
   }));
 
-  app.post("/api/clients/:clientId/submissions", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
-    if (!services.env.EMAIL_DELIVERY_ENABLED) {
-      response.status(503).json({error: "EMAIL_DELIVERY_DISABLED", message: "שירות שליחת הדוא״ל אינו פעיל כעת.", requestId: request.requestId});
-      return;
-    }
+  app.post("/api/clients/:clientId/submissions", ...authenticated, auth.requireAdvisorClientAccess, requireEmailDelivery, asyncRoute(async (request, response) => {
     const input = z.object({lenderIds: z.array(z.number().int().positive()).min(1).max(20)}).parse(request.body);
     if (await services.store.hasIncompleteLegacyLiabilities(request.authorizedClientId!)) {
       response.status(422).json({
@@ -722,11 +768,7 @@ export function createApp(services: AppServices) {
     response.status(201).json({results});
   }));
 
-  app.post("/api/submissions/:id/retry-delivery", ...authenticated, auth.requireRole("ADVISOR"), rateLimit(services.limiter, "submission-retry", 10, 60), asyncRoute(async (request, response) => {
-    if (!services.env.EMAIL_DELIVERY_ENABLED) {
-      response.status(503).json({error: "EMAIL_DELIVERY_DISABLED", message: "שירות שליחת הדוא״ל אינו פעיל כעת.", requestId: request.requestId});
-      return;
-    }
+  app.post("/api/submissions/:id/retry-delivery", ...authenticated, auth.requireRole("ADVISOR"), requireEmailDelivery, rateLimit(services.limiter, "submission-retry", 10, 60), asyncRoute(async (request, response) => {
     const advisorId = request.user!.advisorId;
     if (!advisorId) { response.status(403).json({error: "ADVISOR_PROFILE_REQUIRED"}); return; }
     const token = randomBytes(32).toString("base64url");
@@ -874,43 +916,122 @@ export function createApp(services: AppServices) {
   }));
 
   app.get("/api/admin/settings/email", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
-    const settings = Object.fromEntries((await services.store.getSettings("SMTP")).map((setting) => [setting.key, setting.value]));
+    const configurations = await services.store.listEmailConfigurations();
+    const active = configurations.find((configuration) => configuration.status === "ACTIVE") ?? null;
+    const draft = configurations.find((configuration) => ["DRAFT", "TESTED", "FAILED"].includes(configuration.status)) ?? null;
+    const toPublic = async (configuration: EmailConfigurationRecord) => publicEmailConfiguration(
+      configuration,
+      Boolean(configuration.secretName && await services.secrets.isConfigured(configuration.secretName, configuration.secretVersion))
+    );
+    const legacySettings = Object.fromEntries((await services.store.getSettings("SMTP")).map((setting) => [setting.key, setting.value]));
     response.json({
-      SMTP_HOST: settings.SMTP_HOST ?? services.env.SMTP_HOST,
-      SMTP_PORT: settings.SMTP_PORT ?? String(services.env.SMTP_PORT),
-      SMTP_SECURE: settings.SMTP_SECURE ?? String(services.env.SMTP_SECURE),
-      SMTP_USER: settings.SMTP_USER ?? services.env.SMTP_USER,
-      EMAIL_FROM: settings.EMAIL_FROM ?? services.env.EMAIL_FROM,
-      EMAIL_FROM_NAME: settings.EMAIL_FROM_NAME ?? services.env.EMAIL_FROM_NAME,
-      EMAIL_REPLY_TO: settings.EMAIL_REPLY_TO ?? services.env.EMAIL_REPLY_TO,
-      passwordConfigured: await services.secrets.isConfigured("syncash-smtp-password")
+      active: active ? await toPublic(active) : null,
+      draft: draft ? await toPublic(draft) : null,
+      history: await Promise.all(configurations.filter((configuration) => configuration.id !== active?.id && configuration.id !== draft?.id).slice(0, 8).map(toPublic)),
+      canRollback: Boolean(active?.previousConfigurationId),
+      bootstrap: {
+        provider: (legacySettings.SMTP_HOST ?? services.env.SMTP_HOST) === "smtp.gmail.com" ? "GMAIL" : (legacySettings.SMTP_HOST ?? services.env.SMTP_HOST) === "smtp-relay.brevo.com" ? "BREVO" : "CUSTOM",
+        host: legacySettings.SMTP_HOST ?? services.env.SMTP_HOST,
+        port: Number(legacySettings.SMTP_PORT ?? services.env.SMTP_PORT),
+        securityMode: (legacySettings.SMTP_SECURE ?? String(services.env.SMTP_SECURE)) === "true" ? "TLS" : Number(legacySettings.SMTP_PORT ?? services.env.SMTP_PORT) === 587 ? "STARTTLS" : "NONE",
+        username: legacySettings.SMTP_USER ?? services.env.SMTP_USER,
+        fromEmail: legacySettings.EMAIL_FROM ?? services.env.EMAIL_FROM,
+        fromName: legacySettings.EMAIL_FROM_NAME ?? services.env.EMAIL_FROM_NAME,
+        replyTo: legacySettings.EMAIL_REPLY_TO ?? services.env.EMAIL_REPLY_TO,
+        passwordConfigured: await services.secrets.isConfigured("syncash-smtp-password")
+      }
     });
   }));
+
   app.patch("/api/admin/settings/email", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
     const input = smtpSettingsSchema.parse(request.body);
-    const {smtpPassword: password, ...safeSettings} = input;
+    try {
+      await validateSmtpEndpoint({provider: input.provider, host: input.host, port: input.port, securityMode: input.securityMode, nodeEnv: services.env.NODE_ENV});
+    } catch (error: unknown) {
+      const code = error instanceof Error ? error.message : "SMTP_ENDPOINT_INVALID";
+      response.status(422).json({error: code, message: "כתובת שרת ה-SMTP או הפורט אינם מורשים.", requestId: request.requestId});
+      return;
+    }
+    const base = input.baseConfigurationId ? await services.store.getEmailConfiguration(input.baseConfigurationId) : await services.store.getActiveEmailConfiguration();
+    const password = input.smtpPassword?.trim() ? input.smtpPassword : null;
+    let secretName = base?.secretName ?? null;
+    let secretVersion = base?.secretVersion ?? null;
+    if (!secretName && await services.secrets.isConfigured("syncash-smtp-password")) {
+      secretName = "syncash-smtp-password";
+      secretVersion = "latest";
+    }
     if (password) {
       if (!services.secrets.setSecret) { response.status(409).json({error: "SECRET_PROVIDER_READ_ONLY", requestId: request.requestId}); return; }
-      await services.secrets.setSecret("syncash-smtp-password", password);
+      try {
+        secretName = "syncash-smtp-password";
+        secretVersion = await services.secrets.setSecret(secretName, password);
+      } catch (error: unknown) {
+        const permissionDenied = typeof error === "object" && error !== null && "code" in error && Number(error.code) === 7;
+        const errorCode = permissionDenied ? "SMTP_SECRET_WRITE_FORBIDDEN" : "SMTP_SECRET_WRITE_FAILED";
+        await services.store.addAudit(request.user!.id, "SMTP_DRAFT_FAILED", "email_configuration", null, {errorCode}, request.requestId);
+        response.status(503).json({error: errorCode, message: "שמירת סיסמת ה-SMTP במנגנון הסודות נכשלה.", requestId: request.requestId});
+        return;
+      }
     }
-    await services.store.setSettings("SMTP", safeSettings, request.user!.id);
-    await services.email.reload();
-    await services.store.addAudit(request.user!.id, "SMTP_UPDATED", "system_settings", null, {fields: Object.keys(safeSettings), passwordUpdated: Boolean(password)}, request.requestId);
-    response.json({updated: true, passwordConfigured: await services.secrets.isConfigured("syncash-smtp-password")});
+    const configuration = await services.store.createEmailConfiguration({
+      provider: input.provider,
+      host: input.host,
+      port: input.port,
+      securityMode: input.securityMode,
+      username: input.username || null,
+      fromEmail: input.fromEmail,
+      fromName: input.fromName,
+      replyTo: input.replyTo,
+      secretName,
+      secretVersion,
+      previousConfigurationId: (await services.store.getActiveEmailConfiguration())?.id ?? null,
+      userId: request.user!.id
+    });
+    await services.store.addAudit(request.user!.id, "SMTP_DRAFT_CREATED", "email_configuration", configuration.id, {provider: configuration.provider, passwordUpdated: Boolean(password)}, request.requestId);
+    response.json({draft: publicEmailConfiguration(configuration, Boolean(secretName && await services.secrets.isConfigured(secretName, secretVersion)))});
   }));
-  app.post("/api/admin/settings/email/test", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
-    const recipient = z.object({recipientEmail: z.string().email().optional()}).parse(request.body).recipientEmail ?? request.user!.email;
+
+  app.delete("/api/admin/settings/email/:id/password", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const configuration = await services.store.clearEmailConfigurationPassword(Number(request.params.id), request.user!.id);
+    if (!configuration) { response.status(409).json({error: "SMTP_DRAFT_NOT_EDITABLE", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "SMTP_PASSWORD_CLEARED", "email_configuration", configuration.id, {passwordConfigured: false}, request.requestId);
+    response.json({draft: publicEmailConfiguration(configuration, false)});
+  }));
+
+  app.post("/api/admin/settings/email/:id/test", ...authenticated, auth.requireSuperAdmin, rateLimit(services.limiter, "smtp-test", 5, 60 * 60), asyncRoute(async (request, response) => {
+    const recipient = smtpTestSchema.parse(request.body).recipientEmail;
+    const configuration = await services.store.getEmailConfiguration(Number(request.params.id));
+    if (!configuration || !["DRAFT", "TESTED", "FAILED"].includes(configuration.status)) { response.status(404).json({error: "SMTP_DRAFT_NOT_FOUND", requestId: request.requestId}); return; }
     try {
-      const result = await services.email.test(recipient);
-      await services.store.addEmailLog({recipient, messageId: result.messageId, status: "SENT"});
-      await services.store.addAudit(request.user!.id, "SMTP_TESTED", "system_settings", null, {recipient, status: "SENT"}, request.requestId);
-      response.json({messageId: result.messageId});
+      await validateSmtpEndpoint({provider: configuration.provider, host: configuration.host, port: configuration.port, securityMode: configuration.securityMode, nodeEnv: services.env.NODE_ENV});
+      const result = await services.email.test(recipient, smtpSettingsFromConfiguration(configuration));
+      const tested = await services.store.markEmailConfigurationTest(configuration.id, "TESTED", null, request.user!.id);
+      await services.store.addEmailLog({recipient, template: "SMTP_CONFIGURATION_TEST", requestId: request.requestId, messageId: result.messageId, status: "SENT"});
+      await services.store.addAudit(request.user!.id, "SMTP_TESTED", "email_configuration", configuration.id, {recipient, status: "SENT"}, request.requestId);
+      response.json({messageId: result.messageId, draft: publicEmailConfiguration(tested!, true)});
     } catch (error: unknown) {
       const failure = sanitizeSmtpFailure(error);
-      await services.store.addEmailLog({recipient, status: "FAILED", sanitizedError: failure.code});
-      await services.store.addAudit(request.user!.id, "SMTP_TESTED", "system_settings", null, {recipient, status: "FAILED", errorCode: failure.code}, request.requestId);
+      await services.store.markEmailConfigurationTest(configuration.id, "FAILED", failure.code, request.user!.id);
+      await services.store.addEmailLog({recipient, template: "SMTP_CONFIGURATION_TEST", requestId: request.requestId, status: "FAILED", sanitizedError: failure.code});
+      await services.store.addAudit(request.user!.id, "SMTP_TESTED", "email_configuration", configuration.id, {recipient, status: "FAILED", errorCode: failure.code}, request.requestId);
       response.status(failure.status).json({error: failure.code, message: failure.message, requestId: request.requestId});
     }
+  }));
+
+  app.post("/api/admin/settings/email/:id/activate", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const configuration = await services.store.activateEmailConfiguration(Number(request.params.id), request.user!.id);
+    if (!configuration) { response.status(409).json({error: "SMTP_CONFIGURATION_NOT_TESTED", message: "ניתן להפעיל רק הגדרה שנבדקה בהצלחה.", requestId: request.requestId}); return; }
+    await services.email.reload();
+    await services.store.addAudit(request.user!.id, "SMTP_ACTIVATED", "email_configuration", configuration.id, {provider: configuration.provider}, request.requestId);
+    response.json({active: publicEmailConfiguration(configuration, Boolean(configuration.secretName && await services.secrets.isConfigured(configuration.secretName, configuration.secretVersion)))});
+  }));
+
+  app.post("/api/admin/settings/email/rollback", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const configuration = await services.store.rollbackEmailConfiguration(request.user!.id);
+    if (!configuration) { response.status(409).json({error: "SMTP_ROLLBACK_UNAVAILABLE", requestId: request.requestId}); return; }
+    await services.email.reload();
+    await services.store.addAudit(request.user!.id, "SMTP_ROLLED_BACK", "email_configuration", configuration.id, {provider: configuration.provider}, request.requestId);
+    response.json({active: publicEmailConfiguration(configuration, Boolean(configuration.secretName && await services.secrets.isConfigured(configuration.secretName, configuration.secretVersion)))});
   }));
 
   app.get("/api/admin/advisors", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
