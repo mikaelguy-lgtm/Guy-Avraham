@@ -48,10 +48,14 @@ fi
 
 minio_id="$(compose "$RELEASE_DIRECTORY" ps -q minio 2>/dev/null || true)"
 if [[ -n "$minio_id" && "$(docker inspect --format '{{.State.Running}}' "$minio_id")" == "true" ]]; then
-  docker run --rm --network syncash-prod-internal \
+  if docker run --rm --network syncash-prod-internal \
     -e "MC_HOST_syncash=http://$S3_ACCESS_KEY_ID:$S3_SECRET_KEY@minio:9000" \
-    -v "$staging/minio:/backup" \
-    "$MINIO_BACKUP_IMAGE" mirror --overwrite "syncash/$S3_BUCKET" /backup >/dev/null
+    "$MINIO_BACKUP_IMAGE" stat "syncash/$S3_BUCKET" >/dev/null 2>&1; then
+    docker run --rm --network syncash-prod-internal \
+      -e "MC_HOST_syncash=http://$S3_ACCESS_KEY_ID:$S3_SECRET_KEY@minio:9000" \
+      -v "$staging/minio:/backup" \
+      "$MINIO_BACKUP_IMAGE" mirror --overwrite "syncash/$S3_BUCKET" /backup >/dev/null
+  fi
 fi
 
 tar -C "$staging" -czf "$archive" .
@@ -65,5 +69,5 @@ if [[ "$BACKUP_KIND" == "--daily" && "$(date -u +%u)" == "7" ]]; then
 fi
 
 find "$SYNCASH_ROOT/backups/daily" -maxdepth 1 -type f -mtime +14 -delete 2>/dev/null || true
-find "$SYNCASH_ROOT/backups/weekly" -maxdepth 1 -type f -mtime +35 -delete 2>/dev/null || true
+find "$SYNCASH_ROOT/backups/weekly" -maxdepth 1 -type f -mtime +28 -delete 2>/dev/null || true
 printf '%s backup completed: %s\n' "$BACKUP_KIND" "$(basename "$encrypted")" | tee -a "$SYNCASH_ROOT/shared/logs/backup.log"
