@@ -6,7 +6,7 @@ Target: `app.syncash.co.il`
 
 Branch: `codex-syncash-production-rebuild`
 
-Prepared release: `616bd048be211d5641318f724d98e5a53f4d776a`
+Deployed release: `790129f376db0d965f49367b614ba2da3256787a`
 
 Status: **The application is available over HTTPS in controlled SUPER_ADMIN-only mode. Public registration, external portals and all email delivery remain disabled until SMTP activation is completed.**
 
@@ -21,7 +21,7 @@ Status: **The application is available over HTTPS in controlled SUPER_ADMIN-only
 | Frontend | PASS | Healthy on loopback behind Nginx; login, dashboard, settings and direct SPA routes passed |
 | Worker | PASS | Healthy for non-email work; email jobs are suspended and the empty queue has no retries or errors |
 | Firebase | PASS | ADC, Admin SDK, Email/Password, ID-token verification and authorized domain passed |
-| Secret Manager access | PASS | Encryption, Firebase and SMTP secrets are readable with the configured runtime identity |
+| Secret Manager access | PASS | Encryption, Firebase and SMTP secrets are readable; the runtime identity can add versions only to the SMTP secret while broader secret-management permissions remain denied |
 | Encryption secret format | PASS | A new version of the existing secret is canonical Base64 and decodes to exactly 32 bytes |
 | Nginx | PASS | Configuration test and reload passed |
 | Maintenance mode | OFF | Removed after `nginx -t`; HTTPS exposes only the controlled login flow and existing SUPER_ADMIN access |
@@ -93,11 +93,15 @@ Status: **The application is available over HTTPS in controlled SUPER_ADMIN-only
 ## Dynamic SMTP Upgrade
 
 - The request identified in the UI as `4081…` was traced to missing runtime permission for adding a new Secret Manager version; the API previously returned a generic sanitized `500`.
+- Release `790129f376db0d965f49367b614ba2da3256787a` is deployed with migration `0010`; the new email configuration table exists and currently contains no active configuration.
+- The runtime Service Account has Secret Accessor and Secret Version Adder on `syncash-smtp-password` only. Secret metadata access and version-disable permissions remain denied.
 - SMTP settings now use a PostgreSQL-backed Draft/Test/Activate lifecycle with an immutable Secret Manager version reference.
 - API and Worker resolve the active configuration dynamically for every delivery cycle; activation and rollback require no restart or environment change.
 - Failed drafts do not replace or disable the active configuration.
 - Gmail and Brevo presets enforce STARTTLS on port 587; custom SMTP supports explicit no-encryption, STARTTLS and direct TLS modes.
 - SUPER_ADMIN-only RBAC, rate limiting, SSRF protection, audit events and sanitized request IDs cover every configuration action.
+- The Production SUPER_ADMIN screen rendered successfully after deployment. Gmail and Brevo presets, custom editable transport controls, password masking and disabled Test/Activate actions before a valid tested draft were verified without entering or exposing a credential.
+- All six Production containers remained healthy after the controlled deployment; HTTPS health, login and direct SMTP settings routes passed. Email delivery, registration and external portals remain disabled.
 
 ## Backups and Rollback
 
