@@ -128,4 +128,22 @@ Status: **The application is available over HTTPS in controlled SUPER_ADMIN-only
 3. Complete registration verification, OTP, lender invitation, notification queue and Worker retry delivery checks, then clean their temporary data.
 4. Review and explicitly enable public registration and external portals only after their email-dependent flows pass.
 
-The Production application is available only for the existing SUPER_ADMIN. No seed, demo or customer data was created; email delivery, public registration and external portals remain disabled. All six containers are healthy and the HTTPS application is reachable through Nginx.
+The restricted SUPER_ADMIN-only state described above was the pre-opening state and was superseded by the controlled public opening recorded below.
+
+## Controlled Public Opening — 2026-07-29
+
+- The active Gmail configuration remains `ACTIVE` and is resolved dynamically by both the API and Worker.
+- Email delivery, public advisor registration and external portals are enabled in the API and Production frontend; SUPER_ADMIN-only mode is disabled.
+- Release `b70cb2a1145f428e7a4cb285e92ed4061f63a39e` was deployed after an encrypted pre-deployment backup, migration check and complete service health check.
+- Public registration reached the authenticated registration handler instead of the disabled gate. External review and access routes reached their token validation handlers instead of the disabled gate.
+- A controlled temporary advisor registration completed with one verification email accepted by the active SMTP provider and one `SENT` verification email log.
+- Firebase email verification state, advisor activation, initial login, logout-equivalent token disposal and a fresh login all passed.
+- The temporary advisor created a complete client case and uploaded all five required PDF document types.
+- The Worker delivered the lender invitation, interest OTP, full-access notification, lender decision notification, advisor notification and portal OTP.
+- Interest OTP verification, full-access creation, portal OTP verification, portal case access and portal logout passed.
+- Notification records included both the case-sent and company-interested events.
+- Every controlled outbox message was `SENT` with exactly one attempt and a distinct sanitized message identifier; matching `email_logs` records existed and no duplicate delivery or unnecessary retry was found.
+- Direct Production SPA refresh checks passed for login, registration, verification, advisor and both external portal route families.
+- All temporary Firebase, PostgreSQL and MinIO test data was removed. The post-cleanup smoke marker count is zero.
+- API and Worker log scans found zero unhandled, internal-server, secret, authentication or delivery-job error markers during the controlled opening window.
+- HTTPS health is passing and all six Production containers are healthy.
