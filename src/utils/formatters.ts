@@ -169,6 +169,11 @@ export function formatCurrency(value: number | string | null | undefined): strin
 }
 
 export const ISRAEL_TIME_ZONE = "Asia/Jerusalem";
+const israelHourFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: ISRAEL_TIME_ZONE,
+  hour: "2-digit",
+  hourCycle: "h23"
+});
 const israelDateTimeFormatter = new Intl.DateTimeFormat("he-IL", {
   timeZone: ISRAEL_TIME_ZONE,
   calendar: "gregory",
@@ -180,6 +185,29 @@ const israelDateTimeFormatter = new Intl.DateTimeFormat("he-IL", {
   minute: "2-digit",
   hourCycle: "h23"
 });
+
+export type IsraelTimeGreeting = "בוקר טוב" | "צהריים טובים" | "ערב טוב" | "לילה טוב";
+
+export function getIsraelHour(value: string | Date | number = new Date()): number {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 0;
+  const hour = israelHourFormatter.formatToParts(date).find((part) => part.type === "hour")?.value;
+  return Number(hour ?? 0) % 24;
+}
+
+export function getIsraelTimeGreeting(value: string | Date | number = new Date()): IsraelTimeGreeting {
+  const hour = getIsraelHour(value);
+  if (hour >= 5 && hour < 12) return "בוקר טוב";
+  if (hour >= 12 && hour < 18) return "צהריים טובים";
+  if (hour >= 18 && hour < 23) return "ערב טוב";
+  return "לילה טוב";
+}
+
+export function formatIsraelTimeGreeting(firstName: string, value: string | Date | number = new Date()): string {
+  const greeting = getIsraelTimeGreeting(value);
+  const normalizedName = firstName.trim();
+  return normalizedName ? `${greeting}, ${normalizedName}` : greeting;
+}
 
 export function formatIsraelDateTime(value: string | Date | null | undefined): string {
   if (!value) return "לא צוין";

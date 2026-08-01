@@ -5,6 +5,7 @@ import type { Client, CurrentUser } from "../types";
 import { api } from "../utils/apiClient";
 import { loanPurposeOptions } from "../utils/clientForm";
 import { formatClientStatus, formatCurrency, formatDate, formatDealType } from "../utils/formatters";
+import {useIsraelTimeGreeting} from "../hooks/useIsraelTimeGreeting";
 
 export default function DashboardView({user, clientsOnly = false}: {user: CurrentUser; clientsOnly?: boolean}) {
   const [clients, setClients] = useState<Client[]>([]);
@@ -12,6 +13,7 @@ export default function DashboardView({user, clientsOnly = false}: {user: Curren
   const [status, setStatus] = useState("ALL");
   const [loanPurpose, setLoanPurpose] = useState("ALL");
   const [loading, setLoading] = useState(true);
+  const greeting = useIsraelTimeGreeting(user.firstName);
   const navigate = useNavigate();
   useEffect(() => { void api.clients().then((result) => setClients(result.items)).finally(() => setLoading(false)); }, []);
   const visibleClients = useMemo(() => clients.filter((client) => {
@@ -27,7 +29,7 @@ export default function DashboardView({user, clientsOnly = false}: {user: Curren
   ];
 
   return <main className="advisor-page">
-    {!clientsOnly && <><section className="advisor-hero"><div><span className="eyebrow">בוקר טוב, {user.firstName}</span><h1>ברוך הבא ללוח הבקרה</h1><p>מבט מרוכז על הלקוחות, התיקים וההצעות שלך במקום אחד.</p></div><button type="button" className="primary-action" onClick={() => navigate("/advisor/new")}><Plus size={20} />לקוח חדש</button></section>
+    {!clientsOnly && <><section className="advisor-hero"><div><span className="eyebrow">{greeting}</span><h1>ברוך הבא ללוח הבקרה</h1><p>מבט מרוכז על הלקוחות, התיקים וההצעות שלך במקום אחד.</p></div><button type="button" className="primary-action" onClick={() => navigate("/advisor/new")}><Plus size={20} />לקוח חדש</button></section>
       <section className="stats-grid" aria-label="נתוני לוח הבקרה">{stats.map(({label, value, icon: Icon, tone}) => <article className="stat-card" key={label}><span className={`stat-icon ${tone}`}><Icon /></span><span><small>{label}</small><strong>{value}</strong></span></article>)}</section></>}
     <section className="content-card client-list-section">
       <div className="section-heading"><div><span className="eyebrow">ניהול תיקים</span><h2>{clientsOnly ? "לקוחות" : "לקוחות אחרונים"}</h2><p>חיפוש, סינון וכניסה מהירה לכל תיק לקוח.</p></div>{clientsOnly && <button type="button" className="primary-action" onClick={() => navigate("/advisor/new")}><Plus size={18} />לקוח חדש</button>}</div>

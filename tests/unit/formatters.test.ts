@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEAL_TYPES } from "../../src/domain/clientFields";
-import { emailServerAcceptedMessage, formatAdditionalIncomeType, formatClientStatus, formatCurrency, formatDate, formatDealType, formatEmploymentType, formatIsraelDateTime, formatMaritalStatus, formatPropertyType, formatRegion, maskEmailAddress } from "../../src/utils/formatters";
+import { emailServerAcceptedMessage, formatAdditionalIncomeType, formatClientStatus, formatCurrency, formatDate, formatDealType, formatEmploymentType, formatIsraelDateTime, formatIsraelTimeGreeting, formatMaritalStatus, formatPropertyType, formatRegion, getIsraelTimeGreeting, maskEmailAddress } from "../../src/utils/formatters";
 
 describe("Hebrew display formatters", () => {
   it("never exposes business enums", () => {
@@ -31,6 +31,32 @@ describe("Hebrew display formatters", () => {
     ["2026-10-24T22:30:00.000Z", "25/10/2026 01:30"]
   ])("formats %s in Asia/Jerusalem", (value, expected) => {
     expect(formatIsraelDateTime(value)).toBe(expected);
+  });
+
+  it.each([
+    ["2026-08-01T01:59:00.000Z", "לילה טוב"],
+    ["2026-08-01T02:00:00.000Z", "בוקר טוב"],
+    ["2026-08-01T08:59:00.000Z", "בוקר טוב"],
+    ["2026-08-01T09:00:00.000Z", "צהריים טובים"],
+    ["2026-08-01T14:59:00.000Z", "צהריים טובים"],
+    ["2026-08-01T15:00:00.000Z", "ערב טוב"],
+    ["2026-08-01T18:54:00.000Z", "ערב טוב"],
+    ["2026-08-01T19:59:00.000Z", "ערב טוב"],
+    ["2026-08-01T20:00:00.000Z", "לילה טוב"]
+  ])("uses the correct Israel-time greeting at %s", (value, expected) => {
+    expect(getIsraelTimeGreeting(value)).toBe(expected);
+  });
+
+  it("formats the greeting with a comma and remains independent of the host time zone", () => {
+    const previousTimeZone = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      expect(formatIsraelTimeGreeting(" גיא ", "2026-08-01T18:54:00.000Z")).toBe("ערב טוב, גיא");
+      expect(getIsraelTimeGreeting("2026-01-15T19:54:00.000Z")).toBe("ערב טוב");
+      expect(getIsraelTimeGreeting("2026-07-15T18:54:00.000Z")).toBe("ערב טוב");
+    } finally {
+      process.env.TZ = previousTimeZone;
+    }
   });
 
   it("keeps date-only values stable and masks email delivery guidance", () => {
