@@ -200,3 +200,17 @@ The restricted SUPER_ADMIN-only state described above was the pre-opening state 
 - Drizzle migration check: passed.
 - Local Docker stack: all seven development services healthy.
 - Dependency audit retains advisories in upstream React Router RSC functionality and Firebase Admin transitive dependencies. SynCash is a BrowserRouter SPA and does not use React Server Components; forced dependency downgrades were rejected because they introduced more high-severity advisories.
+
+### Controlled Production deployment
+
+- Release `4f93feff706a79dc53d734768a60938897b9fe10` was deployed through the controlled release script.
+- The first deployment attempt stopped before build or migration after the encrypted backup completed because MinIO staging files were owned by a container user. The cleanup now uses the existing restricted `sudo` deployment permission, and the verified staging directory was removed without touching backup archives or application data.
+- The successful attempt created and checksum-verified an encrypted pre-deployment backup, validated the Google Secret Manager provider, applied migration `0011`, rebuilt the API and frontend and completed the Production healthcheck.
+- All 11 new database constraints exist. A post-migration read-only audit found zero invalid negative records.
+- Production retained 3 client records and 18 document records across the deployment. No seed, reset, cleanup or test-data insertion ran against Production.
+- The two latest original lender invitation jobs remain `SENT`, each with exactly one attempt and a message identifier; both have matching `email_logs` entries. No failed-message resend record was created.
+- HTTPS and direct SPA refresh checks passed for `/`, `/login`, `/register/advisor`, `/verify-email`, `/advisor`, `/admin` and `/admin/email-logs`.
+- A real Chromium smoke check at 390, 768 and 1440 pixel widths rendered the login, registration, verification and protected-route login shell with zero console errors.
+- Unauthenticated client and Admin email-log API calls return `401`; the health endpoint returns `200`.
+- API and Worker logs contain zero unhandled, internal-server, authentication, encryption, secret-provider or failed-job error markers in the deployment window.
+- PostgreSQL, Redis, MinIO, API, Frontend and Worker are healthy. Public registration and the external portals remain in their previously approved Production state.
