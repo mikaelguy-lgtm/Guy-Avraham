@@ -214,3 +214,40 @@ The restricted SUPER_ADMIN-only state described above was the pre-opening state 
 - Unauthenticated client and Admin email-log API calls return `401`; the health endpoint returns `200`.
 - API and Worker logs contain zero unhandled, internal-server, authentication, encryption, secret-provider or failed-job error markers in the deployment window.
 - PostgreSQL, Redis, MinIO, API, Frontend and Worker are healthy. Public registration and the external portals remain in their previously approved Production state.
+
+## Israel Greeting and Brevo Final Verification - 2026-08-01
+
+### Israel-time dashboard greeting
+
+- Root cause: the advisor dashboard rendered a hard-coded morning greeting and did not calculate the current business time zone.
+- Release `5029f52db4f55e5b6c0ac4bfa3aea15f650210c1` introduced one centralized `Asia/Jerusalem` greeting utility and a lifecycle hook used by Advisor, Admin, SUPER_ADMIN and Lender dashboards.
+- The greeting refreshes on initial render, at the next minute boundary, when the tab becomes visible and when the window regains focus.
+- Boundary tests passed for `04:59`, `05:00`, `11:59`, `12:00`, `17:59`, `18:00`, `21:54`, `22:59` and `23:00`; `21:54` resolves to `ערב טוב`.
+- Tests also passed across Israel daylight-saving and standard time while the browser was configured to a non-Israel time zone.
+
+### Controlled Brevo deliveries
+
+- API and Worker resolved the active Brevo configuration dynamically. The active transport uses the approved Brevo relay, port `587`, STARTTLS, `notifications@syncash.co.il` as From and `support@syncash.co.il` as Reply-To.
+- Exactly two controlled real messages were sent: one advisor email-verification message and one lender case invitation.
+- Both messages created a single sanitized `email_logs` record with a message identifier. The lender outbox completed with status `SENT`, one attempt, no retry and no duplicate row.
+- Brevo recorded `Sent` and `Delivered` events for both messages. Gmail received both in the primary Inbox rather than Spam, and subsequent `First opening`/`Opened` events were visible.
+- The advisor verification link completed successfully through Firebase. The lender review link resolved successfully and returned only the masked case view.
+- A real Production OTP was intentionally not requested because it would have created a third email, contradicting the explicit two-message limit. The OTP and full portal flow remain covered by the passing local full-flow Playwright test.
+
+### Masked snapshot remediation
+
+- Controlled portal validation found that an unstructured home address without a comma could be treated as a residence city and copied into the masked snapshot.
+- Release `f122d440b162bc4882b4e67d53814abc4b2255ba` now extracts a residence city only from a clearly delimited, city-like final segment and applies a second defensive redaction before persisting a masked snapshot.
+- A regression test proves that a full address without a delimiter is never exposed and that numeric postal-code suffixes are rejected.
+- The temporary Production snapshot was sanitized and its masked PDF regenerated before the invitation link was used. Follow-up portal validation found no identity number, phone, email, employer, home address or exact property address.
+
+### Verification and cleanup
+
+- Typecheck and lint: passed.
+- Unit tests: 131 passed.
+- Integration tests: 108 passed.
+- Playwright E2E: 20 passed.
+- Production build and bundle safety scan: passed.
+- PostgreSQL, Redis, MinIO, API, Frontend and Worker are healthy; API health returns `ok` and API/Worker error-marker counts are zero.
+- The temporary Firebase advisor, PostgreSQL user/profile, client, company/contact, delivery records, notifications, audits, email logs, outbox rows, documents and MinIO objects were removed after verification. Post-cleanup marker counts are zero.
+- Public registration, email delivery and external portals remain enabled in their previously approved state. No SMTP credential, active link, token or secret value was written to this report.
