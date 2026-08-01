@@ -43,7 +43,7 @@ export class CaseRedactionService {
       borrowers: source.borrowers.map((borrower) => ({
         label: `לווה ${borrower.order}`,
         age: borrower.age,
-        residenceCity: borrower.residenceCity,
+        residenceCity: sanitize(borrower.residenceCity) ?? "",
         maritalStatus: borrower.maritalStatus,
         numberOfChildren: borrower.numberOfChildren,
         childrenAges: borrower.childrenAges,

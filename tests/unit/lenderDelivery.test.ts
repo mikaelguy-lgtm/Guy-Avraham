@@ -1,6 +1,7 @@
 import {describe, expect, it} from "vitest";
 import type {FullCaseSnapshot} from "../../src/domain/lenderDelivery";
 import {CaseRedactionService} from "../../src/services/caseRedaction";
+import {residenceCityFromAddress} from "../../src/utils/address";
 import {DeliveryTokenService} from "../../src/services/deliveryTokens";
 import {IsraelBusinessCalendarService, israelDateKey} from "../../src/services/israelBusinessCalendar";
 import {collectDeliveryBlockers} from "../../src/domain/deliveryPreflight";
@@ -69,6 +70,18 @@ describe("CaseRedactionService", () => {
     expect(serialized).toContain("1250000");
     expect(result.redactionReport.categories).toEqual(expect.arrayContaining(["FULL_NAME", "IDENTITY_NUMBER", "EMPLOYER", "ADVISOR_DETAILS"]));
     expect(JSON.stringify(result.redactionReport)).not.toContain("123456789");
+  });
+
+  it("never exposes a full home address as the residence city", () => {
+    const unsafe = structuredClone(fullSnapshot);
+    unsafe.borrowers[0].address = "כתובת בדיקה זמנית";
+    unsafe.borrowers[0].residenceCity = "כתובת בדיקה זמנית";
+    const serialized = JSON.stringify(new CaseRedactionService().redact(unsafe).maskedSnapshot);
+
+    expect(serialized).not.toContain("כתובת בדיקה זמנית");
+    expect(residenceCityFromAddress("כתובת בדיקה זמנית")).toBe("");
+    expect(residenceCityFromAddress("רחוב הרצל 1, תל אביב")).toBe("תל אביב");
+    expect(residenceCityFromAddress("רחוב הרצל 1, תל אביב 61000")).toBe("");
   });
 });
 

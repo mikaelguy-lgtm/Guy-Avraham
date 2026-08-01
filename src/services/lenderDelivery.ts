@@ -8,6 +8,7 @@ import type {
 } from "../domain/lenderDelivery.js";
 import {DeliveryError} from "../domain/lenderDelivery.js";
 import {calculateAge} from "../utils/age.js";
+import {residenceCityFromAddress} from "../utils/address.js";
 import {getDocumentDisplayName} from "../utils/documentDisplay.js";
 import {formatIsraelDateTime, maskEmailAddress} from "../utils/formatters.js";
 import {collectDeliveryBlockers} from "../domain/deliveryPreflight.js";
@@ -266,7 +267,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       const dateOfBirth = this.decrypt(row.date_of_birth_encrypted) || (row.birth_date ? new Date(row.birth_date).toISOString().slice(0, 10) : "");
       const address = this.decrypt(row.address_encrypted);
       return {
-        order: Number(row.borrower_order), firstName: this.decrypt(row.first_name_encrypted), lastName: this.decrypt(row.last_name_encrypted), identityNumber: this.decrypt(row.identity_number_encrypted), dateOfBirth, age: calculateAge(dateOfBirth), phone: this.decrypt(row.phone_encrypted), email: this.decrypt(row.email_encrypted), address, residenceCity: address.split(",").at(-1)?.trim() ?? "", maritalStatus: row.marital_status, numberOfChildren: Number(row.number_of_children), childrenAges: row.children_ages ?? [],
+        order: Number(row.borrower_order), firstName: this.decrypt(row.first_name_encrypted), lastName: this.decrypt(row.last_name_encrypted), identityNumber: this.decrypt(row.identity_number_encrypted), dateOfBirth, age: calculateAge(dateOfBirth), phone: this.decrypt(row.phone_encrypted), email: this.decrypt(row.email_encrypted), address, residenceCity: residenceCityFromAddress(address), maritalStatus: row.marital_status, numberOfChildren: Number(row.number_of_children), childrenAges: row.children_ages ?? [],
         employment: {employmentType: row.employment_type, employerName: this.decrypt(row.employer_name_encrypted), jobTitle: row.job_title ?? "", employmentSeniorityYears: Number(row.employment_seniority_years), monthlyNetIncome: Number(row.monthly_net_income), hasAdditionalIncome: Boolean(row.has_additional_income), additionalIncomeType: row.additional_income_type, additionalIncomeAmount: Number(row.additional_income_amount), additionalIncomeDescription: this.decrypt(row.additional_income_description_encrypted) || null},
         liabilities: liabilities.filter((liability) => liability.scope === "BORROWER" && liability.borrowerOrder === Number(row.borrower_order))
       };
