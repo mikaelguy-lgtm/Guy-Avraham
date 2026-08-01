@@ -9,6 +9,7 @@ import type {
 import {DeliveryError} from "../domain/lenderDelivery.js";
 import {calculateAge} from "../utils/age.js";
 import {getDocumentDisplayName} from "../utils/documentDisplay.js";
+import {formatIsraelDateTime, maskEmailAddress} from "../utils/formatters.js";
 import {collectDeliveryBlockers} from "../domain/deliveryPreflight.js";
 import type {EncryptionService} from "../utils/crypto.js";
 import type {EmailService} from "./email.js";
@@ -119,7 +120,7 @@ interface DeliveryServiceOptions {
 
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
 const safeText = (value: unknown, maximum = 255) => String(value ?? "").replace(/[\r\n\t]/g, " ").slice(0, maximum);
-const localDateTime = (value: Date) => new Intl.DateTimeFormat("he-IL", {timeZone: "Asia/Jerusalem", dateStyle: "full", timeStyle: "short"}).format(value);
+const localDateTime = formatIsraelDateTime;
 const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 
 export class PostgresLenderDeliveryService implements LenderDeliveryApplication {
@@ -676,30 +677,35 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     } catch (error) { await connection.query("rollback"); throw error; } finally { connection.release(); }
   }
 
-  private async createOtp(row: Row, purpose: "INTEREST_DECISION" | "PORTAL_ACCESS", context: DeliveryContext, accessGrantId?: number): Promise<{expiresAt: Date}> {
+  private async createOtp(row: Row, purpose: "INTEREST_DECISION" | "PORTAL_ACCESS", context: DeliveryContext, accessGrantId?: number): Promise<{status: "SMTP_ACCEPTED" | "QUEUED"; expiresAt: Date; recipientMasked: string; lastSentAt: Date; resendAvailableAt: Date; attemptsRemaining: number}> {
     const now = this.now();
     const recent = await this.pool.query("select count(*)::int count,max(last_sent_at) last_sent from otp_challenges where contact_id=$1 and purpose=$2 and created_at >= $3", [row.contact_id, purpose, new Date(now.getTime() - 3_600_000)]);
     if (Number(recent.rows[0].count) >= 5) throw new DeliveryError("OTP_RATE_LIMITED", 429, "נשלחו יותר מדי קודי אימות. יש לנסות שוב מאוחר יותר.");
     if (recent.rows[0].last_sent && now.getTime() - new Date(recent.rows[0].last_sent).getTime() < 60_000) throw new DeliveryError("OTP_RESEND_TOO_SOON", 429, "ניתן לשלוח קוד חדש לאחר 60 שניות.");
     const nonce = this.tokens.createNonce(); const identity = `${row.submission_id}:${row.contact_id}`; const code = this.tokens.deriveOtp(purpose, identity, nonce); const expiresAt = new Date(now.getTime() + 10 * 60_000);
     const connection = await this.pool.connect();
+    let challengeId = 0;
     try {
       await connection.query("begin");
       await connection.query("update otp_challenges set cancelled_at=now(),updated_at=now() where company_submission_id=$1 and contact_id=$2 and purpose=$3 and used_at is null and cancelled_at is null", [row.submission_id, row.contact_id, purpose]);
       const challenge = await connection.query(`insert into otp_challenges(purpose,company_submission_id,contact_id,invitation_id,access_grant_id,code_hash,code_nonce,expires_at,last_sent_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id`, [purpose, row.submission_id, row.contact_id, row.invitation_id ?? null, accessGrantId ?? null, this.tokens.hash(code), nonce, expiresAt, now]);
-      await connection.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id,invitation_id) values($1,'OTP',$2,$3,'PENDING',$4,$5,$6)`, [`otp:${challenge.rows[0].id}`, row.contact_email, {challengeId: challenge.rows[0].id}, now, row.submission_id, row.invitation_id ?? null]);
+      challengeId = Number(challenge.rows[0].id);
+      await connection.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id,invitation_id) values($1,'OTP',$2,$3,'PENDING',$4,$5,$6)`, [`otp:${challengeId}`, row.contact_email, {challengeId}, now, row.submission_id, row.invitation_id ?? null]);
       if (purpose === "INTEREST_DECISION") await connection.query("update company_submissions set decision_status='PENDING_VERIFICATION',updated_at=now() where id=$1 and decision_status='PENDING'", [row.submission_id]);
       await this.event(connection, {submissionId: Number(row.submission_id), invitationId: row.invitation_id ? Number(row.invitation_id) : null, contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "OTP_SENT", metadata: {purpose}}, context);
       await connection.query("commit");
     } catch (error) { await connection.query("rollback"); throw error; } finally { connection.release(); }
-    this.scheduleJobs(); return {expiresAt};
+    await this.processOutbox();
+    const delivery = await this.pool.query("select status from email_outbox where idempotency_key=$1", [`otp:${challengeId}`]);
+    this.scheduleJobs();
+    return {status: delivery.rows[0]?.status === "SENT" ? "SMTP_ACCEPTED" : "QUEUED", expiresAt, recipientMasked: maskEmailAddress(row.contact_email), lastSentAt: now, resendAvailableAt: new Date(now.getTime() + 60_000), attemptsRemaining: Math.max(0, 5 - Number(recent.rows[0].count) - 1)};
   }
 
   async startInterest(token: string, context: DeliveryContext): Promise<unknown> {
     const row = await this.reviewByToken(token); await this.ensureReviewAvailable(row, context);
     if (["INTERESTED", "NOT_INTERESTED"].includes(row.decision_status)) throw new DeliveryError("COMPANY_DECISION_ALREADY_FINALIZED", 409, "כבר התקבלה החלטה מטעם חברתכם עבור תיק זה.");
     await this.event(this.pool, {submissionId: Number(row.submission_id), invitationId: Number(row.invitation_id), contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "INTEREST_DECISION_STARTED"}, context);
-    const challenge = await this.createOtp(row, "INTEREST_DECISION", context); return {status: "OTP_SENT", expiresAt: challenge.expiresAt};
+    return this.createOtp(row, "INTEREST_DECISION", context);
   }
 
   async resendInterestCode(token: string, context: DeliveryContext): Promise<unknown> { return this.startInterest(token, context); }
@@ -765,7 +771,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
 
   async sendAccessCode(token: string, context: DeliveryContext): Promise<unknown> {
     const row = await this.accessByToken(token); this.ensureAccessAvailable(row);
-    const challenge = await this.createOtp(row, "PORTAL_ACCESS", context, Number(row.access_grant_id)); return {status: "OTP_SENT", expiresAt: challenge.expiresAt};
+    return this.createOtp(row, "PORTAL_ACCESS", context, Number(row.access_grant_id));
   }
 
   async verifyAccessCode(token: string, code: string, context: DeliveryContext): Promise<{sessionToken: string; expiresAt: Date}> {
@@ -870,9 +876,16 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   async getAdminSubmission(publicId: string): Promise<unknown> {
     const submission = await this.pool.query(`select cs.*,cs.public_id submission_public_id,l.name company_name,cv.version_number,cv.masked_snapshot,c.public_case_number from company_submissions cs join lenders l on l.id=cs.company_id join case_versions cv on cv.id=cs.case_version_id join clients c on c.id=cv.client_id where cs.public_id=$1`, [publicId]);
     if (!submission.rows[0]) throw new DeliveryError("SUBMISSION_NOT_FOUND", 404, "השליחה לא נמצאה."); const row = submission.rows[0];
-    const invitations = await this.pool.query(`select sci.public_id, sci.status,sci.email_sent_at,sci.email_failed_at,sci.opened_at,sci.last_opened_at,sci.open_count,sci.masked_pdf_viewed_at,sci.masked_pdf_downloaded_at,sci.reminder_one_sent_at,sci.reminder_two_sent_at,sci.closed_at,lc.first_name,lc.last_name,lc.role_title,lc.email from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id where sci.company_submission_id=$1 order by lc.is_primary desc,lc.id`, [row.id]);
+    const invitations = await this.pool.query(`select sci.public_id,sci.status,sci.created_at,sci.email_sent_at,sci.email_failed_at,sci.opened_at,sci.last_opened_at,sci.open_count,sci.masked_pdf_viewed_at,sci.masked_pdf_downloaded_at,sci.reminder_one_sent_at,sci.reminder_two_sent_at,sci.closed_at,lc.first_name,lc.last_name,lc.role_title,lc.email,
+      latest.status smtp_status,latest.attempts,latest.created_at outbox_created_at,latest.updated_at last_attempt_at,latest.sanitized_error,latest.message_id,latest.id latest_outbox_id,
+      coalesce(outbox_count.total,0)::int outbox_count,latest_event.request_id
+      from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id
+      left join lateral(select eo.* from email_outbox eo where eo.invitation_id=sci.id order by eo.created_at desc limit 1) latest on true
+      left join lateral(select count(*)::int total,count(*) filter(where eo.status='SENT' and eo.message_id is not null)::int successful from email_outbox eo where eo.invitation_id=sci.id) outbox_count on true
+      left join lateral(select se.request_id from submission_events se where se.contact_invitation_id=sci.id and se.event_type in('EMAIL_SENT','EMAIL_FAILED','EMAIL_QUEUED') order by se.created_at desc limit 1) latest_event on true
+      where sci.company_submission_id=$1 order by lc.is_primary desc,lc.id`, [row.id]);
     const timeline = await this.pool.query("select event_type,actor_type,metadata_safe,created_at,request_id from submission_events where company_submission_id=$1 order by created_at", [row.id]);
-    return {...this.publicSubmission(row), publicCaseNumber: row.public_case_number, maskedSnapshot: row.masked_snapshot, invitations: invitations.rows.map((item) => ({publicId: item.public_id, status: item.status, contactName: `${item.first_name} ${item.last_name}`, contactRole: item.role_title, contactEmail: item.email, emailSentAt: item.email_sent_at, emailFailedAt: item.email_failed_at, openedAt: item.opened_at, lastOpenedAt: item.last_opened_at, openCount: Number(item.open_count), maskedPdfViewedAt: item.masked_pdf_viewed_at, maskedPdfDownloadedAt: item.masked_pdf_downloaded_at, reminderOneSentAt: item.reminder_one_sent_at, reminderTwoSentAt: item.reminder_two_sent_at, closedAt: item.closed_at})), timeline: timeline.rows.map((item) => ({type: item.event_type, actorType: item.actor_type, metadata: item.metadata_safe, createdAt: item.created_at, requestId: item.request_id}))};
+    return {...this.publicSubmission(row), publicCaseNumber: row.public_case_number, maskedSnapshot: row.masked_snapshot, invitations: invitations.rows.map((item) => ({publicId: item.public_id, status: item.status, contactName: `${item.first_name} ${item.last_name}`, contactRole: item.role_title, recipientMasked: maskEmailAddress(item.email), createdAt: item.created_at, emailSentAt: item.email_sent_at, emailFailedAt: item.email_failed_at, lastAttemptAt: item.last_attempt_at, smtpStatus: item.smtp_status ?? "NOT_CREATED", attempts: Number(item.attempts ?? 0), resent: Number(item.outbox_count ?? 0) > 1, safeFailureReason: item.sanitized_error ?? null, requestId: item.request_id ?? (item.latest_outbox_id ? `job-${item.latest_outbox_id}` : null), resendEligible: item.status === "FAILED" && Number(item.successful ?? 0) === 0, openedAt: item.opened_at, lastOpenedAt: item.last_opened_at, openCount: Number(item.open_count), maskedPdfViewedAt: item.masked_pdf_viewed_at, maskedPdfDownloadedAt: item.masked_pdf_downloaded_at, reminderOneSentAt: item.reminder_one_sent_at, reminderTwoSentAt: item.reminder_two_sent_at, closedAt: item.closed_at})), timeline: timeline.rows.map((item) => ({type: item.event_type, actorType: item.actor_type, metadata: item.metadata_safe, createdAt: item.created_at, requestId: item.request_id}))};
   }
 
   async getAdminPdf(publicId: string, kind: "masked" | "full", actor: AdminDeliveryActor, context: DeliveryContext): Promise<{body: Buffer; filename: string}> {
@@ -896,10 +909,14 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       await this.pool.query("update company_submissions set decision_status='CANCELLED',cancelled_at=now(),cancellation_reason=$2,updated_at=now() where id=$1 and decision_status in('PENDING','PENDING_VERIFICATION')", [row.id, safeText(values.reason ?? "בוטל על ידי מנהל")]); await this.pool.query("update submission_contact_invitations set status='CLOSED',closed_at=now(),closed_reason='ADMIN_CANCELLED',updated_at=now() where company_submission_id=$1 and closed_at is null", [row.id]); await this.event(this.pool, {submissionId: Number(row.id), actorType: "ADMIN", actorId: actor.userId, type: "INVITATION_CANCELLED"}, context);
     } else if (action === "send-reminder" || action === "resend-failed") {
       if (action === "send-reminder" && (!(["PENDING", "PENDING_VERIFICATION"].includes(row.decision_status)) || new Date(row.response_deadline_at).getTime() <= this.now().getTime())) throw new DeliveryError("REMINDER_NOT_AVAILABLE", 409, "לא ניתן לשלוח תזכורת לאחר החלטה או לאחר תום מועד התגובה.");
-      const filter = action === "resend-failed" ? "and sci.status='FAILED'" : "and sci.closed_at is null";
-      const invitations = await this.pool.query(`select sci.id,lc.email from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id where sci.company_submission_id=$1 ${filter}`, [row.id]);
-      for (const invitation of invitations.rows) await this.pool.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id,invitation_id) values($1,$2,$3,$4,'PENDING',now(),$5,$6)`, [`admin:${action}:${invitation.id}:${randomUUID()}`, action === "send-reminder" ? "LENDER_REMINDER" : "LENDER_INITIAL", invitation.email, {invitationId: invitation.id, manual: true}, row.id, invitation.id]);
-      if (action === "resend-failed") await this.pool.query("update submission_contact_invitations set status='QUEUED',email_failed_at=null,email_failure_reason=null,updated_at=now() where company_submission_id=$1 and status='FAILED'", [row.id]);
+      const filter = action === "resend-failed" ? "and sci.status='FAILED' and not exists(select 1 from email_outbox successful where successful.invitation_id=sci.id and successful.status='SENT' and successful.message_id is not null)" : "and sci.closed_at is null";
+      const invitations = await this.pool.query(`select sci.id,lc.email,(select failed.id from email_outbox failed where failed.invitation_id=sci.id and failed.status='FAILED' order by failed.created_at desc limit 1) failed_outbox_id from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id where sci.company_submission_id=$1 ${filter}`, [row.id]);
+      if (action === "resend-failed" && invitations.rows.length === 0) throw new DeliveryError("RESEND_NOT_AVAILABLE", 409, "אין הודעה שנכשלה וזמינה לשליחה מחדש.");
+      for (const invitation of invitations.rows) {
+        const idempotencyKey = action === "resend-failed" ? `admin:resend-failed:${invitation.id}:${invitation.failed_outbox_id ?? "missing"}` : `admin:${action}:${invitation.id}:${randomUUID()}`;
+        const queued = await this.pool.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id,invitation_id) values($1,$2,$3,$4,'PENDING',now(),$5,$6) on conflict(idempotency_key) do nothing returning id`, [idempotencyKey, action === "send-reminder" ? "LENDER_REMINDER" : "LENDER_INITIAL", invitation.email, {invitationId: invitation.id, manual: true}, row.id, invitation.id]);
+        if (action === "resend-failed" && queued.rows[0]) await this.pool.query("update submission_contact_invitations set status='QUEUED',email_failed_at=null,email_failure_reason=null,updated_at=now() where id=$1 and status='FAILED'", [invitation.id]);
+      }
     } else if (action === "reissue") {
       const deadline = (await this.calendar()).calculateResponseDeadline(this.now()); const invitations = await this.pool.query("select sci.id,sci.public_id,sci.contact_id,lc.email from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id where sci.company_submission_id=$1", [row.id]);
       await this.pool.query("update company_submissions set decision_status='PENDING',access_status='NONE',response_deadline_at=$2,cancelled_at=null,cancellation_reason=null,updated_at=now() where id=$1", [row.id, deadline]);
@@ -945,12 +962,29 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       const claimed = await this.pool.query("update email_outbox set status='PROCESSING',locked_at=now(),attempts=attempts+1,updated_at=now() where id=$1 and status='PENDING' returning *", [item.id]); if (!claimed.rows[0]) continue;
       try {
         const rendered = await this.outboxContent(claimed.rows[0]); const sent = await this.email.send(item.recipient, rendered.content.subject, rendered.content.html, {text: rendered.content.text});
-        await this.pool.query("update email_outbox set status='SENT',sent_at=now(),message_id=$2,locked_at=null,updated_at=now() where id=$1", [item.id, sent.messageId]); await this.pool.query("insert into email_logs(recipient,template,message_id,status,sent_at) values($1,$2,$3,'SENT',now())", [item.recipient, item.template, sent.messageId]);
+        await this.pool.query("update email_outbox set status='SENT',sent_at=now(),message_id=$2,locked_at=null,updated_at=now() where id=$1", [item.id, sent.messageId]); await this.pool.query("insert into email_logs(recipient,template,message_id,status,request_id,sent_at) values($1,$2,$3,'SENT',$4,now())", [item.recipient, item.template, sent.messageId, `job-${item.id}`]);
         if (rendered.invitationId) { await this.pool.query("update submission_contact_invitations set status=case when status='OPENED' then status else 'SENT' end,email_sent_at=now(),email_failed_at=null,email_failure_reason=null,updated_at=now() where id=$1", [rendered.invitationId]); if (rendered.submissionId) await this.refreshDeliveryStatus(rendered.submissionId); }
         if (rendered.submissionId) await this.event(this.pool, {submissionId: rendered.submissionId, invitationId: rendered.invitationId, actorType: "SYSTEM", type: item.template === "LENDER_REMINDER" ? "REMINDER_SENT" : "EMAIL_SENT", metadata: {template: item.template}}, {requestId: `job-${item.id}`});
       } catch {
-        const attempts = Number(claimed.rows[0].attempts); const final = attempts >= 3; await this.pool.query("update email_outbox set status=$2,available_at=$3,locked_at=null,sanitized_error=$4,updated_at=now() where id=$1", [item.id, final ? "FAILED" : "PENDING", new Date(this.now().getTime() + Math.pow(2, attempts) * 60_000), sanitizeEmailError()]); await this.pool.query("insert into email_logs(recipient,template,status,sanitized_error,failed_at) values($1,$2,'FAILED',$3,now())", [item.recipient, item.template, sanitizeEmailError()]);
-        if (final && item.invitation_id) { await this.pool.query("update submission_contact_invitations set status='FAILED',email_failed_at=now(),email_failure_reason=$2,updated_at=now() where id=$1", [item.invitation_id, sanitizeEmailError()]); if (item.company_submission_id) { const submissionId = Number(item.company_submission_id); await this.refreshDeliveryStatus(submissionId); await this.event(this.pool, {submissionId, invitationId: Number(item.invitation_id), actorType: "SYSTEM", type: "EMAIL_FAILED", metadata: {template: item.template}}, {requestId: `job-${item.id}`}); const advisor = await this.pool.query(`select u.id,u.email,cs.advisor_id,cv.client_id,cs.public_id from company_submissions cs join case_versions cv on cv.id=cs.case_version_id join advisor_profiles ap on ap.id=cs.advisor_id join users u on u.id=ap.user_id where cs.id=$1`, [submissionId]); if (advisor.rows[0]) { await this.pool.query("insert into notifications(user_id,type,title,body) values($1,'DELIVERY_FAILED','שליחת הזמנה לחברת מימון נכשלה','ניתן לצפות בפרטים המסוננים במסך תגובות החברות.')", [advisor.rows[0].id]); await this.pool.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id) values($1,'ADVISOR_DELIVERY_FAILURE',$2,$3,'PENDING',now(),$4) on conflict(idempotency_key) do nothing`, [`advisor-delivery-failure:${submissionId}:${item.invitation_id}`, advisor.rows[0].email, {submissionId}, submissionId]); this.broker.publish({type: "DELIVERY_FAILED", advisorId: Number(advisor.rows[0].advisor_id), clientId: Number(advisor.rows[0].client_id), submissionPublicId: advisor.rows[0].public_id}); } } }
+        const attempts = Number(claimed.rows[0].attempts);
+        const final = attempts >= 3;
+        await this.pool.query("update email_outbox set status=$2,available_at=$3,locked_at=null,sanitized_error=$4,updated_at=now() where id=$1", [item.id, final ? "FAILED" : "PENDING", new Date(this.now().getTime() + Math.pow(2, attempts) * 60_000), sanitizeEmailError()]);
+        await this.pool.query("insert into email_logs(recipient,template,status,sanitized_error,request_id,failed_at) values($1,$2,'FAILED',$3,$4,now())", [item.recipient, item.template, sanitizeEmailError(), `job-${item.id}`]);
+        if (final && item.invitation_id) {
+          const failedInvitation = await this.pool.query(`update submission_contact_invitations sci set status='FAILED',email_failed_at=now(),email_failure_reason=$2,updated_at=now()
+            where sci.id=$1 and not exists(select 1 from email_outbox successful where successful.invitation_id=sci.id and successful.status='SENT' and successful.message_id is not null) returning sci.id`, [item.invitation_id, sanitizeEmailError()]);
+          if (failedInvitation.rows[0] && item.company_submission_id) {
+            const submissionId = Number(item.company_submission_id);
+            await this.refreshDeliveryStatus(submissionId);
+            await this.event(this.pool, {submissionId, invitationId: Number(item.invitation_id), actorType: "SYSTEM", type: "EMAIL_FAILED", metadata: {template: item.template}}, {requestId: `job-${item.id}`});
+            const advisor = await this.pool.query(`select u.id,u.email,cs.advisor_id,cv.client_id,cs.public_id from company_submissions cs join case_versions cv on cv.id=cs.case_version_id join advisor_profiles ap on ap.id=cs.advisor_id join users u on u.id=ap.user_id where cs.id=$1`, [submissionId]);
+            if (advisor.rows[0]) {
+              await this.pool.query("insert into notifications(user_id,type,title,body) values($1,'DELIVERY_FAILED','שליחת הזמנה לחברת מימון נכשלה','ניתן לצפות בפרטים המסוננים במסך תגובות החברות.')", [advisor.rows[0].id]);
+              await this.pool.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id) values($1,'ADVISOR_DELIVERY_FAILURE',$2,$3,'PENDING',now(),$4) on conflict(idempotency_key) do nothing`, [`advisor-delivery-failure:${submissionId}:${item.invitation_id}`, advisor.rows[0].email, {submissionId}, submissionId]);
+              this.broker.publish({type: "DELIVERY_FAILED", advisorId: Number(advisor.rows[0].advisor_id), clientId: Number(advisor.rows[0].client_id), submissionPublicId: advisor.rows[0].public_id});
+            }
+          }
+        }
       }
     }
   }

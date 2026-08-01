@@ -19,8 +19,7 @@ async function fillPersonal(page: Page, borrower: number, values: {firstName: st
   await page.getByLabel(`תאריך לידה - לווה ${borrower}`, {exact: true}).fill(values.birthDate);
   await page.getByLabel(`טלפון - לווה ${borrower}`, {exact: true}).fill(values.phone);
   await page.getByLabel(`דוא״ל - לווה ${borrower}`, {exact: true}).fill(values.email);
-  await page.getByLabel(`כתובת מגורים - לווה ${borrower}`, {exact: true}).fill("רחוב לווים 10, תל אביב");
-  await page.getByLabel(`מצב משפחתי - לווה ${borrower}`, {exact: true}).selectOption("MARRIED");
+  if (borrower === 1) await page.getByLabel("כתובת מגורים - לווה 1", {exact: true}).fill("רחוב לווים 10, תל אביב");
 }
 
 async function fillFinancial(page: Page, borrower: number, income: string) {
@@ -43,6 +42,9 @@ test("creates, reorders and edits a two-borrower household", async ({page, reque
     await page.getByText("ילד 1 — גיל").locator("..").getByRole("spinbutton").fill("7");
     await fillPersonal(page, 1, {firstName: "רוני", lastName: "כהן", identity: "111111118", birthDate: "1984-04-10", phone: "0501111111", email: "roni.multi@syncash.local"});
     await fillPersonal(page, 2, {firstName: "נועה", lastName: "כהן", identity: "222222226", birthDate: "1986-08-20", phone: "0502222222", email: "noa.multi@syncash.local"});
+    await expect(page.getByLabel(/מצב משפחתי - לווה/)).toHaveCount(0);
+    await expect(page.getByLabel("כתובת מגורים - לווה 2", {exact: true})).toHaveCount(0);
+    await expect(page.getByText("כתובת המגורים זהה לכתובת של לווה 1", {exact: true})).toBeVisible();
     await expect(page.getByLabel("גיל מחושב")).toHaveCount(2);
     await expect(page.getByLabel("גיל מחושב").nth(0)).toHaveValue(/\d+/);
     await expect(page.getByLabel("גיל מחושב").nth(1)).toHaveValue(/\d+/);
@@ -80,6 +82,7 @@ test("creates, reorders and edits a two-borrower household", async ({page, reque
     clientId = Number(new URL(page.url()).pathname.split("/").at(-1));
     await page.getByRole("button", {name: "פרטים אישיים", exact: true}).click();
     await expect(page.getByRole("heading", {name: "נועה כהן"})).toBeVisible();
+    await expect(page.getByText("רחוב לווים 10, תל אביב", {exact: true})).toHaveCount(2);
     await expect(page.getByText("7", {exact: true})).toBeVisible();
 
     await page.getByRole("button", {name: "עריכה", exact: true}).click();

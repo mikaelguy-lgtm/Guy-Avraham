@@ -36,7 +36,7 @@ export default function CompanyResponsesView({clientId}: {clientId: number}) {
     catch { setError("לא ניתן לטעון את ציר הזמן."); }
   };
   if (loading) return <div className="empty-state">טוען תגובות חברות…</div>;
-  return <div className="detail-section company-responses"><header className="section-heading compact"><div><h2>תגובות חברות</h2><p>סטטוס מסירה, החלטה וגישה מלאה לכל גרסת תיק שנשלחה.</p></div></header>
+  return <div className="detail-section company-responses"><header className="section-heading compact"><div><h2>תגובות חברות</h2><p>סטטוס SMTP, החלטה וגישה מלאה לכל גרסת תיק שנשלחה. “נשלח לשרת הדואר” אינו אישור מסירה לתיבה; מומלץ לנמען לבדוק גם ספאם, דואר זבל וקידומי מכירות.</p></div></header>
     {error && <p className="form-message error" role="alert">{error}</p>}
     {!items.length ? <div className="empty-state"><Building2 /><h3>טרם נשלח תיק לחברות מימון</h3><p>לאחר השליחה יופיעו כאן פתיחות, הורדות והחלטות בזמן אמת.</p></div> : <div className="response-card-grid">{items.map((item) => <article className="response-card" key={item.publicId}>
       <header><span className="lender-logo"><Building2 /></span><div><h3>{item.companyName}</h3><small>גרסה {item.versionNumber}</small></div><span className={`status-badge decision-${item.decisionStatus.toLowerCase()}`}>{decisionLabel[item.decisionStatus] ?? "ממתינה"}</span></header>

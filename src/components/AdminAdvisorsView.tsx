@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
 import type { AdvisorAdminRecord } from "../types";
 import { api } from "../utils/apiClient";
-import { formatDate, formatUserStatus } from "../utils/formatters";
+import { emailServerAcceptedMessage, formatDate, formatUserStatus } from "../utils/formatters";
 
 export default function AdminAdvisorsView() {
   const [advisors, setAdvisors] = useState<AdvisorAdminRecord[]>([]);
   const [selectedAdvisor, setSelectedAdvisor] = useState<AdvisorAdminRecord | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const [message, setMessage] = useState("");
+  const [resendCooldown, setResendCooldown] = useState<{advisorId: number; availableAt: number} | null>(null);
+  const [now, setNow] = useState(Date.now());
   const load = async () => setAdvisors(await api.adminAdvisors());
 
   useEffect(() => { void load(); }, []);
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer); }, []);
 
   const updateStatus = async (advisor: AdvisorAdminRecord, status: "ACTIVE" | "SUSPENDED" | "DISABLED") => {
     setBusy(advisor.id);
@@ -31,7 +34,8 @@ export default function AdminAdvisorsView() {
     setMessage("");
     try {
       await api.adminResendAdvisorVerification(advisor.id);
-      setMessage("מייל האימות נשלח מחדש.");
+      setResendCooldown({advisorId: advisor.id, availableAt: Date.now() + 60_000});
+      setMessage(emailServerAcceptedMessage(advisor.email));
     } catch {
       setMessage("לא ניתן לשלוח כעת מייל אימות נוסף.");
     } finally {
@@ -65,7 +69,7 @@ export default function AdminAdvisorsView() {
             {advisor.status !== "ACTIVE" && <button className="primary-action" disabled={busy === advisor.id || !advisor.emailVerified} onClick={() => void updateStatus(advisor, "ACTIVE")}>הפעלה</button>}
             {advisor.status === "ACTIVE" && <button className="secondary-action" disabled={busy === advisor.id} onClick={() => void updateStatus(advisor, "SUSPENDED")}>השעיה</button>}
             {advisor.status !== "DISABLED" && <button className="secondary-action danger" disabled={busy === advisor.id} onClick={() => void updateStatus(advisor, "DISABLED")}>השבתה</button>}
-            {!advisor.emailVerified && <button className="ghost-action" disabled={busy === advisor.id} onClick={() => void resend(advisor)}>שליחת אימות מחדש</button>}
+            {!advisor.emailVerified && <button className="ghost-action" disabled={busy === advisor.id || (resendCooldown?.advisorId === advisor.id && resendCooldown.availableAt > now)} onClick={() => void resend(advisor)}>{resendCooldown?.advisorId === advisor.id && resendCooldown.availableAt > now ? `שליחת המייל מחדש בעוד ${Math.ceil((resendCooldown.availableAt - now) / 1000)} שניות` : "שליחת המייל מחדש"}</button>}
           </div>
         </article>)}
       </section>

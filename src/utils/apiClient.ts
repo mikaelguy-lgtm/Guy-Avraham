@@ -1,7 +1,7 @@
 import { createUserWithEmailAndPassword, deleteUser, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import {requireFrontendConfig} from "../config/frontend";
-import type { AdvisorAdminRecord, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LoanOffer, MissingRequiredDocument, NotificationRecord } from "../types";
+import type { AdminEmailLogRecord, AdvisorAdminRecord, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LoanOffer, MissingRequiredDocument, NotificationRecord } from "../types";
 import type { AdvisorRegistrationInput } from "../domain/advisorRegistration";
 
 const API_URL = requireFrontendConfig().apiBaseUrl;
@@ -201,6 +201,7 @@ export const api = {
   markAllNotificationsRead: () => authFetch<{read: true; count: number}>("/api/notifications/read-all", {method: "PATCH"}),
   updateAdvisorProfile: (values: {firstName: string; lastName: string; phone: string; businessName: string}) => authFetch<CurrentUser>("/api/advisor/profile", {method: "PATCH", body: JSON.stringify(values)}),
   adminAdvisors: () => authFetch<AdvisorAdminRecord[]>("/api/admin/advisors"),
+  adminEmailLogs: () => authFetch<AdminEmailLogRecord[]>("/api/admin/email-logs"),
   updateAdvisorStatus: (id: number, status: "ACTIVE" | "SUSPENDED" | "DISABLED") => authFetch<AdvisorAdminRecord>(`/api/admin/advisors/${id}/status`, {method: "PATCH", body: JSON.stringify({status})}),
   adminResendAdvisorVerification: (id: number) => authFetch<{success: true; verificationEmailSent: true}>(`/api/admin/advisors/${id}/resend-verification`, {method: "POST"}),
   deliveryCompanies: (clientId: number) => authFetch<DeliveryCompany[]>(`/api/advisor/financing-companies?clientId=${clientId}`),
@@ -228,11 +229,11 @@ export const api = {
   externalReview: (token: string) => externalFetch<ExternalReview>(`/api/external/review/${encodeURIComponent(token)}`),
   externalMaskedPdf: (token: string, download = false) => externalBlob(`/api/external/review/${encodeURIComponent(token)}/masked-pdf${download ? "?download=1" : ""}`),
   externalNotInterested: (token: string, csrfToken: string) => externalFetch<{decisionStatus: string}>(`/api/external/review/${encodeURIComponent(token)}/not-interested`, {method: "POST", body: "{}"}, csrfToken),
-  externalStartInterest: (token: string, csrfToken: string) => externalFetch<{status: string; expiresAt: string}>(`/api/external/review/${encodeURIComponent(token)}/interested/start`, {method: "POST", body: "{}"}, csrfToken),
-  externalResendInterest: (token: string, csrfToken: string) => externalFetch<{status: string; expiresAt: string}>(`/api/external/review/${encodeURIComponent(token)}/interested/resend-code`, {method: "POST", body: "{}"}, csrfToken),
+  externalStartInterest: (token: string, csrfToken: string) => externalFetch<{status: "SMTP_ACCEPTED" | "QUEUED"; expiresAt: string; recipientMasked: string; lastSentAt: string; resendAvailableAt: string; attemptsRemaining: number}>(`/api/external/review/${encodeURIComponent(token)}/interested/start`, {method: "POST", body: "{}"}, csrfToken),
+  externalResendInterest: (token: string, csrfToken: string) => externalFetch<{status: "SMTP_ACCEPTED" | "QUEUED"; expiresAt: string; recipientMasked: string; lastSentAt: string; resendAvailableAt: string; attemptsRemaining: number}>(`/api/external/review/${encodeURIComponent(token)}/interested/resend-code`, {method: "POST", body: "{}"}, csrfToken),
   externalVerifyInterest: (token: string, code: string, csrfToken: string) => externalFetch<{decisionStatus: string; accessStatus: string; fullAccessExpiresAt: string}>(`/api/external/review/${encodeURIComponent(token)}/interested/verify`, {method: "POST", body: JSON.stringify({code})}, csrfToken),
   externalAccess: (token: string) => externalFetch<ExternalAccess>(`/api/external/access/${encodeURIComponent(token)}`),
-  externalSendAccessCode: (token: string, csrfToken: string) => externalFetch<{status: string; expiresAt: string}>(`/api/external/access/${encodeURIComponent(token)}/send-code`, {method: "POST", body: "{}"}, csrfToken),
+  externalSendAccessCode: (token: string, csrfToken: string) => externalFetch<{status: "SMTP_ACCEPTED" | "QUEUED"; expiresAt: string; recipientMasked: string; lastSentAt: string; resendAvailableAt: string; attemptsRemaining: number}>(`/api/external/access/${encodeURIComponent(token)}/send-code`, {method: "POST", body: "{}"}, csrfToken),
   externalVerifyAccessCode: (token: string, code: string, csrfToken: string) => externalFetch<{authenticated: true; expiresAt: string}>(`/api/external/access/${encodeURIComponent(token)}/verify-code`, {method: "POST", body: JSON.stringify({code})}, csrfToken),
   externalPortalCase: () => externalFetch<ExternalPortalCase>("/api/external/portal/case"),
   externalPortalDocuments: () => externalFetch<ExternalPortalDocument[]>("/api/external/portal/documents"),

@@ -75,4 +75,34 @@ describe("client input validation", () => {
   it("accepts bridge financing without region or requested term", () => {
     expect(clientInputSchema.parse({...completeInput, loanPurpose: "BRIDGE_FINANCING"}).loanPurpose).toBe("BRIDGE_FINANCING");
   });
+
+  it("accepts zero but rejects negative, signed and scientific numeric values", () => {
+    const zeroInput = {
+      ...completeInput,
+      property: {...completeInput.property, value: 0},
+      loanRequest: {requestedAmount: 0},
+      householdLiabilities: completeInput.householdLiabilities.map((item) => ({...item, currentBalance: 0, monthlyPayment: 0}))
+    };
+    expect(clientInputSchema.parse(zeroInput).property.value).toBe(0);
+    for (const value of [-1, "-0.01", "+1", "1e3"]) {
+      expect(() => clientInputSchema.parse({...completeInput, property: {...completeInput.property, value}})).toThrow();
+    }
+    for (const value of ["1.5", "+2", "1e1"]) {
+      expect(() => clientInputSchema.parse({...completeInput, numberOfBorrowers: value})).toThrow();
+    }
+  });
+
+  it("canonicalizes hidden married fields on the server", () => {
+    const manipulated = {
+      ...completeInput,
+      borrowers: completeInput.borrowers.map((item, index) => ({
+        ...item,
+        maritalStatus: index === 0 ? undefined : "SINGLE",
+        address: index === 0 ? "כתובת משותפת" : "כתובת שנשלחה ידנית"
+      }))
+    };
+    const parsed = clientInputSchema.parse(manipulated);
+    expect(parsed.borrowers.map((item) => item.maritalStatus)).toEqual(["MARRIED", "MARRIED"]);
+    expect(parsed.borrowers.map((item) => item.address)).toEqual(["כתובת משותפת", "כתובת משותפת"]);
+  });
 });

@@ -41,7 +41,7 @@ describe("ExternalBorrowerDetails", () => {
 
   it("renders complete verified borrower details with localized values and a long email", () => {
     const markup = renderToStaticMarkup(<ExternalBorrowerCard mode="FULL" borrower={borrower} index={0} borrowerRelationship="MARRIED" household={{numberOfChildren: 2, childrenAges: [4, 8]}} />);
-    for (const visible of ["דנה לוי", "123456789", "15.06.1985", "0501234567", borrower.email!, "רחוב סודי 1", "חברה סודית בע״מ", "22,500"]) expect(markup).toContain(visible);
+    for (const visible of ["דנה לוי", "123456789", "15/06/1985", "0501234567", borrower.email!, "רחוב סודי 1", "חברה סודית בע״מ", "22,500"]) expect(markup).toContain(visible);
     expect(markup).not.toMatch(/SALARIED|MARRIED|LOAN|RENTAL_INCOME/u);
     expect(markup).toContain("external-detail-field-wide");
   });

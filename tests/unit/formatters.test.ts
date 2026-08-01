@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEAL_TYPES } from "../../src/domain/clientFields";
-import { formatAdditionalIncomeType, formatClientStatus, formatCurrency, formatDealType, formatEmploymentType, formatMaritalStatus, formatPropertyType, formatRegion } from "../../src/utils/formatters";
+import { emailServerAcceptedMessage, formatAdditionalIncomeType, formatClientStatus, formatCurrency, formatDate, formatDealType, formatEmploymentType, formatIsraelDateTime, formatMaritalStatus, formatPropertyType, formatRegion, maskEmailAddress } from "../../src/utils/formatters";
 
 describe("Hebrew display formatters", () => {
   it("never exposes business enums", () => {
@@ -22,5 +22,23 @@ describe("Hebrew display formatters", () => {
 
   it("formats Israeli currency", () => {
     expect(formatCurrency(1_000_000)).toContain("1,000,000");
+  });
+
+  it.each([
+    ["2026-01-15T12:30:00.000Z", "15/01/2026 14:30"],
+    ["2026-07-15T12:30:00.000Z", "15/07/2026 15:30"],
+    ["2026-03-26T22:30:00.000Z", "27/03/2026 00:30"],
+    ["2026-10-24T22:30:00.000Z", "25/10/2026 01:30"]
+  ])("formats %s in Asia/Jerusalem", (value, expected) => {
+    expect(formatIsraelDateTime(value)).toBe(expected);
+  });
+
+  it("keeps date-only values stable and masks email delivery guidance", () => {
+    expect(formatDate("2026-08-01")).toBe("01/08/2026");
+    expect(maskEmailAddress("advisor@example.com")).toBe("ad*****@e******.com");
+    const message = emailServerAcceptedMessage("advisor@example.com");
+    expect(message).toContain("נשלח לשרת הדואר");
+    expect(message).toContain("ספאם, דואר זבל וקידומי מכירות");
+    expect(message).not.toContain("advisor@example.com");
   });
 });

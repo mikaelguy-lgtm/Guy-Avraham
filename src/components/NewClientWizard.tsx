@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import type { Client } from "../types";
 import { ApiError, api } from "../utils/apiClient";
 import {
+  applyBorrowerRelationship,
   clientFormPayload,
   emptyClientForm,
   moveBorrower,
@@ -49,14 +50,10 @@ export default function NewClientWizard({onCreated}: {onCreated?: (client: Clien
       }
       if (key === "borrowerRelationship" && current.borrowerRelationship && current.borrowerRelationship !== value) {
         setRelationshipWarning("שינוי הקשר שינה את אופן הצגת הילדים וההתחייבויות. יש לבדוק את הנתונים לפני השמירה.");
-        const nextRelationship = value as string;
-        if (nextRelationship === "MARRIED") {
-          const householdLiabilities = current.householdLiabilities.length ? current.householdLiabilities : current.borrowers.flatMap((borrower) => borrower.liabilities);
-          return {...current, borrowerRelationship: nextRelationship, householdLiabilities, borrowers: current.borrowers.map((borrower) => ({...borrower, liabilities: []}))};
-        }
-        if (current.borrowerRelationship === "MARRIED") {
-          return {...current, borrowerRelationship: nextRelationship, householdLiabilities: [], borrowers: current.borrowers.map((borrower, index) => ({...borrower, liabilities: index === 0 ? [...borrower.liabilities, ...current.householdLiabilities] : borrower.liabilities}))};
-        }
+        return applyBorrowerRelationship(current, value as string);
+      }
+      if (key === "borrowerRelationship") {
+        return applyBorrowerRelationship(current, value as string);
       }
       if (key === "householdNumberOfChildren") {
         const count = value as string;
@@ -83,6 +80,9 @@ export default function NewClientWizard({onCreated}: {onCreated?: (client: Clien
         borrower.additionalIncomeDescription = "";
       } else borrower[key] = value;
       borrowers[index] = borrower;
+      if (current.borrowerRelationship === "MARRIED" && index === 0 && key === "address") {
+        for (let borrowerIndex = 1; borrowerIndex < borrowers.length; borrowerIndex += 1) borrowers[borrowerIndex] = {...borrowers[borrowerIndex], address: String(value)};
+      }
       return {...current, borrowers};
     });
     clearError(`borrowers.${index}.${String(key)}`);

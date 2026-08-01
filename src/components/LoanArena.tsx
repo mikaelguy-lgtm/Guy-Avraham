@@ -79,7 +79,7 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
     setBusy(true); setMessage("");
     try {
       await api.deliverySend(selectedClientId, {companyIds: selectedCompanies, idempotencyKey: crypto.randomUUID(), previewConfirmation: preview.previewConfirmation});
-      setStage("complete"); setMessage("התיק נשלח בהצלחה לאנשי הקשר של החברות שנבחרו."); onSent?.();
+      setStage("complete"); setMessage("התיק נשמר והודעות נפרדות הועברו לתור השליחה לאנשי הקשר שנבחרו."); onSent?.();
     } catch (caught) { showError(caught); }
     finally { setBusy(false); }
   };
@@ -122,7 +122,7 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
       <div className="arena-actions split"><button type="button" className="secondary-action" onClick={() => setStage("preview")}><ChevronRight />חזרה לתצוגה</button><button type="button" className="primary-action large" disabled={busy} onClick={(event) => {const checkbox = event.currentTarget.closest("section")?.querySelector<HTMLInputElement>(".confirmation-check input"); if (checkbox && !checkbox.checked) {setMessage("יש לאשר את בדיקת התיק לפני השליחה."); checkbox.focus(); return;} void send();}}><Send size={19} />{busy ? "שולח…" : "אישור ושליחת התיק"}</button></div>
     </>}
 
-    {stage === "complete" && <div className="delivery-complete"><CheckCircle2 /><h2>התיק נשלח בהצלחה</h2><p>הודעות נפרדות הוכנסו לתור השליחה לכל אנשי הקשר הפעילים.</p><button type="button" className="secondary-action" onClick={() => {setStage("companies"); setPreview(null); setSelectedCompanies([]);}}>שליחת גרסה חדשה</button></div>}
+    {stage === "complete" && <div className="delivery-complete"><CheckCircle2 /><h2>התיק הועבר לתור השליחה</h2><p>הודעות נפרדות הוכנסו לתור לכל אנשי הקשר הפעילים. סטטוס SMTP יתעדכן לכל חברה בנפרד; לאחר קבלת ההודעה מומלץ לבדוק גם ספאם, דואר זבל וקידומי מכירות.</p><button type="button" className="secondary-action" onClick={() => {setStage("companies"); setPreview(null); setSelectedCompanies([]);}}>שליחת גרסה חדשה</button></div>}
     {message && <p className={stage === "complete" ? "form-message success" : "form-message error"} role="status">{message}</p>}
     {blockers.length > 0 && <div className="modal-backdrop"><section className="modal content-card" role="dialog" aria-modal="true" aria-labelledby="delivery-guard-title"><header className="modal-heading"><div><span className="eyebrow">בדיקת מוכנות</span><h2 id="delivery-guard-title">לא ניתן לשלוח את התיק</h2></div><button type="button" className="icon-action" aria-label="סגירה" onClick={() => setBlockers([])}><X /></button></header><p>התיק השתנה ויש להשלים את הפריטים הבאים:</p><ul className="delivery-blockers-list">{blockers.map((blocker) => <li key={blocker.code}><span><strong>{blocker.label}</strong><small>{blocker.hint}</small></span></li>)}</ul><div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setBlockers([])}>סגירה</button>{onMissingDocuments && blockers.some((item) => item.action === "documents") && <button type="button" className="primary-action" onClick={onMissingDocuments}>מעבר למסמכים</button>}</div></section></div>}
   </section>;

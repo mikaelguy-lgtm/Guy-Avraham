@@ -6,6 +6,7 @@ const links = [
   {to: "/admin/clients", label: "לקוחות"},
   {to: "/admin/lenders", label: "חברות מימון"},
   {to: "/admin/company-submissions", label: "שליחות לחברות"},
+  {to: "/admin/email-logs", label: "יומן דוא״ל"},
   {to: "/admin/business-calendar", label: "לוח ימי עסקים"},
   {to: "/admin/settings", label: "הגדרות מערכת"},
   {to: "/admin/audit", label: "יומן פעילות"}

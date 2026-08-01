@@ -383,6 +383,7 @@ export interface AppStore extends AuthorizationDirectory {
   addEmailLog(values: {recipient: string; template?: string; userId?: number; requestId?: string; messageId?: string; status: "SENT" | "FAILED"; sanitizedError?: string}): Promise<void>;
   getLatestEmailLog(userId: number, template: string): Promise<{recipient: string; template: string | null; messageId: string | null; status: string; sentAt: Date | null; failedAt: Date | null; requestId: string | null} | null>;
   listEmailLogs(recipient: string): Promise<Array<{recipient: string; template: string | null; messageId: string | null; status: string; sentAt: Date | null; failedAt: Date | null; requestId: string | null}>>;
+  listRecentEmailLogs(limit: number): Promise<Array<{recipient: string; template: string | null; status: string; sanitizedError: string | null; requestId: string | null; sentAt: Date | null; failedAt: Date | null; createdAt: Date; attempts: number; resent: boolean}>>;
   addAudit(userId: number | null, action: string, entityType: string | null, entityId: number | null, metadata: Record<string, unknown> | null, requestId?: string, ipAddress?: string, userAgent?: string): Promise<void>;
   addAiLog(values: {clientId: number; userId: number; model: string; promptCharacters: number; status: string; durationMs?: number; error?: string}): Promise<void>;
   notifyAdvisor(clientId: number, type: string, title: string, body: string): Promise<void>;
@@ -1267,6 +1268,21 @@ export class PostgresStore implements AppStore {
     const [row] = await db.update(notifications).set({readAt: new Date(), updatedAt: new Date()})
       .where(and(eq(notifications.id, id), eq(notifications.userId, userId))).returning({id: notifications.id});
     return Boolean(row);
+  }
+
+  async listRecentEmailLogs(limit: number) {
+    return db.select({
+      recipient: emailLogs.recipient,
+      template: emailLogs.template,
+      status: emailLogs.status,
+      sanitizedError: emailLogs.sanitizedError,
+      requestId: emailLogs.requestId,
+      sentAt: emailLogs.sentAt,
+      failedAt: emailLogs.failedAt,
+      createdAt: emailLogs.createdAt,
+      attempts: sql<number>`count(*) over (partition by coalesce(${emailLogs.requestId}, ${emailLogs.id}::text))`,
+      resent: sql<boolean>`exists(select 1 from email_logs previous where previous.recipient=${emailLogs.recipient} and previous.template is not distinct from ${emailLogs.template} and previous.created_at < ${emailLogs.createdAt})`
+    }).from(emailLogs).orderBy(desc(emailLogs.createdAt)).limit(Math.max(1, Math.min(limit, 500)));
   }
 
   async listEmailConfigurations(): Promise<EmailConfigurationRecord[]> {

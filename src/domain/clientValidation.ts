@@ -13,17 +13,33 @@ import { validateAdultBirthDate } from "../utils/age.js";
 
 const requiredText = (message: string, maximum: number) => z.string({error: message}).trim().min(1, message).max(maximum, "הערך ארוך מדי");
 const requiredNumber = (message: string, maximum: number) => z.preprocess(
-  (value) => value === "" || value === null || value === undefined ? undefined : value,
+  (value) => value === "" || value === null || value === undefined ? undefined : typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value) ? Number.NaN : value,
   z.coerce.number({error: message}).finite(message).nonnegative("יש להזין מספר שאינו שלילי").max(maximum, "הסכום חורג מהטווח המותר")
 );
 const requiredInteger = (message: string, minimum: number, maximum: number) => z.preprocess(
-  (value) => value === "" || value === null || value === undefined ? undefined : value,
+  (value) => value === "" || value === null || value === undefined ? undefined : typeof value === "string" && !/^\d+$/.test(value) ? Number.NaN : value,
   z.coerce.number({error: message}).int("יש להזין מספר שלם").min(minimum, message).max(maximum, "המספר חורג מהטווח המותר")
 );
 
+const canonicalizeMarriedBorrowers = (value: unknown): unknown => {
+  if (!value || typeof value !== "object") return value;
+  const input = value as Record<string, unknown>;
+  if (input.borrowerRelationship !== "MARRIED" || !Array.isArray(input.borrowers)) return value;
+  const primary = input.borrowers[0];
+  const primaryAddress = primary && typeof primary === "object" ? (primary as Record<string, unknown>).address : undefined;
+  return {
+    ...input,
+    borrowers: input.borrowers.map((borrower, index) => borrower && typeof borrower === "object" ? {
+      ...(borrower as Record<string, unknown>),
+      maritalStatus: "MARRIED",
+      address: index === 0 ? (borrower as Record<string, unknown>).address : primaryAddress
+    } : borrower)
+  };
+};
+
 const childrenSchema = z.object({
   numberOfChildren: requiredInteger("יש להזין את מספר הילדים", 0, 20),
-  childrenAges: z.array(z.coerce.number().int("יש להזין גיל שלם").min(0, "גיל ילד אינו יכול להיות שלילי").max(120, "יש להזין גיל ילד תקין"), {error: "יש להזין גיל עבור כל ילד"})
+  childrenAges: z.array(requiredInteger("יש להזין גיל ילד תקין", 0, 120), {error: "יש להזין גיל עבור כל ילד"})
 }).strict().superRefine((input, context) => {
   if (input.childrenAges.length !== input.numberOfChildren) context.addIssue({code: "custom", path: ["childrenAges"], message: "יש להזין גיל עבור כל ילד"});
 });
@@ -85,7 +101,7 @@ const borrowerSchema = z.object({
   if (input.income.additionalIncomeType === "OTHER" && !input.income.additionalIncomeDescription?.trim()) context.addIssue({code: "custom", path: ["income", "additionalIncomeDescription"], message: "יש לתאר את ההכנסה הנוספת"});
 });
 
-export const clientInputSchema = z.object({
+const clientInputObjectSchema = z.object({
   numberOfBorrowers: requiredInteger("יש להזין את מספר הלווים", 1, MAX_BORROWERS),
   borrowerRelationship: z.enum(BORROWER_RELATIONSHIPS, {error: "יש לבחור את הקשר בין הלווים"}).nullable(),
   borrowerRelationshipOther: z.string().trim().max(300, "התיאור ארוך מדי").nullable(),
@@ -97,11 +113,11 @@ export const clientInputSchema = z.object({
     propertyTypeOtherDescription: z.string().trim().max(500, "התיאור ארוך מדי").nullable(),
     city: requiredText("יש להזין את עיר הנכס", 100),
     address: requiredText("יש להזין כתובת נכס", 300),
-    value: requiredNumber("יש להזין שווי נכס", 100_000_000).pipe(z.number().positive("שווי הנכס חייב להיות גדול מאפס"))
+    value: requiredNumber("יש להזין שווי נכס", 100_000_000)
   }).strict(),
   loanPurpose: z.enum(DEAL_TYPES, {error: "יש לבחור מטרת הלוואה"}),
   loanRequest: z.object({
-    requestedAmount: requiredNumber("יש להזין סכום מימון מבוקש", 100_000_000).pipe(z.number().positive("סכום המימון חייב להיות גדול מאפס"))
+    requestedAmount: requiredNumber("יש להזין סכום מימון מבוקש", 100_000_000)
   }).strict(),
   dealDetails: requiredText("יש להזין פירוט עסקה", 5000),
   status: z.literal("ACTIVE").optional().default("ACTIVE")
@@ -128,6 +144,8 @@ export const clientInputSchema = z.object({
   } else if (input.householdLiabilities.length) context.addIssue({code: "custom", path: ["householdLiabilities"], message: "התחייבויות משותפות מותרות רק בתיק נשוי"});
 });
 
+export const clientInputSchema = z.preprocess(canonicalizeMarriedBorrowers, clientInputObjectSchema);
+
 export type ClientInput = z.infer<typeof clientInputSchema>;
 
 const personalBorrowerSchema = z.object({
@@ -148,7 +166,7 @@ const personalBorrowerSchema = z.object({
   if (birthDateError) context.addIssue({code: "custom", path: ["dateOfBirth"], message: birthDateError});
 });
 
-export const clientPersonalInputSchema = z.object({
+const clientPersonalInputObjectSchema = z.object({
   numberOfBorrowers: requiredInteger("יש להזין את מספר הלווים", 1, MAX_BORROWERS),
   borrowerRelationship: z.enum(BORROWER_RELATIONSHIPS, {error: "יש לבחור את הקשר בין הלווים"}).nullable(),
   borrowerRelationshipOther: z.string().trim().max(300, "התיאור ארוך מדי").nullable(),
@@ -171,6 +189,8 @@ export const clientPersonalInputSchema = z.object({
   });
   if (input.borrowers.filter((borrower) => borrower.isPrimary).length !== 1 || !input.borrowers[0]?.isPrimary) context.addIssue({code: "custom", path: ["borrowers"], message: "יש להגדיר לווה ראשי אחד בלבד"});
 });
+
+export const clientPersonalInputSchema = z.preprocess(canonicalizeMarriedBorrowers, clientPersonalInputObjectSchema);
 
 const incomeBorrowerSchema = z.object({
   id: z.number().int().positive(),
@@ -213,9 +233,9 @@ export const clientPropertyInputSchema = z.object({
     propertyTypeOtherDescription: z.string().trim().max(500, "התיאור ארוך מדי").nullable(),
     city: requiredText("יש להזין את עיר הנכס", 100),
     address: requiredText("יש להזין כתובת נכס", 300),
-    value: requiredNumber("יש להזין שווי נכס", 100_000_000).pipe(z.number().positive("שווי הנכס חייב להיות גדול מאפס"))
+    value: requiredNumber("יש להזין שווי נכס", 100_000_000)
   }).strict(),
-  loanRequest: z.object({requestedAmount: requiredNumber("יש להזין סכום מימון מבוקש", 100_000_000).pipe(z.number().positive("סכום המימון חייב להיות גדול מאפס"))}).strict()
+  loanRequest: z.object({requestedAmount: requiredNumber("יש להזין סכום מימון מבוקש", 100_000_000)}).strict()
 }).strict().superRefine((input, context) => {
   if (input.property.propertyType === "OTHER" && !input.property.propertyTypeOtherDescription?.trim()) context.addIssue({code: "custom", path: ["property", "propertyTypeOtherDescription"], message: "יש לתאר את סוג הנכס"});
 });

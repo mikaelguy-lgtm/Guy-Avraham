@@ -28,6 +28,7 @@ export interface BorrowerFormState {
   employmentType: string; employerName: string; jobTitle: string; employmentSeniorityYears: string;
   monthlyNetIncome: string; hasAdditionalIncome: "" | "yes" | "no"; additionalIncomeType: string;
   additionalIncomeAmount: string; additionalIncomeDescription: string; liabilities: LiabilityFormState[];
+  derivedAddressBackup?: string; derivedMaritalStatusBackup?: string;
 }
 
 export interface ClientFormState {
@@ -64,15 +65,57 @@ export function clientToForm(client: Client): ClientFormState {
   return {numberOfBorrowers: String(client.numberOfBorrowers), borrowerRelationship: client.borrowerRelationship ?? "", borrowerRelationshipOther: client.borrowerRelationshipOther ?? "", householdNumberOfChildren: String(client.household.numberOfChildren), householdChildrenAges: client.household.childrenAges.map(String), borrowers: client.borrowers.map(borrowerToForm), householdLiabilities: client.householdLiabilities.map(liabilityToForm), loanPurpose: client.loanPurpose, propertyType: client.propertyType, propertyTypeOtherDescription: client.propertyTypeOtherDescription ?? "", propertyCity: client.propertyCity, propertyAddress: client.propertyAddress, propertyValue: String(client.propertyValue), requestedAmount: String(client.requestedAmount), dealDetails: client.dealDetails};
 }
 
-export function resizeChildrenAges(current: string[], countValue: string): string[] { const count = Math.max(0, Math.min(20, Number.parseInt(countValue, 10) || 0)); return Array.from({length: count}, (_, index) => current[index] ?? ""); }
-export function resizeBorrowers(current: BorrowerFormState[], countValue: string): BorrowerFormState[] { const count = Math.max(1, Math.min(MAX_BORROWERS, Number.parseInt(countValue, 10) || 1)); return Array.from({length: count}, (_, index) => current[index] ?? emptyBorrowerForm()); }
+export const isNonNegativeIntegerInput = (value: string): boolean => /^\d*$/.test(value);
+export const isNonNegativeDecimalInput = (value: string): boolean => /^\d*(?:\.\d*)?$/.test(value);
+
+export function resizeChildrenAges(current: string[], countValue: string): string[] {
+  const count = /^\d+$/.test(countValue) ? Math.min(20, Number(countValue)) : current.length;
+  return Array.from({length: count}, (_, index) => current[index] ?? "");
+}
+export function resizeBorrowers(current: BorrowerFormState[], countValue: string): BorrowerFormState[] {
+  const count = /^\d+$/.test(countValue) ? Math.max(1, Math.min(MAX_BORROWERS, Number(countValue))) : current.length;
+  return Array.from({length: count}, (_, index) => current[index] ?? emptyBorrowerForm());
+}
 export function moveBorrower(current: BorrowerFormState[], from: number, to: number): BorrowerFormState[] { if (from < 0 || to < 0 || from >= current.length || to >= current.length || from === to) return current; const next = [...current]; const [borrower] = next.splice(from, 1); next.splice(to, 0, borrower); return next; }
 export const isSharedHousehold = (relationship: string): boolean => relationship === "MARRIED" || relationship === "COMMON_LAW";
 export const usesHouseholdLiabilities = (relationship: string): boolean => relationship === "MARRIED";
 
+export function applyBorrowerRelationship(form: ClientFormState, nextRelationship: string): ClientFormState {
+  const enteringMarriage = nextRelationship === "MARRIED" && form.borrowerRelationship !== "MARRIED";
+  const leavingMarriage = form.borrowerRelationship === "MARRIED" && nextRelationship !== "MARRIED";
+  let householdLiabilities = form.householdLiabilities;
+  let borrowers = form.borrowers;
+
+  if (enteringMarriage) {
+    const primaryAddress = borrowers[0]?.address ?? "";
+    householdLiabilities = householdLiabilities.length ? householdLiabilities : borrowers.flatMap((borrower) => borrower.liabilities);
+    borrowers = borrowers.map((borrower, index) => ({
+      ...borrower,
+      maritalStatus: "MARRIED",
+      address: index === 0 ? borrower.address : primaryAddress,
+      liabilities: [],
+      derivedMaritalStatusBackup: borrower.maritalStatus,
+      derivedAddressBackup: index === 0 ? undefined : borrower.address
+    }));
+  } else if (leavingMarriage) {
+    borrowers = borrowers.map((borrower, index) => {
+      const {derivedAddressBackup, derivedMaritalStatusBackup, ...rest} = borrower;
+      return {
+        ...rest,
+        maritalStatus: derivedMaritalStatusBackup ?? "",
+        address: index === 0 ? borrower.address : derivedAddressBackup ?? "",
+        liabilities: index === 0 ? [...borrower.liabilities, ...householdLiabilities] : borrower.liabilities
+      };
+    });
+    householdLiabilities = [];
+  }
+
+  return {...form, borrowerRelationship: nextRelationship, householdLiabilities, borrowers};
+}
+
 function required(errors: ClientFormErrors, key: string, value: string, message: string): void { if (!value.trim()) errors[key] = message; }
-function numberField(errors: ClientFormErrors, key: string, value: string, message: string, positive = false): void { const number = Number(value); if (!value.trim() || !Number.isFinite(number) || number < 0 || (positive && number <= 0)) errors[key] = message; }
-function validateChildren(errors: ClientFormErrors, prefix: string, countValue: string, ages: string[]): void { const count = Number(countValue); if (!Number.isInteger(count) || count < 0) errors[`${prefix}.numberOfChildren`] = "יש להזין מספר ילדים תקין"; if (ages.length !== count) errors[`${prefix}.childrenAges`] = "יש להזין גיל עבור כל ילד"; ages.forEach((age, index) => {if (!Number.isInteger(Number(age)) || Number(age) < 0 || Number(age) > 120) errors[`${prefix}.childrenAges.${index}`] = `יש להזין גיל תקין לילד ${index + 1}`;}); }
+function numberField(errors: ClientFormErrors, key: string, value: string, message: string, positive = false): void { const number = Number(value); if (!value.trim() || !isNonNegativeDecimalInput(value) || !Number.isFinite(number) || (positive && number <= 0)) errors[key] = message; }
+function validateChildren(errors: ClientFormErrors, prefix: string, countValue: string, ages: string[]): void { const count = Number(countValue); if (!isNonNegativeIntegerInput(countValue) || !countValue || !Number.isInteger(count) || count > 20) errors[`${prefix}.numberOfChildren`] = "יש להזין מספר ילדים תקין"; if (ages.length !== count) errors[`${prefix}.childrenAges`] = "יש להזין גיל עבור כל ילד"; ages.forEach((age, index) => {if (!isNonNegativeIntegerInput(age) || !age || !Number.isInteger(Number(age)) || Number(age) > 120) errors[`${prefix}.childrenAges.${index}`] = `יש להזין גיל תקין לילד ${index + 1}`;}); }
 function validateLiabilities(errors: ClientFormErrors, prefix: string, liabilityItems: LiabilityFormState[]): void {
   liabilityItems.forEach((liability, index) => {
     const key = `${prefix}.${index}`;
@@ -87,12 +130,12 @@ function validateLiabilities(errors: ClientFormErrors, prefix: string, liability
 }
 
 function validatePersonalSection(form: ClientFormState, errors: ClientFormErrors): void {
-  const count = Number(form.numberOfBorrowers); if (!Number.isInteger(count) || count < 1 || count > MAX_BORROWERS || form.borrowers.length !== count) errors.numberOfBorrowers = `יש להזין מספר לווים בין 1 ל-${MAX_BORROWERS}`;
+  const count = Number(form.numberOfBorrowers); if (!isNonNegativeIntegerInput(form.numberOfBorrowers) || !form.numberOfBorrowers || !Number.isInteger(count) || count < 1 || count > MAX_BORROWERS || form.borrowers.length !== count) errors.numberOfBorrowers = `יש להזין מספר לווים בין 1 ל-${MAX_BORROWERS}`;
   if (count > 1) required(errors, "borrowerRelationship", form.borrowerRelationship, "יש לבחור את הקשר בין הלווים");
   if (form.borrowerRelationship === "OTHER") required(errors, "borrowerRelationshipOther", form.borrowerRelationshipOther, "יש לתאר את הקשר בין הלווים");
   if (isSharedHousehold(form.borrowerRelationship)) validateChildren(errors, "household", form.householdNumberOfChildren, form.householdChildrenAges);
   const identities = new Set<string>();
-  form.borrowers.forEach((borrower, index) => { const prefix = `borrowers.${index}`; required(errors, `${prefix}.firstName`, borrower.firstName, "יש להזין שם פרטי"); required(errors, `${prefix}.lastName`, borrower.lastName, "יש להזין שם משפחה"); if (!/^\d{9}$/.test(borrower.identityNumber) || identities.has(borrower.identityNumber)) errors[`${prefix}.identityNumber`] = identities.has(borrower.identityNumber) ? "מספר תעודת הזהות כבר קיים בתיק" : "יש להזין 9 ספרות ללא מקפים"; identities.add(borrower.identityNumber); const birthError = validateAdultBirthDate(borrower.birthDate); if (birthError) errors[`${prefix}.birthDate`] = birthError; required(errors, `${prefix}.phone`, borrower.phone, "יש להזין מספר טלפון"); if (!/^\S+@\S+\.\S+$/.test(borrower.email)) errors[`${prefix}.email`] = "יש להזין כתובת דוא״ל תקינה"; required(errors, `${prefix}.address`, borrower.address, "יש להזין כתובת מגורים"); required(errors, `${prefix}.maritalStatus`, borrower.maritalStatus, "יש לבחור מצב משפחתי"); if (!isSharedHousehold(form.borrowerRelationship)) validateChildren(errors, `${prefix}.children`, borrower.numberOfChildren, borrower.childrenAges); });
+  form.borrowers.forEach((borrower, index) => { const prefix = `borrowers.${index}`; required(errors, `${prefix}.firstName`, borrower.firstName, "יש להזין שם פרטי"); required(errors, `${prefix}.lastName`, borrower.lastName, "יש להזין שם משפחה"); if (!/^\d{9}$/.test(borrower.identityNumber) || identities.has(borrower.identityNumber)) errors[`${prefix}.identityNumber`] = identities.has(borrower.identityNumber) ? "מספר תעודת הזהות כבר קיים בתיק" : "יש להזין 9 ספרות ללא מקפים"; identities.add(borrower.identityNumber); const birthError = validateAdultBirthDate(borrower.birthDate); if (birthError) errors[`${prefix}.birthDate`] = birthError; required(errors, `${prefix}.phone`, borrower.phone, "יש להזין מספר טלפון"); if (!/^\S+@\S+\.\S+$/.test(borrower.email)) errors[`${prefix}.email`] = "יש להזין כתובת דוא״ל תקינה"; if (form.borrowerRelationship !== "MARRIED" || index === 0) required(errors, `${prefix}.address`, borrower.address, "יש להזין כתובת מגורים"); if (form.borrowerRelationship !== "MARRIED") required(errors, `${prefix}.maritalStatus`, borrower.maritalStatus, "יש לבחור מצב משפחתי"); if (!isSharedHousehold(form.borrowerRelationship)) validateChildren(errors, `${prefix}.children`, borrower.numberOfChildren, borrower.childrenAges); });
 }
 
 function validateIncomeSection(form: ClientFormState, errors: ClientFormErrors): void {
@@ -105,7 +148,7 @@ function validateLiabilitiesSection(form: ClientFormState, errors: ClientFormErr
 }
 
 function validatePropertySection(form: ClientFormState, errors: ClientFormErrors): void {
-  required(errors, "loanPurpose", form.loanPurpose, "יש לבחור מטרת הלוואה"); required(errors, "propertyType", form.propertyType, "יש לבחור סוג נכס"); if (form.propertyType === "OTHER") required(errors, "propertyTypeOtherDescription", form.propertyTypeOtherDescription, "יש לתאר את סוג הנכס"); required(errors, "propertyCity", form.propertyCity, "יש להזין את עיר הנכס"); required(errors, "propertyAddress", form.propertyAddress, "יש להזין כתובת נכס"); numberField(errors, "propertyValue", form.propertyValue, "יש להזין שווי נכס גדול מאפס", true); numberField(errors, "requestedAmount", form.requestedAmount, "יש להזין סכום מימון גדול מאפס", true);
+  required(errors, "loanPurpose", form.loanPurpose, "יש לבחור מטרת הלוואה"); required(errors, "propertyType", form.propertyType, "יש לבחור סוג נכס"); if (form.propertyType === "OTHER") required(errors, "propertyTypeOtherDescription", form.propertyTypeOtherDescription, "יש לתאר את סוג הנכס"); required(errors, "propertyCity", form.propertyCity, "יש להזין את עיר הנכס"); required(errors, "propertyAddress", form.propertyAddress, "יש להזין כתובת נכס"); numberField(errors, "propertyValue", form.propertyValue, "יש להזין ערך חיובי או 0"); numberField(errors, "requestedAmount", form.requestedAmount, "יש להזין ערך חיובי או 0");
 }
 
 function validateDealDetailsSection(form: ClientFormState, errors: ClientFormErrors): void {
@@ -133,12 +176,12 @@ export function validateClientForm(form: ClientFormState, step?: 1 | 2 | 3): Cli
 }
 
 const liabilityPayload = (liability: LiabilityFormState) => ({type: liability.type, otherTypeDescription: liability.type === "OTHER_FINANCIAL_ENTITY" ? liability.otherTypeDescription.trim() : null, currentBalance: Number(liability.currentBalance), monthlyPayment: Number(liability.monthlyPayment), endDate: liability.endDate, notes: liability.notes.trim()});
-const personalBorrowerPayload = (borrower: BorrowerFormState, index: number, sharedChildren: boolean) => ({id: borrower.id, order: index + 1, isPrimary: index === 0, firstName: borrower.firstName.trim(), lastName: borrower.lastName.trim(), identityNumber: borrower.identityNumber.trim(), dateOfBirth: borrower.birthDate, phone: borrower.phone.trim(), email: borrower.email.trim(), address: borrower.address.trim(), maritalStatus: borrower.maritalStatus, children: {numberOfChildren: sharedChildren ? 0 : Number(borrower.numberOfChildren), childrenAges: sharedChildren ? [] : borrower.childrenAges.map(Number)}});
+const personalBorrowerPayload = (borrower: BorrowerFormState, index: number, sharedChildren: boolean, relationship: string, primaryAddress: string) => ({id: borrower.id, order: index + 1, isPrimary: index === 0, firstName: borrower.firstName.trim(), lastName: borrower.lastName.trim(), identityNumber: borrower.identityNumber.trim(), dateOfBirth: borrower.birthDate, phone: borrower.phone.trim(), email: borrower.email.trim(), address: (relationship === "MARRIED" && index > 0 ? primaryAddress : borrower.address).trim(), maritalStatus: relationship === "MARRIED" ? "MARRIED" : borrower.maritalStatus, children: {numberOfChildren: sharedChildren ? 0 : Number(borrower.numberOfChildren), childrenAges: sharedChildren ? [] : borrower.childrenAges.map(Number)}});
 const incomeBorrowerPayload = (borrower: BorrowerFormState) => { const hasAdditionalIncome = borrower.hasAdditionalIncome === "yes"; return {id: borrower.id, employment: {employmentType: borrower.employmentType, employerName: borrower.employerName.trim(), jobTitle: borrower.jobTitle.trim(), employmentSeniorityYears: Number(borrower.employmentSeniorityYears)}, income: {monthlyNetIncome: Number(borrower.monthlyNetIncome), hasAdditionalIncome, additionalIncomeType: hasAdditionalIncome ? borrower.additionalIncomeType : null, additionalIncomeAmount: hasAdditionalIncome ? Number(borrower.additionalIncomeAmount) : 0, additionalIncomeDescription: hasAdditionalIncome && borrower.additionalIncomeType === "OTHER" ? borrower.additionalIncomeDescription.trim() : null}}; };
 
 export function clientPersonalPayload(form: ClientFormState): Record<string, unknown> {
   const sharedChildren = isSharedHousehold(form.borrowerRelationship);
-  return {numberOfBorrowers: Number(form.numberOfBorrowers), borrowerRelationship: Number(form.numberOfBorrowers) > 1 ? form.borrowerRelationship : null, borrowerRelationshipOther: form.borrowerRelationship === "OTHER" ? form.borrowerRelationshipOther.trim() : null, household: {numberOfChildren: sharedChildren ? Number(form.householdNumberOfChildren) : 0, childrenAges: sharedChildren ? form.householdChildrenAges.map(Number) : []}, borrowers: form.borrowers.map((borrower, index) => personalBorrowerPayload(borrower, index, sharedChildren))};
+  return {numberOfBorrowers: Number(form.numberOfBorrowers), borrowerRelationship: Number(form.numberOfBorrowers) > 1 ? form.borrowerRelationship : null, borrowerRelationshipOther: form.borrowerRelationship === "OTHER" ? form.borrowerRelationshipOther.trim() : null, household: {numberOfChildren: sharedChildren ? Number(form.householdNumberOfChildren) : 0, childrenAges: sharedChildren ? form.householdChildrenAges.map(Number) : []}, borrowers: form.borrowers.map((borrower, index) => personalBorrowerPayload(borrower, index, sharedChildren, form.borrowerRelationship, form.borrowers[0]?.address ?? ""))};
 }
 export const clientIncomePayload = (form: ClientFormState): Record<string, unknown> => ({borrowers: form.borrowers.map(incomeBorrowerPayload)});
 export const clientLiabilitiesPayload = (form: ClientFormState): Record<string, unknown> => ({borrowerRelationship: Number(form.numberOfBorrowers) > 1 ? form.borrowerRelationship : null, borrowers: form.borrowers.map((borrower) => ({id: borrower.id, liabilities: usesHouseholdLiabilities(form.borrowerRelationship) ? [] : borrower.liabilities.map(liabilityPayload)})), householdLiabilities: usesHouseholdLiabilities(form.borrowerRelationship) ? form.householdLiabilities.map(liabilityPayload) : []});
@@ -148,5 +191,5 @@ export const hasClientFormChanges = (initial: ClientFormState, current: ClientFo
 
 export function clientFormPayload(form: ClientFormState): Record<string, unknown> {
   const sharedChildren = isSharedHousehold(form.borrowerRelationship); const householdScope = usesHouseholdLiabilities(form.borrowerRelationship);
-  return {numberOfBorrowers: Number(form.numberOfBorrowers), borrowerRelationship: Number(form.numberOfBorrowers) > 1 ? form.borrowerRelationship : null, borrowerRelationshipOther: form.borrowerRelationship === "OTHER" ? form.borrowerRelationshipOther.trim() : null, household: {numberOfChildren: sharedChildren ? Number(form.householdNumberOfChildren) : 0, childrenAges: sharedChildren ? form.householdChildrenAges.map(Number) : []}, borrowers: form.borrowers.map((borrower, index) => ({...personalBorrowerPayload(borrower, index, sharedChildren), ...incomeBorrowerPayload(borrower), liabilities: householdScope ? [] : borrower.liabilities.map(liabilityPayload)})), householdLiabilities: householdScope ? form.householdLiabilities.map(liabilityPayload) : [], loanPurpose: form.loanPurpose, property: {propertyType: form.propertyType, propertyTypeOtherDescription: form.propertyType === "OTHER" ? form.propertyTypeOtherDescription.trim() : null, city: form.propertyCity.trim(), address: form.propertyAddress.trim(), value: Number(form.propertyValue)}, loanRequest: {requestedAmount: Number(form.requestedAmount)}, dealDetails: form.dealDetails.trim(), status: "ACTIVE"};
+  return {numberOfBorrowers: Number(form.numberOfBorrowers), borrowerRelationship: Number(form.numberOfBorrowers) > 1 ? form.borrowerRelationship : null, borrowerRelationshipOther: form.borrowerRelationship === "OTHER" ? form.borrowerRelationshipOther.trim() : null, household: {numberOfChildren: sharedChildren ? Number(form.householdNumberOfChildren) : 0, childrenAges: sharedChildren ? form.householdChildrenAges.map(Number) : []}, borrowers: form.borrowers.map((borrower, index) => ({...personalBorrowerPayload(borrower, index, sharedChildren, form.borrowerRelationship, form.borrowers[0]?.address ?? ""), ...incomeBorrowerPayload(borrower), liabilities: householdScope ? [] : borrower.liabilities.map(liabilityPayload)})), householdLiabilities: householdScope ? form.householdLiabilities.map(liabilityPayload) : [], loanPurpose: form.loanPurpose, property: {propertyType: form.propertyType, propertyTypeOtherDescription: form.propertyType === "OTHER" ? form.propertyTypeOtherDescription.trim() : null, city: form.propertyCity.trim(), address: form.propertyAddress.trim(), value: Number(form.propertyValue)}, loanRequest: {requestedAmount: Number(form.requestedAmount)}, dealDetails: form.dealDetails.trim(), status: "ACTIVE"};
 }

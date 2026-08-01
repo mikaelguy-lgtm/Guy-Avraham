@@ -111,6 +111,7 @@ export function makeStore(overrides: Partial<AppStore> = {}): AppStore {
     addEmailLog: async () => undefined,
     getLatestEmailLog: async () => null,
     listEmailLogs: async () => [],
+    listRecentEmailLogs: async () => [],
     getDocument: async (id) => id === 1 ? {id: 1, clientId: 1, borrowerId: 1, uploadedByUserId: 1, customTitle: null, descriptionEncrypted: null, storageKey: "doc", originalFileName: "doc.pdf", documentType: "ID_FRONT", mimeType: "application/pdf", sizeBytes: 10, checksumSha256: "a".repeat(64), status: "UPLOADED", deletedAt: null} : null,
     createDocument: async (values) => ({id: 1, ...values, status: "UPLOADED", deletedAt: null}),
     listMissingRequiredDocuments: async () => [],

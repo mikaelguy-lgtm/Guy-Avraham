@@ -35,6 +35,19 @@ export interface AdvisorProfile {
   disableGemini?: boolean;
 }
 
+export interface AdminEmailLogRecord {
+  recipientMasked: string;
+  template: string | null;
+  status: string;
+  sanitizedError: string | null;
+  requestId: string | null;
+  sentAt: string | null;
+  failedAt: string | null;
+  createdAt: string;
+  attempts: number;
+  resent: boolean;
+}
+
 export interface ClientBorrower {
   id: number;
   borrowerOrder: number;
@@ -256,7 +269,7 @@ export interface CompanyResponse {
   clientName?: string;
   advisorName?: string;
   maskedSnapshot?: Record<string, unknown>;
-  invitations?: Array<{publicId: string; status: string; contactName: string; contactRole: string; contactEmail: string; emailSentAt: string | null; emailFailedAt: string | null; openedAt: string | null; openCount: number; maskedPdfViewedAt: string | null; maskedPdfDownloadedAt: string | null; reminderOneSentAt: string | null; reminderTwoSentAt: string | null; closedAt: string | null}>;
+  invitations?: Array<{publicId: string; status: string; contactName: string; contactRole: string; recipientMasked: string; createdAt: string; emailSentAt: string | null; emailFailedAt: string | null; lastAttemptAt: string | null; smtpStatus: string; attempts: number; resent: boolean; safeFailureReason: string | null; requestId: string | null; resendEligible: boolean; openedAt: string | null; openCount: number; maskedPdfViewedAt: string | null; maskedPdfDownloadedAt: string | null; reminderOneSentAt: string | null; reminderTwoSentAt: string | null; closedAt: string | null}>;
 }
 
 export interface FinancingCompanyContact {

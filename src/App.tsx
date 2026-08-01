@@ -30,6 +30,7 @@ import {ExternalAccessPage, ExternalPortalPage, ExternalReviewPage} from "./comp
 import AdminFinancingCompaniesView from "./components/AdminFinancingCompaniesView";
 import AdminBusinessCalendarView from "./components/AdminBusinessCalendarView";
 import AdminCompanySubmissionsView from "./components/AdminCompanySubmissionsView";
+import AdminEmailLogsView from "./components/AdminEmailLogsView";
 import {requireFrontendConfig} from "./config/frontend";
 
 const productionConfig = requireFrontendConfig();
@@ -77,6 +78,7 @@ export default function App() {
       <Route path="clients" element={<AdminSectionPage title="לקוחות" description="סקירת לקוחות ותיקי מימון במערכת." />} />
       <Route path="lenders" element={<AdminFinancingCompaniesView />} />
       <Route path="company-submissions" element={<AdminCompanySubmissionsView />} />
+      <Route path="email-logs" element={<AdminEmailLogsView />} />
       <Route path="business-calendar" element={<AdminBusinessCalendarView />} />
       <Route path="settings" element={<SystemSettingsSubView user={user} />} />
       <Route path="settings/smtp" element={canAccessSmtpSettings(user.role) ? <AdminDashboard userEmail={user.email} /> : <Navigate to="/admin/settings" replace />} />

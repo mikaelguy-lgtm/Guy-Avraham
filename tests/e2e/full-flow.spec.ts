@@ -172,7 +172,7 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     const maskedObject = listedObjects.Contents?.filter((item) => item.Key?.endsWith("/masked.pdf") && (item.LastModified?.getTime() ?? 0) >= testStartedAt - 5_000).sort((left, right) => (right.LastModified?.getTime() ?? 0) - (left.LastModified?.getTime() ?? 0))[0];
     expect(maskedObject?.Key).toBeTruthy();
     await s3.send(new PutObjectCommand({Bucket: process.env.S3_BUCKET, Key: maskedObject!.Key, Body: Buffer.from("%PDF-1.7\nbroken stale renderer"), ContentType: "application/pdf", Metadata: {"renderer-version": "2", "font-fingerprint": "stale", "content-hash": "stale"}}));
-    await expect(page.getByRole("heading", {name: "התיק נשלח בהצלחה"})).toBeVisible();
+    await expect(page.getByRole("heading", {name: "התיק הועבר לתור השליחה"})).toBeVisible();
     await page.getByRole("dialog", {name: "שליחה לחברות מימון"}).getByRole("button", {name: "סגירה"}).click();
     await expect(page.locator(".advisor-topbar .notification-badge")).toBeVisible();
     await page.locator(".advisor-topbar").getByRole("button", {name: /התראות/}).click();
@@ -206,7 +206,8 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     const maskedDownloadPromise = reviewPage.waitForEvent("download"); await reviewPage.getByRole("button", {name: "הורדת PDF"}).click();
     const maskedDownload = await maskedDownloadPromise; expect(await downloadedBuffer(maskedDownload)).toEqual(previewPdf);
     await reviewPage.getByRole("button", {name: "מעוניינים", exact: true}).click();
-    await expect(reviewPage.getByText("קוד חד־פעמי נשלח")).toBeVisible();
+    await expect(reviewPage.getByText("המייל נשלח לשרת הדואר", {exact: false})).toBeVisible();
+    await expect(reviewPage.getByText("ספאם, דואר זבל וקידומי מכירות", {exact: false})).toBeVisible();
     const interestOtp = otpFrom(await waitForMail(request, contactA, "קוד אימות לפתיחת תיק מימון"));
     await reviewPage.getByLabel("קוד חד־פעמי").fill(interestOtp);
     await reviewPage.getByRole("button", {name: "אימות והמשך"}).click();
@@ -256,7 +257,7 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     const [raceInitialA, raceInitialB] = await Promise.all([waitForMail(request, raceContactA, client.publicCaseNumber), waitForMail(request, raceContactB, client.publicCaseNumber)]);
     const raceReviewA = linkFrom(raceInitialA, "review"); const raceReviewB = linkFrom(raceInitialB, "review");
     const raceContextA = await browser.newContext(); contexts.push(raceContextA); const racePageA = await raceContextA.newPage(); await racePageA.goto(raceReviewA);
-    await racePageA.getByRole("button", {name: "מעוניינים", exact: true}).click(); await expect(racePageA.getByText("קוד חד־פעמי נשלח")).toBeVisible();
+    await racePageA.getByRole("button", {name: "מעוניינים", exact: true}).click(); await expect(racePageA.getByText("המייל נשלח לשרת הדואר", {exact: false})).toBeVisible();
     const pendingOtp = otpFrom(await waitForMail(request, raceContactA, "קוד אימות לפתיחת תיק מימון"));
     const raceContextB = await browser.newContext(); contexts.push(raceContextB); const racePageB = await raceContextB.newPage(); await racePageB.goto(raceReviewB);
     racePageB.once("dialog", (dialog) => void dialog.accept()); await racePageB.getByRole("button", {name: "לא מעוניינים", exact: true}).click();

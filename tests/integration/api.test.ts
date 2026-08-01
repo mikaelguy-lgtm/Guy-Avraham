@@ -115,6 +115,14 @@ describe("HTTP authentication and authorization", () => {
     await request(app()).post("/api/admin/settings/email/rollback").set("authorization", `Bearer ${token}`).expect(403);
   });
 
+  it("shows masked email logs to admins without exposing recipients", async () => {
+    const listRecentEmailLogs = vi.fn().mockResolvedValue([{recipient: "advisor@example.com", template: "ADVISOR_EMAIL_VERIFICATION", status: "SENT", sanitizedError: null, requestId: "request-safe", sentAt: new Date("2026-07-15T12:30:00.000Z"), failedAt: null, createdAt: new Date("2026-07-15T12:30:00.000Z"), attempts: 1, resent: false}]);
+    const response = await request(app({listRecentEmailLogs})).get("/api/admin/email-logs").set("authorization", "Bearer admin").expect(200);
+    expect(response.body[0]).toEqual(expect.objectContaining({recipientMasked: "ad*****@e******.com", status: "SENT", requestId: "request-safe"}));
+    expect(JSON.stringify(response.body)).not.toContain("advisor@example.com");
+    await request(app({listRecentEmailLogs})).get("/api/admin/email-logs").set("authorization", "Bearer advisor").expect(403);
+  });
+
   it("allows SUPER_ADMIN to create an SMTP draft and password version without returning the password", async () => {
     const addAudit = vi.fn().mockResolvedValue(undefined);
     const localSecrets = new InMemorySecretProvider();
@@ -521,6 +529,33 @@ describe("multi-borrower client create and update", () => {
     expect(response.body.borrowers).toHaveLength(2);
   });
 
+  it("canonicalizes married borrower status and address before persistence", async () => {
+    const existing = await makeStore().getClient(1);
+    const createClient = vi.fn().mockResolvedValue(existing);
+    const payload = {
+      ...completeClientInput,
+      borrowers: completeClientInput.borrowers.map((borrower, index) => ({
+        ...borrower,
+        maritalStatus: index === 0 ? undefined : "SINGLE",
+        address: index === 0 ? "כתובת משותפת" : "כתובת עוקפת"
+      }))
+    };
+    await request(app({createClient})).post("/api/clients").set("authorization", "Bearer advisor").send(payload).expect(201);
+    expect(createClient.mock.calls[0][0].borrowers.map((item: {maritalStatus: string}) => item.maritalStatus)).toEqual(["MARRIED", "MARRIED"]);
+    const encryption = new EncryptionService(Buffer.alloc(32, 4));
+    expect(createClient.mock.calls[0][0].borrowers.map((item: {addressEncrypted: string}) => encryption.decrypt(item.addressEncrypted))).toEqual(["כתובת משותפת", "כתובת משותפת"]);
+  });
+
+  it.each([
+    ["negative amount", {property: {...completeClientInput.property, value: -1}}],
+    ["negative decimal", {loanRequest: {requestedAmount: "-0.01"}}],
+    ["signed amount", {loanRequest: {requestedAmount: "+100"}}],
+    ["scientific notation", {property: {...completeClientInput.property, value: "1e3"}}],
+    ["decimal borrower count", {numberOfBorrowers: "2.5"}]
+  ])("rejects %s sent directly to the API", async (_name, change) => {
+    await request(app()).post("/api/clients").set("authorization", "Bearer advisor").send({...completeClientInput, ...change}).expect(400);
+  });
+
   it.each([
     ["duplicate identity", {...completeClientInput, borrowers: [completeClientInput.borrowers[0], {...completeClientInput.borrowers[1], identityNumber: "123456789"}]}],
     ["future birth date", {...completeClientInput, borrowers: [{...completeClientInput.borrowers[0], dateOfBirth: "2099-01-01"}, completeClientInput.borrowers[1]]}],
@@ -641,6 +676,14 @@ describe("submission delivery", () => {
     )).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(503);
     expect(response.body).toEqual(expect.objectContaining({error: "EMAIL_DELIVERY_DISABLED", requestId: expect.any(String)}));
     expect(createSubmission).not.toHaveBeenCalled();
+  });
+  it.each([
+    {amount: -1, interestRate: 6.5, termMonths: 240},
+    {amount: 1_000_000, interestRate: 101, termMonths: 240},
+    {amount: "1e6", interestRate: 6.5, termMonths: 240},
+    {amount: 1_000_000, interestRate: 6.5, termMonths: "24e1"}
+  ])("rejects invalid lender offer values", async (payload) => {
+    await request(app()).post("/api/lender/submissions/1/offers").set("authorization", "Bearer lender").send(payload).expect(400);
   });
 
   it("marks a successful SMTP delivery as SENT without creating an automatic response", async () => {

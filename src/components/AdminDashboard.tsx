@@ -10,6 +10,7 @@ import {
   type EmailSecurityMode,
   type EmailSettingsResponse
 } from "../utils/apiClient";
+import {formatIsraelDateTime} from "../utils/formatters";
 
 type SmtpForm = {
   provider: EmailProvider;
@@ -93,9 +94,7 @@ function validateSettings(settings: SmtpForm): Record<string, string> {
   return errors;
 }
 
-function formatDate(value: string | null): string {
-  return value ? new Intl.DateTimeFormat("he-IL", {dateStyle: "short", timeStyle: "short"}).format(new Date(value)) : "טרם בוצע";
-}
+const formatDate = (value: string | null): string => value ? formatIsraelDateTime(value) : "טרם בוצע";
 
 export default function AdminDashboard({userEmail}: {userEmail: string}) {
   const [data, setData] = useState<EmailSettingsResponse | null>(null);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyBorrowerForm, isSharedHousehold, resizeBorrowers } from "../../src/utils/clientForm";
+import { applyBorrowerRelationship, emptyBorrowerForm, emptyClientForm, isNonNegativeDecimalInput, isNonNegativeIntegerInput, isSharedHousehold, resizeBorrowers, resizeChildrenAges, validateClientFormSection } from "../../src/utils/clientForm";
 import { calculateRepaymentRatio, calculateTotalMonthlyIncome, calculateTotalMonthlyPayments } from "../../src/utils/clientCalculations";
 
 describe("dynamic borrower form", () => {
@@ -16,6 +16,42 @@ describe("dynamic borrower form", () => {
     expect(isSharedHousehold("COMMON_LAW")).toBe(true);
     expect(isSharedHousehold("FAMILY")).toBe(false);
     expect(isSharedHousehold("PARTNERS")).toBe(false);
+  });
+
+  it("rejects signs, scientific notation and decimal counts without truncating state", () => {
+    const borrowers = [{...emptyBorrowerForm(), firstName: "דנה"}, emptyBorrowerForm()];
+    expect(isNonNegativeIntegerInput("0")).toBe(true);
+    expect(isNonNegativeIntegerInput("1.5")).toBe(false);
+    expect(isNonNegativeIntegerInput("1e3")).toBe(false);
+    expect(isNonNegativeIntegerInput("+2")).toBe(false);
+    expect(isNonNegativeDecimalInput("0.01")).toBe(true);
+    expect(isNonNegativeDecimalInput("-0.01")).toBe(false);
+    expect(resizeBorrowers(borrowers, "1e1")).toEqual(borrowers);
+    expect(resizeChildrenAges(["4", "8"], "1.5")).toEqual(["4", "8"]);
+  });
+
+  it("derives married fields and restores user-entered values when the relationship changes", () => {
+    const form = {
+      ...emptyClientForm(),
+      numberOfBorrowers: "2",
+      borrowers: [
+        {...emptyBorrowerForm(), address: "רחוב ראשון", maritalStatus: "DIVORCED", liabilities: [{type: "LOAN", otherTypeDescription: "", currentBalance: "0", monthlyPayment: "0", endDate: "2035-01-01", notes: "בדיקה"}]},
+        {...emptyBorrowerForm(), address: "רחוב שני", maritalStatus: "SINGLE"}
+      ]
+    };
+    const married = applyBorrowerRelationship(form, "MARRIED");
+    expect(married.borrowers.map((item) => item.maritalStatus)).toEqual(["MARRIED", "MARRIED"]);
+    expect(married.borrowers[1].address).toBe("רחוב ראשון");
+    expect(married.householdLiabilities).toHaveLength(1);
+    const restored = applyBorrowerRelationship(married, "PARTNERS");
+    expect(restored.borrowers.map((item) => item.maritalStatus)).toEqual(["DIVORCED", "SINGLE"]);
+    expect(restored.borrowers[1].address).toBe("רחוב שני");
+    expect(restored.borrowers[0].liabilities).toHaveLength(1);
+  });
+
+  it("rejects malformed numeric text in frontend validation", () => {
+    const form = {...emptyClientForm(), propertyValue: "1e3", requestedAmount: "+100"};
+    expect(validateClientFormSection(form, "property")).toEqual(expect.objectContaining({propertyValue: expect.any(String), requestedAmount: expect.any(String)}));
   });
 
   it("aggregates income, payments and repayment ratio across borrowers", () => {

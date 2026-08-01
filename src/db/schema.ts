@@ -185,7 +185,7 @@ export const employmentRecords = pgTable("employment_records", {
   ...timestamps
 }, (table) => [
   check("employment_type_check", sql`${table.employmentType} in ('SALARIED', 'SELF_EMPLOYED', 'CONTROLLING_SHAREHOLDER', 'RETIRED', 'GOVERNMENT_EMPLOYEE', 'SECURITY_FORCES', 'ALLOWANCE', 'UNEMPLOYED', 'OTHER')`),
-  check("employment_income_check", sql`${table.monthlyNetIncome} >= 0 and ${table.additionalIncomeAmount} >= 0`),
+  check("employment_income_check", sql`${table.monthlyNetIncome} >= 0 and ${table.monthlyGrossIncome} >= 0 and ${table.additionalIncome} >= 0 and ${table.additionalIncomeAmount} >= 0 and ${table.employmentSeniorityYears} >= 0`),
   check("employment_additional_type_check", sql`${table.additionalIncomeType} is null or ${table.additionalIncomeType} in ('SECOND_BUSINESS', 'RENTAL_INCOME', 'ALLOWANCE', 'ALIMONY', 'PENSION', 'REGULAR_OVERTIME', 'REGULAR_BONUSES', 'FOREIGN_INCOME', 'INVESTMENT_INCOME', 'FAMILY_SUPPORT', 'OTHER')`),
   check("employment_additional_income_check", sql`(${table.hasAdditionalIncome} = false and ${table.additionalIncomeType} is null and ${table.additionalIncomeAmount} = 0) or (${table.hasAdditionalIncome} = true and ${table.additionalIncomeType} is not null and ${table.additionalIncomeAmount} > 0)`)
 ]);
@@ -197,7 +197,7 @@ export const incomeSources = pgTable("income_sources", {
   monthlyAmount: numeric("monthly_amount", {precision: 14, scale: 2}).notNull(),
   descriptionEncrypted: text("description_encrypted"),
   ...timestamps
-});
+}, (table) => [check("income_sources_amount_check", sql`${table.monthlyAmount} >= 0`)]);
 
 export const liabilities = pgTable("liabilities", {
   id: serial("id").primaryKey(),
@@ -271,7 +271,8 @@ export const documents = pgTable("documents", {
 }, (table) => [
   index("documents_client_idx").on(table.clientId),
   index("documents_borrower_idx").on(table.borrowerId),
-  index("documents_required_lookup_idx").on(table.clientId, table.borrowerId, table.documentType, table.status)
+  index("documents_required_lookup_idx").on(table.clientId, table.borrowerId, table.documentType, table.status),
+  check("documents_size_check", sql`${table.sizeBytes} >= 0`)
 ]);
 
 export const lenderSubmissions = pgTable("lender_submissions", {
@@ -323,7 +324,7 @@ export const loanOffers = pgTable("loan_offers", {
   status: offerStatusEnum("status").notNull().default("SUBMITTED"),
   expiresAt: timestamp("expires_at", {withTimezone: true}),
   ...timestamps
-});
+}, (table) => [check("loan_offers_values_check", sql`${table.amount} >= 0 and ${table.interestRate} >= 0 and ${table.interestRate} <= 100 and ${table.termMonths} between 12 and 600 and (${table.monthlyPayment} is null or ${table.monthlyPayment} >= 0)`)]);
 
 export const notifications = pgTable("notifications", {
   id: serial("id").primaryKey(),
@@ -373,7 +374,7 @@ export const aiAnalysisLogs = pgTable("ai_analysis_logs", {
   durationMs: integer("duration_ms"),
   sanitizedError: text("sanitized_error"),
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
-});
+}, (table) => [check("ai_analysis_metrics_check", sql`${table.promptCharacters} >= 0 and (${table.durationMs} is null or ${table.durationMs} >= 0)`)]);
 
 export const lenderInviteTokens = pgTable("lender_invite_tokens", {
   id: serial("id").primaryKey(),
@@ -420,7 +421,8 @@ export const emailConfigurations = pgTable("email_configurations", {
   ...timestamps
 }, (table) => [
   index("email_configurations_status_idx").on(table.status, table.updatedAt),
-  uniqueIndex("email_configurations_single_active_uq").on(table.status).where(sql`${table.status} = 'ACTIVE'`)
+  uniqueIndex("email_configurations_single_active_uq").on(table.status).where(sql`${table.status} = 'ACTIVE'`),
+  check("email_configurations_port_check", sql`${table.port} between 1 and 65535`)
 ]);
 
 export const lenderContacts = pgTable("lender_contacts", {
@@ -480,7 +482,8 @@ export const caseVersions = pgTable("case_versions", {
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
 }, (table) => [
   uniqueIndex("case_versions_client_version_uq").on(table.clientId, table.versionNumber),
-  index("case_versions_client_idx").on(table.clientId)
+  index("case_versions_client_idx").on(table.clientId),
+  check("case_versions_numbers_check", sql`${table.versionNumber} >= 1 and (${table.pdfRendererVersion} is null or ${table.pdfRendererVersion} >= 0)`)
 ]);
 
 export const caseVersionDocuments = pgTable("case_version_documents", {
@@ -497,7 +500,8 @@ export const caseVersionDocuments = pgTable("case_version_documents", {
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
 }, (table) => [
   uniqueIndex("case_version_documents_version_document_uq").on(table.caseVersionId, table.documentId),
-  index("case_version_documents_version_idx").on(table.caseVersionId)
+  index("case_version_documents_version_idx").on(table.caseVersionId),
+  check("case_version_documents_size_check", sql`${table.sizeBytes} >= 0`)
 ]);
 
 export const companySubmissions = pgTable("company_submissions", {
@@ -549,7 +553,8 @@ export const submissionContactInvitations = pgTable("submission_contact_invitati
   ...timestamps
 }, (table) => [
   uniqueIndex("submission_contact_invitation_uq").on(table.companySubmissionId, table.contactId),
-  index("submission_contact_token_idx").on(table.tokenHash)
+  index("submission_contact_token_idx").on(table.tokenHash),
+  check("submission_contact_open_count_check", sql`${table.openCount} >= 0`)
 ]);
 
 export const companyPortalAccessGrants = pgTable("company_portal_access_grants", {
@@ -581,7 +586,10 @@ export const otpChallenges = pgTable("otp_challenges", {
   cancelledAt: timestamp("cancelled_at", {withTimezone: true}),
   lastSentAt: timestamp("last_sent_at", {withTimezone: true}).notNull(),
   ...timestamps
-}, (table) => [index("otp_challenges_active_idx").on(table.companySubmissionId, table.contactId, table.purpose, table.expiresAt)]);
+}, (table) => [
+  index("otp_challenges_active_idx").on(table.companySubmissionId, table.contactId, table.purpose, table.expiresAt),
+  check("otp_challenges_attempts_check", sql`${table.attempts} >= 0 and ${table.maxAttempts} > 0 and ${table.attempts} <= ${table.maxAttempts}`)
+]);
 
 export const externalPortalSessions = pgTable("external_portal_sessions", {
   id: serial("id").primaryKey(),
@@ -626,4 +634,7 @@ export const emailOutbox = pgTable("email_outbox", {
   invitationId: integer("invitation_id").references(() => submissionContactInvitations.id),
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", {withTimezone: true}).notNull().defaultNow()
-}, (table) => [index("email_outbox_pending_idx").on(table.status, table.availableAt)]);
+}, (table) => [
+  index("email_outbox_pending_idx").on(table.status, table.availableAt),
+  check("email_outbox_attempts_check", sql`${table.attempts} >= 0`)
+]);

@@ -147,3 +147,56 @@ The restricted SUPER_ADMIN-only state described above was the pre-opening state 
 - All temporary Firebase, PostgreSQL and MinIO test data was removed. The post-cleanup smoke marker count is zero.
 - API and Worker log scans found zero unhandled, internal-server, secret, authentication or delivery-job error markers during the controlled opening window.
 - HTTPS health is passing and all six Production containers are healthy.
+
+## Pilot Remediation - 2026-08-01
+
+### Numeric validation and database integrity
+
+- All client creation and editing count fields reject signs, decimals and scientific notation; monetary values accept zero and reject negatives or malformed input.
+- Frontend field validation, API/domain validation and PostgreSQL `CHECK` constraints now cover borrowers, children, income, liabilities, property and loan amounts, documents, offers, analysis metrics, SMTP port, case versions, invitations, OTP and outbox attempts.
+- The read-only Production audit completed before migration and found no existing negative values in the affected fields. No Production data was modified or deleted by the audit.
+- Direct API submissions cannot bypass the validation rules and return a sanitized field-level `400` response for invalid values.
+
+### Married borrower behavior
+
+- Selecting a married relationship hides both marital-status selectors, derives the second borrower address from the first borrower and keeps it synchronized.
+- The server independently canonicalizes married borrower marital status and address, so manual API requests cannot bypass the rule.
+- Changing away from married restores user-entered values where available and clears only automatically derived values. Existing cases remain readable and editable.
+- Hebrew PDF and lender snapshot generation continue to use the canonical borrower data.
+
+### Lender email investigation and delivery status
+
+- The two original lender invitations were traced through assignment, case version, outbox, Worker and `email_logs` without exposing recipient or client data.
+- Both original messages were accepted by the active SMTP server exactly once, each with one attempt and a sanitized message identifier. They were later confirmed in the recipients' Spam folders.
+- Root cause: downstream mailbox filtering after SMTP acceptance, not missing queue creation, Worker failure or SMTP rejection.
+- No automatic resend was performed for either original message.
+- Case and administration screens distinguish queued, SMTP accepted, failed and opened/responded states. They do not label SMTP acceptance as delivery.
+- Manual resend is allowed only for a failed message with no earlier successful SMTP acceptance, requires confirmation and uses an idempotency key.
+
+### Email guidance and abuse prevention
+
+- Registration verification, OTP, lender portal and administration flows display the partially masked recipient and advise checking Spam, Junk and Promotions folders.
+- Resend controls enforce a 60-second cooldown, visible countdown and bounded attempt limits. Deterministic idempotency prevents duplicate queue records.
+- Success copy states that the message was sent to the mail server unless a real downstream delivery signal exists; failed SMTP operations produce a visible sanitized failure.
+- Every operational email record exposes only masked recipient, creation time, attempt time, SMTP status, attempt count, resend state, safe failure reason and request ID to authorized Admin users.
+- HTML messages remain simple and include a matching plain-text part; OTP values, active verification links and credentials are not written to logs or administration responses.
+
+### Israel time handling
+
+- Database timestamps remain UTC instants. Application display uses one centralized formatter with locale `he-IL` and time zone `Asia/Jerusalem`.
+- User-facing timestamps use `DD/MM/YYYY HH:mm` across client, document, email, notification, audit, PDF, portal and administration views where those timestamps are presented.
+- Cooldowns, OTP expiry and link expiry continue to compare absolute instants rather than local-time strings.
+- Tests cover Israel standard time, daylight-saving time, both DST transitions and UTC dates that display on the following calendar day in Israel.
+- `email_logs` and audit timestamps are stored in UTC and rendered in Israel time.
+
+### Local verification
+
+- `npm ci`: passed.
+- Typecheck and lint: passed.
+- Unit tests: 120 passed.
+- Integration tests: 108 passed.
+- Playwright E2E: 19 passed, including 390, 768 and 1440 pixel layouts.
+- Production build and bundle safety scan: passed.
+- Drizzle migration check: passed.
+- Local Docker stack: all seven development services healthy.
+- Dependency audit retains advisories in upstream React Router RSC functionality and Firebase Admin transitive dependencies. SynCash is a BrowserRouter SPA and does not use React Server Components; forced dependency downgrades were rejected because they introduced more high-severity advisories.

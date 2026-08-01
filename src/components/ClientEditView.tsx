@@ -4,6 +4,7 @@ import { Navigate, useNavigate, useParams } from "react-router-dom";
 import type { Client } from "../types";
 import { ApiError, api } from "../utils/apiClient";
 import {
+  applyBorrowerRelationship,
   clientDealDetailsPayload, clientFormPayload, clientIncomePayload, clientLiabilitiesPayload,
   clientPersonalPayload, clientPropertyPayload, clientToForm, hasClientFormChanges, moveBorrower,
   resizeBorrowers, resizeChildrenAges, validateClientForm, validateClientFormSection,
@@ -74,9 +75,7 @@ export default function ClientEditView() {
         return {...current, householdNumberOfChildren: count, householdChildrenAges: resizeChildrenAges(current.householdChildrenAges, count)};
       }
       if (key === "borrowerRelationship") {
-        const relationship = value as string;
-        if (relationship === "MARRIED") return {...current, borrowerRelationship: relationship, householdLiabilities: current.householdLiabilities.length ? current.householdLiabilities : current.borrowers.flatMap((borrower) => borrower.liabilities), borrowers: current.borrowers.map((borrower) => ({...borrower, liabilities: []}))};
-        if (current.borrowerRelationship === "MARRIED") return {...current, borrowerRelationship: relationship, householdLiabilities: [], borrowers: current.borrowers.map((borrower, index) => ({...borrower, liabilities: index === 0 ? [...borrower.liabilities, ...current.householdLiabilities] : borrower.liabilities}))};
+        return applyBorrowerRelationship(current, value as string);
       }
       return {...current, [key]: value};
     });
@@ -89,7 +88,11 @@ export default function ClientEditView() {
       if (key === "numberOfChildren") { const count = value as string; borrower.numberOfChildren = count; borrower.childrenAges = resizeChildrenAges(borrower.childrenAges, count); }
       else if (key === "hasAdditionalIncome" && value === "no") { borrower.hasAdditionalIncome = "no"; borrower.additionalIncomeType = ""; borrower.additionalIncomeAmount = ""; borrower.additionalIncomeDescription = ""; }
       else borrower[key] = value;
-      borrowers[index] = borrower; return {...current, borrowers};
+      borrowers[index] = borrower;
+      if (current.borrowerRelationship === "MARRIED" && index === 0 && key === "address") {
+        for (let borrowerIndex = 1; borrowerIndex < borrowers.length; borrowerIndex += 1) borrowers[borrowerIndex] = {...borrowers[borrowerIndex], address: String(value)};
+      }
+      return {...current, borrowers};
     });
     clearError(`borrowers.${index}.${String(key)}`); setMessage("");
   };

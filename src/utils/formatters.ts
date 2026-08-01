@@ -128,7 +128,7 @@ const deliveryEventLabels: Record<string, string> = {
 const deliveryStatusLabels: Record<string, string> = {PENDING: "ממתין", QUEUED: "בתור לשליחה", PARTIALLY_SENT: "נשלח חלקית", SENT: "נשלח לשרת הדואר", FAILED: "שליחה נכשלה"};
 const decisionStatusLabels: Record<string, string> = {PENDING: "ממתינה לתגובה", PENDING_VERIFICATION: "ממתינה לאימות", INTERESTED: "מעוניינת", NOT_INTERESTED: "לא מעוניינת", EXPIRED: "פג תוקף", CANCELLED: "בוטלה"};
 const accessStatusLabels: Record<string, string> = {NONE: "ללא גישה", ACTIVE: "גישה מלאה פעילה", EXPIRED: "הגישה פגה", REVOKED: "הגישה בוטלה"};
-const invitationStatusLabels: Record<string, string> = {QUEUED: "בתור לשליחה", SENT: "נשלח", FAILED: "נכשל", OPENED: "נפתח", CLOSED: "נסגר", EXPIRED: "פג תוקף"};
+const invitationStatusLabels: Record<string, string> = {QUEUED: "בתור לשליחה", SENT: "נשלח לשרת הדואר", FAILED: "נכשל", OPENED: "נפתח", CLOSED: "נסגר", EXPIRED: "פג תוקף"};
 export const formatDeliveryStatus = (value: string) => deliveryStatusLabels[value] ?? "מצב לא ידוע";
 export const formatDecisionStatus = (value: string) => decisionStatusLabels[value] ?? "מצב לא ידוע";
 export const formatAccessStatus = (value: string) => accessStatusLabels[value] ?? "מצב לא ידוע";
@@ -168,10 +168,48 @@ export function formatCurrency(value: number | string | null | undefined): strin
   return new Intl.NumberFormat("he-IL", {style: "currency", currency: "ILS", maximumFractionDigits: 0}).format(Number.isFinite(amount) ? amount : 0);
 }
 
-export function formatDate(value: string | Date | null | undefined): string {
+export const ISRAEL_TIME_ZONE = "Asia/Jerusalem";
+const israelDateTimeFormatter = new Intl.DateTimeFormat("he-IL", {
+  timeZone: ISRAEL_TIME_ZONE,
+  calendar: "gregory",
+  numberingSystem: "latn",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23"
+});
+
+export function formatIsraelDateTime(value: string | Date | null | undefined): string {
   if (!value) return "לא צוין";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "לא צוין" : new Intl.DateTimeFormat("he-IL", {day: "2-digit", month: "2-digit", year: "numeric"}).format(date);
+  if (Number.isNaN(date.getTime())) return "לא צוין";
+  const parts = Object.fromEntries(israelDateTimeFormatter.formatToParts(date).map((part) => [part.type, part.value]));
+  return `${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
+}
+
+export function formatDate(value: string | Date | null | undefined): string {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split("-");
+    return `${day}/${month}/${year}`;
+  }
+  return formatIsraelDateTime(value);
+}
+
+export function maskEmailAddress(value: string | null | undefined): string {
+  if (!value || !value.includes("@")) return "כתובת מוסתרת";
+  if (value.includes("*")) return value;
+  const [localPart, domain] = value.trim().split("@");
+  const visibleLocal = localPart.length <= 2 ? localPart.slice(0, 1) : localPart.slice(0, 2);
+  const domainParts = domain.split(".");
+  const domainName = domainParts.shift() ?? "";
+  const visibleDomain = domainName.slice(0, 1);
+  return `${visibleLocal}${"*".repeat(Math.max(2, localPart.length - visibleLocal.length))}@${visibleDomain}${"*".repeat(Math.max(2, domainName.length - visibleDomain.length))}${domainParts.length ? `.${domainParts.join(".")}` : ""}`;
+}
+
+export function emailServerAcceptedMessage(recipient: string | null | undefined): string {
+  return `המייל נשלח לשרת הדואר עבור הכתובת ${maskEmailAddress(recipient)}.\nאם הוא לא מופיע בתוך כמה דקות, יש לבדוק גם בתיקיות ספאם, דואר זבל וקידומי מכירות.`;
 }
 
 export function formatFileSize(bytes: number): string {

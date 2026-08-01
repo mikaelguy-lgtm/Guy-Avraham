@@ -115,9 +115,10 @@ test("advisor registration sends a real verification email without password layo
     expect(JSON.stringify(registrationBody)).not.toMatch(/oobCode|verify\?|password/i);
 
     await expect(page).toHaveURL(/\/verify-email$/);
-    await expect(page.getByText("מייל האימות התקבל בהצלחה אצל ספק הדואר.")).toBeVisible();
-    await expect(page.getByText(email, {exact: true})).toBeVisible();
-    await expect(page.getByText("נשלח בהצלחה", {exact: true})).toBeVisible();
+    await expect(page.getByText("המייל נשלח לשרת הדואר", {exact: false})).toBeVisible();
+    await expect(page.getByText("ספאם, דואר זבל וקידומי מכירות", {exact: false})).toBeVisible();
+    await expect(page.getByText(email, {exact: true})).toHaveCount(0);
+    await expect(page.getByRole("button", {name: /שליחת המייל מחדש/})).toBeDisabled();
     await page.getByRole("button", {name: "בדקתי, כתובת הדוא״ל אומתה"}).click();
     await expect(page.getByText("כתובת הדוא״ל עדיין לא אומתה. פתח את הקישור שקיבלת במייל ונסה שוב.")).toBeVisible();
 

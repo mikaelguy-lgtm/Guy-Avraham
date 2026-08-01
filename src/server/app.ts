@@ -32,6 +32,7 @@ import {DeliveryError} from "../domain/lenderDelivery.js";
 import type {LenderDeliveryApplication} from "../services/lenderDelivery.js";
 import type {DeliveryEventBroker} from "../services/deliveryEvents.js";
 import {validateSmtpEndpoint} from "../services/smtpSecurity.js";
+import {maskEmailAddress} from "../utils/formatters.js";
 
 export interface AppServices {
   env: AppEnv;
@@ -57,16 +58,19 @@ function routeParam(request: Request, name: string): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
 
+const strictNumber = () => z.preprocess((value) => typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value) ? Number.NaN : value, z.coerce.number().finite());
+const strictInteger = () => z.preprocess((value) => typeof value === "string" && !/^\d+$/.test(value) ? Number.NaN : value, z.coerce.number().int());
+
 const smtpSettingsSchema = z.object({
   provider: z.enum(["GMAIL", "BREVO", "CUSTOM"]),
   host: z.string().trim().min(1).max(253),
-  port: z.coerce.number().int().min(1).max(65_535),
+  port: strictInteger().pipe(z.number().min(1).max(65_535)),
   securityMode: z.enum(["NONE", "STARTTLS", "TLS"]),
   username: z.string().trim().max(320).nullable().optional(),
   fromEmail: z.string().trim().email().max(320),
   fromName: z.string().trim().min(1).max(200),
   replyTo: z.string().trim().email().max(320),
-  baseConfigurationId: z.coerce.number().int().positive().optional(),
+  baseConfigurationId: strictInteger().pipe(z.number().positive()).optional(),
   smtpPassword: z.string().max(500).optional()
 }).strict().superRefine((value, context) => {
   if ((value.provider === "GMAIL" || value.provider === "BREVO") && !value.username) {
@@ -899,7 +903,7 @@ export function createApp(services: AppServices) {
   }));
 
   app.post("/api/lender/submissions/:id/offers", ...authenticated, auth.requireLenderSubmissionAccess, rateLimit(services.limiter, "offer", 20, 60), asyncRoute(async (request, response) => {
-    const input = z.object({amount: z.coerce.number().positive(), interestRate: z.coerce.number().positive().max(100), termMonths: z.coerce.number().int().min(12).max(600), monthlyPayment: z.coerce.number().positive().optional(), conditions: z.string().max(4000).optional(), expiresAt: z.coerce.date().optional()}).parse(request.body);
+    const input = z.object({amount: strictNumber().pipe(z.number().nonnegative()), interestRate: strictNumber().pipe(z.number().nonnegative().max(100)), termMonths: strictInteger().pipe(z.number().min(12).max(600)), monthlyPayment: strictNumber().pipe(z.number().nonnegative()).optional(), conditions: z.string().max(4000).optional(), expiresAt: z.coerce.date().optional()}).parse(request.body);
     const offer = await services.store.createOffer({submissionId: request.authorizedSubmission!.id, userId: request.user!.id, ...input});
     await services.store.notifyAdvisor(request.authorizedSubmission!.clientId, "OFFER", "הצעת מימון חדשה", `הצעה ${offer.id} התקבלה`);
     await services.store.addAudit(request.user!.id, "OFFER_CREATED", "offer", offer.id, {submissionId: request.authorizedSubmission!.id}, request.requestId);
@@ -913,7 +917,7 @@ export function createApp(services: AppServices) {
     await auth.requireLenderSubmissionAccess(request, response, next);
   };
   app.patch("/api/lender/offers/:id", ...authenticated, authorizeOffer, asyncRoute(async (request, response) => {
-    const input = z.object({amount: z.coerce.number().positive().optional(), interestRate: z.coerce.number().positive().max(100).optional(), termMonths: z.coerce.number().int().min(12).max(600).optional(), conditions: z.string().max(4000).optional()}).parse(request.body);
+    const input = z.object({amount: strictNumber().pipe(z.number().nonnegative()).optional(), interestRate: strictNumber().pipe(z.number().nonnegative().max(100)).optional(), termMonths: strictInteger().pipe(z.number().min(12).max(600)).optional(), conditions: z.string().max(4000).optional()}).parse(request.body);
     const updated = await services.store.updateOffer(Number(request.params.id), request.authorizedSubmission!.id, input);
     if (!updated) { response.status(404).json({error: "OFFER_NOT_FOUND"}); return; }
     await services.store.addAudit(request.user!.id, "OFFER_UPDATED", "offer", Number(request.params.id), null, request.requestId);
@@ -1075,7 +1079,7 @@ export function createApp(services: AppServices) {
   }));
 
   app.post("/api/admin/advisors/:id/resend-verification", ...authenticated, auth.requireSuperAdmin, requireEmailDelivery,
-    rateLimit(services.limiter, "admin-verification-resend", 5, 60 * 60), asyncRoute(async (request, response) => {
+    rateLimit(services.limiter, "admin-verification-resend-minute", 1, 60), rateLimit(services.limiter, "admin-verification-resend-hour", 5, 60 * 60), asyncRoute(async (request, response) => {
       const advisor = await services.store.getAdvisorAccount(Number(request.params.id));
       if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
       if (advisor.status !== "PENDING" || advisor.emailVerified) { response.status(409).json({error: "VERIFICATION_NOT_REQUIRED", requestId: request.requestId}); return; }
@@ -1123,6 +1127,11 @@ export function createApp(services: AppServices) {
 
   app.get("/api/notifications", ...authenticated, asyncRoute(async (request, response) => {
     response.json(await services.store.listNotifications(request.user!.id));
+  }));
+
+  app.get("/api/admin/email-logs", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => {
+    const logs = await services.store.listRecentEmailLogs(Number(request.query.limit) || 200);
+    response.json(logs.map(({recipient, ...entry}) => ({...entry, recipientMasked: maskEmailAddress(recipient)})));
   }));
   app.patch("/api/notifications/read-all", ...authenticated, asyncRoute(async (request, response) => {
     const count = await services.store.markAllNotificationsRead(request.user!.id);
