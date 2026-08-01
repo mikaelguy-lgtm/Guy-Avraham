@@ -668,8 +668,10 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   }
 
   private async queueDecisionMessages(client: PoolClient, row: Row, interested: boolean, context: DeliveryContext): Promise<void> {
-    const contacts = await client.query("select id,email from lender_contacts where lender_id=$1 and active=true and deleted_at is null", [row.company_id]);
-    for (const contact of contacts.rows) await client.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id) values($1,'LENDER_DECISION',$2,$3,'PENDING',now(),$4) on conflict(idempotency_key) do nothing`, [`decision:${row.submission_id}:${contact.id}:${interested}`, contact.email, {submissionId: row.submission_id, interested}, row.submission_id]);
+    if (!interested) {
+      const contacts = await client.query("select id,email from lender_contacts where lender_id=$1 and active=true and deleted_at is null", [row.company_id]);
+      for (const contact of contacts.rows) await client.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id) values($1,'LENDER_DECISION',$2,$3,'PENDING',now(),$4) on conflict(idempotency_key) do nothing`, [`decision:${row.submission_id}:${contact.id}:${interested}`, contact.email, {submissionId: row.submission_id, interested}, row.submission_id]);
+    }
     const advisor = await client.query("select u.id,u.email,u.first_name from advisor_profiles ap join users u on u.id=ap.user_id where ap.id=$1", [row.advisor_id]);
     if (advisor.rows[0]) {
       await client.query(`insert into notifications(user_id,type,title,body) values($1,$2,$3,$4)`, [advisor.rows[0].id, interested ? "COMPANY_INTERESTED" : "COMPANY_NOT_INTERESTED", interested ? "חברת מימון מעוניינת בתיק" : "חברת מימון אינה מעוניינת בתיק", `חברת ${row.company_name} ${interested ? "מעוניינת" : "אינה מעוניינת"} בתיק ${row.public_case_number}.`]);
@@ -927,6 +929,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       count(*) filter(where se.event_type='OTP_FAILED')::int otp_failed_events,
       (select count(*)::int from email_outbox eo where eo.company_submission_id=cs.id and eo.template='OTP') otp_emails,
       (select count(*)::int from email_outbox eo where eo.company_submission_id=cs.id and eo.template='FULL_ACCESS') full_access_emails,
+      (select count(*)::int from email_outbox eo where eo.company_submission_id=cs.id and eo.template='LENDER_DECISION') lender_follow_up_emails,
       (select count(*)::int from company_portal_offers po where po.company_submission_id=cs.id) offers
       from company_submissions cs left join submission_events se on se.company_submission_id=cs.id join case_versions cv on cv.id=cs.case_version_id
       where cv.client_id=$1 and cs.company_id=$2 group by cs.id`, [clientId, companyId]);

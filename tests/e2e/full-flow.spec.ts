@@ -231,7 +231,7 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     const replayReview = await reviewContext.request.get(`${apiOrigin}/api/external/review/${reviewToken}`); const replayBody = await replayReview.json() as {csrfToken: string};
     const replayOtp = await reviewContext.request.post(`${apiOrigin}/api/external/review/${reviewToken}/interested/verify`, {headers: {"x-csrf-token": replayBody.csrfToken}, data: {code: interestOtp}}); expect(replayOtp.status()).toBe(409);
     const flowStateResponse = await request.get(`${apiOrigin}/api/test/lender-flow?clientId=${clientId}&companyId=${companyId}`, {headers: {authorization: adminAuthorization}}); expect(flowStateResponse.ok()).toBe(true);
-    expect(await flowStateResponse.json()).toEqual(expect.objectContaining({interested_events: 1, grant_events: 1, open_events: 1, otp_failed_events: 1, otp_emails: 1, full_access_emails: 0}));
+    expect(await flowStateResponse.json()).toEqual(expect.objectContaining({interested_events: 1, grant_events: 1, open_events: 1, otp_failed_events: 1, otp_emails: 1, full_access_emails: 0, lender_follow_up_emails: 0}));
 
     const secondReviewContext = await browser.newContext(); contexts.push(secondReviewContext); const secondReviewPage = await secondReviewContext.newPage();
     await secondReviewPage.goto(reviewB); await expect(secondReviewPage.getByText("כבר התקבלה החלטה מטעם חברתכם")).toBeVisible();
