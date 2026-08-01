@@ -43,6 +43,13 @@ async function waitForMail(request: APIRequestContext, recipient: string, subjec
   return message!;
 }
 
+async function countMessages(request: APIRequestContext, recipient: string, subjectPart: string): Promise<number> {
+  const listingResponse = await request.get(`${mailpitOrigin}/api/v1/messages`);
+  if (!listingResponse.ok()) return 0;
+  const listing = await listingResponse.json() as {messages?: MailpitMessage[]};
+  return listing.messages?.filter((item) => item.Subject.includes(subjectPart) && item.To.some((target) => target.Address.toLowerCase() === recipient.toLowerCase())).length ?? 0;
+}
+
 function linkFrom(message: MailpitDetail, path: "review" | "access"): string {
   const source = `${message.HTML}\n${message.Text}`.replace(/&amp;/g, "&");
   const link = source.match(new RegExp(`http://localhost:5173/external/${path}/[A-Za-z0-9_-]+`))?.[0] ?? "";
@@ -97,7 +104,7 @@ const clientPayload = {
   loanPurpose: "SECOND_HAND_PURCHASE", loanRequest: {requestedAmount: 1_000_000}, dealDetails: "בדיקת מסירה מבקשת מימון. delivery-client@syncash.local ומעסיק סודי בע״מ", status: "ACTIVE"
 };
 
-test("advisor-to-company delivery uses personal links, OTP and a seven-day full portal", async ({browser, page, request}) => {
+test("advisor-to-company delivery uses one OTP and a persistent seven-day portal grant", async ({browser, page, request}) => {
   test.setTimeout(360_000);
   const advisorEmail = process.env.E2E_ADVISOR_EMAIL; const advisorPassword = process.env.E2E_ADVISOR_PASSWORD;
   const adminEmail = process.env.E2E_SUPER_ADMIN_EMAIL; const adminPassword = process.env.E2E_SUPER_ADMIN_PASSWORD;
@@ -209,20 +216,27 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     await expect(reviewPage.getByText("המייל נשלח לשרת הדואר", {exact: false})).toBeVisible();
     await expect(reviewPage.getByText("ספאם, דואר זבל וקידומי מכירות", {exact: false})).toBeVisible();
     const interestOtp = otpFrom(await waitForMail(request, contactA, "קוד אימות לפתיחת תיק מימון"));
+    const invalidOtp = interestOtp === "000000" ? "111111" : "000000";
+    await reviewPage.getByLabel("קוד חד־פעמי").fill(invalidOtp);
+    await reviewPage.getByRole("button", {name: "אימות ומעבר לתיק המלא"}).click();
+    await expect(reviewPage.getByRole("alert")).toContainText("קוד האימות שגוי");
+    await expect(reviewPage.getByRole("heading", {name: "תיק מימון מלא"})).toHaveCount(0);
     await reviewPage.getByLabel("קוד חד־פעמי").fill(interestOtp);
-    await reviewPage.getByRole("button", {name: "אימות והמשך"}).click();
-    await expect(reviewPage.getByText("הגישה המלאה נפתחה")).toBeVisible();
+    await reviewPage.getByRole("button", {name: "אימות ומעבר לתיק המלא"}).click();
+    await expect(reviewPage).toHaveURL(/\/external\/portal$/);
+    await expect(reviewPage.getByRole("heading", {name: "תיק מימון מלא"})).toBeVisible();
+    await expect.poll(() => countMessages(request, contactA, "קוד אימות לפתיחת תיק מימון")).toBe(1);
+    expect(await findMessage(request, contactA, "גישה מלאה לתיק מימון נפתחה")).toBeNull();
+    expect(await findMessage(request, contactB, "גישה מלאה לתיק מימון נפתחה")).toBeNull();
+    const replayReview = await reviewContext.request.get(`${apiOrigin}/api/external/review/${reviewToken}`); const replayBody = await replayReview.json() as {csrfToken: string};
+    const replayOtp = await reviewContext.request.post(`${apiOrigin}/api/external/review/${reviewToken}/interested/verify`, {headers: {"x-csrf-token": replayBody.csrfToken}, data: {code: interestOtp}}); expect(replayOtp.status()).toBe(409);
+    const flowStateResponse = await request.get(`${apiOrigin}/api/test/lender-flow?clientId=${clientId}&companyId=${companyId}`, {headers: {authorization: adminAuthorization}}); expect(flowStateResponse.ok()).toBe(true);
+    expect(await flowStateResponse.json()).toEqual(expect.objectContaining({interested_events: 1, grant_events: 1, open_events: 1, otp_failed_events: 1, otp_emails: 1, full_access_emails: 0}));
 
     const secondReviewContext = await browser.newContext(); contexts.push(secondReviewContext); const secondReviewPage = await secondReviewContext.newPage();
     await secondReviewPage.goto(reviewB); await expect(secondReviewPage.getByText("כבר התקבלה החלטה מטעם חברתכם")).toBeVisible();
 
-    const accessMessageB = await waitForMail(request, contactB, "גישה מלאה לתיק מימון נפתחה"); const accessB = linkFrom(accessMessageB, "access");
-    const portalContext = await browser.newContext(); contexts.push(portalContext); const portalPage = await portalContext.newPage();
-    await portalPage.goto(accessB); await expect(portalPage.getByRole("heading", {name: "גישה מלאה לתיק"})).toBeVisible();
-    await portalPage.getByRole("button", {name: "שליחת קוד כניסה"}).click();
-    const portalOtp = otpFrom(await waitForMail(request, contactB, "קוד אימות לפתיחת תיק מלא"));
-    await portalPage.getByLabel("קוד חד־פעמי").fill(portalOtp);
-    await portalPage.getByRole("button", {name: "כניסה מאובטחת"}).click();
+    const portalPage = reviewPage;
     await expect(portalPage.getByRole("heading", {name: "תיק מימון מלא"})).toBeVisible();
     await expect(portalPage.getByTestId("external-borrowers-full")).toBeVisible();
     await expect(portalPage.locator(".external-borrower-card")).toHaveCount(2);
@@ -232,16 +246,32 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     await expect(portalPage.getByText("מעסיק סודי בע״מ", {exact: true})).toBeVisible();
     await expect(portalPage.getByText("היועץ המטפל")).toBeVisible();
     await portalPage.setViewportSize({width: 1440, height: 1000}); await portalPage.screenshot({path: `${borrowerLayoutProofDirectory}/live-full-flow-full-1440.png`, fullPage: true});
-    await expect(portalPage.getByRole("button", {name: /הצעה/})).toHaveCount(0);
+    await portalPage.getByLabel("סכום ההצעה *").fill("900000");
+    await portalPage.getByLabel("ריבית שנתית באחוזים *").fill("4.75");
+    await portalPage.getByLabel("תקופה בחודשים *").fill("240");
+    await portalPage.getByLabel("החזר חודשי משוער").fill("5800");
+    await portalPage.getByLabel("תנאים והערות").fill("בכפוף לאישור ועדת אשראי");
+    const offerResponse = portalPage.waitForResponse((response) => response.url().endsWith("/api/external/portal/offers") && response.request().method() === "POST");
+    await portalPage.getByRole("button", {name: "הגשת הצעה"}).click();
+    const submittedOfferResponse = await offerResponse; expect(submittedOfferResponse.status()).toBe(201);
+    await expect(portalPage.getByText("ההצעה הוגשה בהצלחה ליועץ.")).toBeVisible();
+    const duplicateOffer = await reviewContext.request.post(`${apiOrigin}/api/external/portal/offers`, {headers: {"x-csrf-token": replayBody.csrfToken}, data: submittedOfferResponse.request().postDataJSON()}); expect(duplicateOffer.status()).toBe(201); expect(await duplicateOffer.json()).toEqual(expect.objectContaining({idempotent: true}));
+    const offerFlowState = await request.get(`${apiOrigin}/api/test/lender-flow?clientId=${clientId}&companyId=${companyId}`, {headers: {authorization: adminAuthorization}}); expect((await offerFlowState.json()).offers).toBe(1);
     const fullPdfPromise = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "PDF מלא"}).click(); const fullPdfDownload = await fullPdfPromise; expect(fullPdfDownload.suggestedFilename()).toContain("תיק-מימון-מלא");
     const fullPdf = await downloadedBuffer(fullPdfDownload); await writeFile(`${pdfProofDirectory}/full-from-docker-endpoint.pdf`, fullPdf); expect(fullPdf.toString("latin1")).toContain("NotoSansHebrew"); const fullExtracted = await extractPdf(fullPdf); expectHealthyHebrewPdf(fullExtracted, "full"); expect(fullExtracted.text).toContain("בדיקת מסירה");
     const documentDownload = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: /^הורדת /}).first().click(); expect((await documentDownload).suggestedFilename()).not.toContain("ID_FRONT");
     const zipDownloadPromise = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "הורדת כל התיק"}).click(); const zipDownload = await zipDownloadPromise; expect(zipDownload.suggestedFilename()).toMatch(/\.zip$/);
     const zip = await JSZip.loadAsync(await downloadedBuffer(zipDownload)); const zippedPdfEntry = Object.values(zip.files).find((entry) => /תיק-מימון-מלא.*\.pdf$/u.test(entry.name)); expect(zippedPdfEntry).toBeDefined();
     const zippedPdf = await zippedPdfEntry!.async("nodebuffer"); await writeFile(`${pdfProofDirectory}/full-from-zip.pdf`, zippedPdf); expect(zippedPdf).toEqual(fullPdf); expectHealthyHebrewPdf(await extractPdf(zippedPdf), "full");
+    await portalPage.reload(); await expect(portalPage.getByRole("heading", {name: "תיק מימון מלא"})).toBeVisible();
+    const sameSessionPage = await reviewContext.newPage(); await sameSessionPage.goto("/external/portal"); await expect(sameSessionPage.getByRole("heading", {name: "תיק מימון מלא"})).toBeVisible(); await sameSessionPage.close();
+    expect(await countMessages(request, contactA, "קוד אימות לפתיחת תיק מימון")).toBe(1);
+    const foreignDocument = await reviewContext.request.get(`${apiOrigin}/api/external/portal/documents/not-a-document-from-this-case/view`); expect(foreignDocument.status()).toBe(404);
 
     await page.goto(`/advisor/clients/${clientId}`); await page.getByRole("button", {name: "תגובות חברות"}).click();
     await expect(page.getByText(companyName)).toBeVisible(); await expect(page.getByText("מעוניינת", {exact: true})).toBeVisible();
+    await page.locator(".response-card").filter({hasText: companyName}).getByRole("button", {name: "צפייה בציר הזמן"}).click();
+    await expect(page.getByText("הוגשה הצעת מימון", {exact: true})).toBeVisible();
     await admin.page.goto("/admin/company-submissions"); await expect(admin.page.getByRole("heading", {name: "שליחות לחברות"})).toBeVisible(); await expect(admin.page.getByText(client.publicCaseNumber)).toBeVisible();
 
     const raceCompanyName = `מימון פסגה ${unique}`; const raceContactA = `race-a-${unique}@syncash.local`; const raceContactB = `race-b-${unique}@syncash.local`;
@@ -262,11 +292,13 @@ test("advisor-to-company delivery uses personal links, OTP and a seven-day full 
     const raceContextB = await browser.newContext(); contexts.push(raceContextB); const racePageB = await raceContextB.newPage(); await racePageB.goto(raceReviewB);
     racePageB.once("dialog", (dialog) => void dialog.accept()); await racePageB.getByRole("button", {name: "לא מעוניינים", exact: true}).click();
     await expect(racePageB.getByText("התגובה נשמרה")).toBeVisible();
-    await racePageA.getByLabel("קוד חד־פעמי").fill(pendingOtp); await racePageA.getByRole("button", {name: "אימות והמשך"}).click();
+    await racePageA.getByLabel("קוד חד־פעמי").fill(pendingOtp); await racePageA.getByRole("button", {name: "אימות ומעבר לתיק המלא"}).click();
     await expect(racePageA.getByRole("alert")).toContainText("כבר התקבלה החלטה");
     await racePageA.reload(); await expect(racePageA.getByText("כבר התקבלה החלטה מטעם חברתכם")).toBeVisible();
     await Promise.all([waitForMail(request, raceContactA, "תודה על תגובתכם"), waitForMail(request, raceContactB, "תודה על תגובתכם"), waitForMail(request, advisorEmail, `חברת ${raceCompanyName} אינה מעוניינת`)]);
     expect(await findMessage(request, raceContactA, "גישה מלאה לתיק מימון נפתחה")).toBeNull();
+    const expireSession = await request.post(`${apiOrigin}/api/test/lender-flow/expire-session`, {headers: {authorization: adminAuthorization}, data: {clientId, companyId}}); expect(expireSession.status()).toBe(204);
+    await portalPage.reload(); await expect(portalPage.getByRole("heading", {name: "הגישה לתיק הסתיימה"})).toBeVisible();
     expect(consoleErrors).toEqual([]); expect(failedResponses).toEqual([]);
   } finally {
     for (const context of contexts.reverse()) await context.close().catch(() => undefined);

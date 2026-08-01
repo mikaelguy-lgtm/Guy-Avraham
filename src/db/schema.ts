@@ -602,6 +602,25 @@ export const externalPortalSessions = pgTable("external_portal_sessions", {
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
 }, (table) => [index("external_portal_sessions_grant_idx").on(table.accessGrantId)]);
 
+export const companyPortalOffers = pgTable("company_portal_offers", {
+  id: serial("id").primaryKey(),
+  companySubmissionId: integer("company_submission_id").notNull().references(() => companySubmissions.id),
+  contactId: integer("contact_id").notNull().references(() => lenderContacts.id),
+  idempotencyKey: varchar("idempotency_key", {length: 100}).notNull(),
+  amount: numeric("amount", {precision: 14, scale: 2}).notNull(),
+  interestRate: numeric("interest_rate", {precision: 7, scale: 4}).notNull(),
+  termMonths: integer("term_months").notNull(),
+  monthlyPayment: numeric("monthly_payment", {precision: 14, scale: 2}),
+  conditions: text("conditions"),
+  expiresAt: timestamp("expires_at", {withTimezone: true}),
+  status: offerStatusEnum("status").notNull().default("SUBMITTED"),
+  ...timestamps
+}, (table) => [
+  uniqueIndex("company_portal_offers_idempotency_uq").on(table.companySubmissionId, table.contactId, table.idempotencyKey),
+  index("company_portal_offers_submission_idx").on(table.companySubmissionId, table.createdAt),
+  check("company_portal_offers_values_check", sql`${table.amount} > 0 and ${table.interestRate} >= 0 and ${table.interestRate} <= 100 and ${table.termMonths} between 12 and 600 and (${table.monthlyPayment} is null or ${table.monthlyPayment} >= 0)`)
+]);
+
 export const submissionEvents = pgTable("submission_events", {
   id: serial("id").primaryKey(),
   companySubmissionId: integer("company_submission_id").notNull().references(() => companySubmissions.id),

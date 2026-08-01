@@ -405,6 +405,9 @@ p { line-height: 1.65; }
 .document-card-grid .document-card h3, .document-card-grid .document-card small { margin: 0; }
 .document-card-grid .document-card small { color: var(--muted); }
 .document-card-grid .document-card > div:last-child { display: flex; gap: .35rem; }
+.portal-offer-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.portal-offer-form label { display: grid; gap: .45rem; }
+.portal-offer-form .full-width, .portal-offer-form button { grid-column: 1 / -1; }
 
 .external-borrowers-section { display: grid; gap: 1rem; min-inline-size: 0; }
 .external-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 1rem; padding-inline: .2rem; }
@@ -455,7 +458,7 @@ p { line-height: 1.65; }
 
 @media (max-width: 720px) {
   .delivery-steps li { display: grid; justify-items: center; padding: .55rem .25rem; text-align: center; font-size: .72rem; }
-  .delivery-preview-grid, .delivery-confirmation dl, .external-case-grid, .document-card-grid, .form-grid.two-columns { grid-template-columns: 1fr; }
+  .delivery-preview-grid, .delivery-confirmation dl, .external-case-grid, .document-card-grid, .portal-offer-form, .form-grid.two-columns { grid-template-columns: 1fr; }
   .delivery-preview-grid article.wide, .external-wide, .form-grid .wide { grid-column: auto; }
   .arena-actions.split, .decision-panel > div, .external-actions { align-items: stretch; flex-direction: column; }
   .company-stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }

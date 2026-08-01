@@ -331,6 +331,7 @@ export interface ExternalAccess {
   versionNumber: number;
   expiresAt: string;
   requiresOtp: boolean;
+  authenticated?: boolean;
   csrfToken: string;
 }
 

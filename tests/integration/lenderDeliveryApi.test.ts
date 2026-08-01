@@ -19,7 +19,7 @@ function fakeDelivery(overrides: Partial<LenderDeliveryApplication> = {}): Lende
     listCalendar: vi.fn().mockResolvedValue([]), createCalendarException: vi.fn(), updateCalendarException: vi.fn(), deleteCalendarException: vi.fn(), listAdminSubmissions: vi.fn().mockResolvedValue([]), getAdminSubmission: vi.fn(), getAdminPdf: vi.fn().mockResolvedValue({body: Buffer.from("%PDF-secure"), filename: "תיק-מימון-מוסווה.pdf"}), adminAction: vi.fn(),
     getReview: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, maskedSnapshot: {borrowers: [{label: "לווה 1"}]}, closed: false}),
     getMaskedPdf: vi.fn().mockResolvedValue({body: Buffer.from("%PDF-test"), filename: "תיק-מוסווה.pdf"}), decideNotInterested: vi.fn().mockResolvedValue({decisionStatus: "NOT_INTERESTED"}), startInterest: vi.fn(), resendInterestCode: vi.fn(), verifyInterest: vi.fn(),
-    getAccess: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, expiresAt: new Date().toISOString(), requiresOtp: true}), sendAccessCode: vi.fn(), verifyAccessCode: vi.fn(), getPortalCase: vi.fn(), getPortalPdf: vi.fn(), listPortalDocuments: vi.fn(), getPortalDocument: vi.fn(), getPortalZip: vi.fn(), logoutPortal: vi.fn(), processJobs: vi.fn()
+    getAccess: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, expiresAt: new Date().toISOString(), requiresOtp: true}), sendAccessCode: vi.fn(), verifyAccessCode: vi.fn(), getPortalCase: vi.fn(), getPortalPdf: vi.fn(), listPortalDocuments: vi.fn(), getPortalDocument: vi.fn(), getPortalZip: vi.fn(), createPortalOffer: vi.fn(), logoutPortal: vi.fn(), inspectTestFlow: vi.fn(), expireTestPortalSessions: vi.fn(), processJobs: vi.fn()
   };
   return {...defaults, ...overrides} as LenderDeliveryApplication;
 }
@@ -143,5 +143,42 @@ describe("secure lender delivery API", () => {
     const cookie = (review.headers["set-cookie"] as unknown as string[])[0];
     await request(app).post("/api/external/review/personal-token/not-interested").set("cookie", cookie).set("x-csrf-token", review.body.csrfToken).send({}).expect(200, {decisionStatus: "NOT_INTERESTED"});
     expect(delivery.decideNotInterested).toHaveBeenCalledOnce();
+  });
+
+  it("creates the authenticated portal session from the single interest OTP", async () => {
+    const verifyInterest = vi.fn().mockResolvedValue({
+      sessionToken: "server-only-session-token",
+      expiresAt: new Date("2026-08-02T12:00:00.000Z"),
+      decisionStatus: "INTERESTED",
+      accessStatus: "ACTIVE",
+      fullAccessExpiresAt: new Date("2026-08-08T12:00:00.000Z")
+    });
+    const app = application(fakeDelivery({verifyInterest}));
+    const review = await request(app).get("/api/external/review/personal-token").expect(200);
+    const csrfCookie = (review.headers["set-cookie"] as unknown as string[])[0];
+    const response = await request(app)
+      .post("/api/external/review/personal-token/interested/verify")
+      .set("cookie", csrfCookie)
+      .set("x-csrf-token", review.body.csrfToken)
+      .send({code: "123456"})
+      .expect(200);
+
+    expect(response.body).toEqual(expect.objectContaining({authenticated: true, decisionStatus: "INTERESTED", accessStatus: "ACTIVE"}));
+    expect(response.body).not.toHaveProperty("sessionToken");
+    expect((response.headers["set-cookie"] as unknown as string[]).some((cookie) => cookie.startsWith("syncash_portal_session=server-only-session-token") && cookie.includes("Path=/api/external/portal") && cookie.includes("HttpOnly"))).toBe(true);
+    expect(verifyInterest).toHaveBeenCalledOnce();
+  });
+
+  it("accepts an idempotent offer only through an authenticated portal session", async () => {
+    const createPortalOffer = vi.fn().mockResolvedValue({id: 91, status: "SUBMITTED", createdAt: "2026-08-01T12:00:00.000Z", idempotent: false});
+    const app = application(fakeDelivery({createPortalOffer}));
+    const review = await request(app).get("/api/external/review/personal-token").expect(200);
+    const csrfCookie = (review.headers["set-cookie"] as unknown as string[])[0];
+    const payload = {idempotencyKey: "74c435a1-f2ab-44b7-b348-bf8baae6fe8c", amount: 900000, interestRate: 4.8, termMonths: 240, monthlyPayment: 5900, conditions: "בכפוף לאישור"};
+
+    await request(app).post("/api/external/portal/offers").set("Cookie", [csrfCookie, "syncash_portal_session=portal-session"]).set("x-csrf-token", review.body.csrfToken).send(payload).expect(201);
+    expect(createPortalOffer).toHaveBeenCalledWith("portal-session", expect.objectContaining(payload), expect.objectContaining({requestId: expect.any(String)}));
+
+    await request(app).post("/api/external/portal/offers").set("cookie", "syncash_portal_session=portal-session").send(payload).expect(403);
   });
 });

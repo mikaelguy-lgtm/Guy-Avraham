@@ -122,7 +122,7 @@ const deliveryEventLabels: Record<string, string> = {
   INTEREST_DECISION_STARTED: "החל תהליך בחירת מעוניינים", OTP_SENT: "נשלח קוד חד־פעמי", OTP_FAILED: "אימות הקוד נכשל", OTP_VERIFIED: "הקוד אומת",
   COMPANY_INTERESTED: "החברה מעוניינת", COMPANY_NOT_INTERESTED: "החברה אינה מעוניינת", COMPANY_RESPONSE_EXPIRED: "מועד התגובה פג", FULL_ACCESS_GRANTED: "נפתחה גישה מלאה",
   FULL_ACCESS_OPENED: "הפורטל המלא נפתח", FULL_PDF_VIEWED: "נצפה PDF מלא", FULL_PDF_DOWNLOADED: "הורד PDF מלא", DOCUMENT_VIEWED: "נצפה מסמך", DOCUMENT_DOWNLOADED: "הורד מסמך",
-  FULL_CASE_ZIP_DOWNLOADED: "הורד תיק מלא", FULL_ACCESS_EXPIRED: "הגישה המלאה פגה", ADMIN_ACCESS_EXTENDED: "מנהל האריך את הגישה", ADMIN_ACCESS_REVOKED: "מנהל ביטל את הגישה", INVITATION_CANCELLED: "ההזמנה בוטלה"
+  FULL_CASE_VIEWED: "התיק המלא נפתח", FULL_CASE_ZIP_DOWNLOADED: "הורד תיק מלא", OFFER_SUBMITTED: "הוגשה הצעת מימון", FULL_ACCESS_EXPIRED: "הגישה המלאה פגה", ADMIN_ACCESS_EXTENDED: "מנהל האריך את הגישה", ADMIN_ACCESS_REVOKED: "מנהל ביטל את הגישה", INVITATION_CANCELLED: "ההזמנה בוטלה"
 };
 
 const deliveryStatusLabels: Record<string, string> = {PENDING: "ממתין", QUEUED: "בתור לשליחה", PARTIALLY_SENT: "נשלח חלקית", SENT: "נשלח לשרת הדואר", FAILED: "שליחה נכשלה"};

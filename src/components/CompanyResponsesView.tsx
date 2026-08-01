@@ -12,7 +12,7 @@ const eventLabel: Record<string, string> = {
   REVIEW_LINK_OPENED: "קישור הבדיקה נפתח", MASKED_PDF_VIEWED: "נצפה PDF מוסווה", MASKED_PDF_DOWNLOADED: "הורד PDF מוסווה", REMINDER_SENT: "נשלחה תזכורת",
   INTEREST_DECISION_STARTED: "החל תהליך בחירת מעוניינים", OTP_SENT: "נשלח קוד חד־פעמי", OTP_FAILED: "אימות הקוד נכשל", OTP_VERIFIED: "הקוד אומת",
   COMPANY_INTERESTED: "החברה מעוניינת", COMPANY_NOT_INTERESTED: "החברה אינה מעוניינת", COMPANY_RESPONSE_EXPIRED: "מועד התגובה פג", FULL_ACCESS_GRANTED: "נפתחה גישה מלאה",
-  FULL_ACCESS_OPENED: "הפורטל המלא נפתח", FULL_PDF_VIEWED: "נצפה PDF מלא", FULL_PDF_DOWNLOADED: "הורד PDF מלא", DOCUMENT_VIEWED: "נצפה מסמך", DOCUMENT_DOWNLOADED: "הורד מסמך", FULL_CASE_ZIP_DOWNLOADED: "הורד תיק מלא"
+  FULL_ACCESS_OPENED: "הפורטל המלא נפתח", FULL_CASE_VIEWED: "התיק המלא נפתח", FULL_PDF_VIEWED: "נצפה PDF מלא", FULL_PDF_DOWNLOADED: "הורד PDF מלא", DOCUMENT_VIEWED: "נצפה מסמך", DOCUMENT_DOWNLOADED: "הורד מסמך", FULL_CASE_ZIP_DOWNLOADED: "הורד תיק מלא", OFFER_SUBMITTED: "הוגשה הצעת מימון"
 };
 
 export default function CompanyResponsesView({clientId}: {clientId: number}) {

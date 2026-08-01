@@ -1113,6 +1113,16 @@ export function createApp(services: AppServices) {
       await services.store.addAudit(request.user!.id, "TEST_ADVISOR_CLEANED", "user", advisor.id, {scope: "e2e"}, request.requestId, request.ip, request.header("user-agent"));
       response.status(204).send();
     }));
+    if (services.delivery) {
+      app.get("/api/test/lender-flow", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+        const input = z.object({clientId: z.coerce.number().int().positive(), companyId: z.coerce.number().int().positive()}).parse(request.query);
+        response.json(await services.delivery!.inspectTestFlow(input.clientId, input.companyId));
+      }));
+      app.post("/api/test/lender-flow/expire-session", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+        const input = z.object({clientId: z.number().int().positive(), companyId: z.number().int().positive()}).strict().parse(request.body);
+        await services.delivery!.expireTestPortalSessions(input.clientId, input.companyId); response.status(204).end();
+      }));
+    }
   }
 
   app.get("/api/admin/audit-logs", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
@@ -1155,9 +1165,9 @@ export function createApp(services: AppServices) {
     const adminActor = (request: Request) => ({userId: request.user!.id});
     const csrfCookie = "syncash_external_csrf";
     const portalCookie = "syncash_portal_session";
-    const issueCsrf = (response: Response) => {
-      const value = randomBytes(24).toString("base64url");
-      response.cookie(csrfCookie, value, {httpOnly: false, secure: services.env.NODE_ENV === "production", sameSite: services.env.NODE_ENV === "production" ? "none" : "lax", path: "/api/external", maxAge: 30 * 60_000});
+    const issueCsrf = (request: Request, response: Response) => {
+      const value = cookieValue(request, csrfCookie) || randomBytes(24).toString("base64url");
+      if (!cookieValue(request, csrfCookie)) response.cookie(csrfCookie, value, {httpOnly: false, secure: services.env.NODE_ENV === "production", sameSite: services.env.NODE_ENV === "production" ? "none" : "lax", path: "/api/external", maxAge: 30 * 60_000});
       return value;
     };
     const requireExternalCsrf = (request: Request, response: Response, next: NextFunction) => {
@@ -1216,21 +1226,25 @@ export function createApp(services: AppServices) {
       const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 20_000); request.on("close", () => {clearInterval(heartbeat); unsubscribe();});
     }));
 
-    app.get("/api/external/review/:token", rateLimit(services.limiter, "external-review", 60, 60), asyncRoute(async (request, response) => { const result = await delivery.getReview(routeParam(request, "token"), context(request)); response.json({...result as object, csrfToken: issueCsrf(response)}); }));
+    app.get("/api/external/review/:token", rateLimit(services.limiter, "external-review", 60, 60), asyncRoute(async (request, response) => { const result = await delivery.getReview(routeParam(request, "token"), context(request)); response.json({...result as object, csrfToken: issueCsrf(request, response)}); }));
     app.get("/api/external/review/:token/masked-pdf", rateLimit(services.limiter, "external-masked-pdf", 30, 60), asyncRoute(async (request, response) => { const file = await delivery.getMaskedPdf(routeParam(request, "token"), request.query.download === "1", context(request)); response.type("application/pdf").setHeader("Cache-Control", "no-store, max-age=0").setHeader("Pragma", "no-cache").setHeader("Content-Disposition", `${request.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
     app.post("/api/external/review/:token/not-interested", requireExternalCsrf, rateLimit(services.limiter, "external-decision", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.decideNotInterested(routeParam(request, "token"), context(request))); }));
     app.post("/api/external/review/:token/interested/start", requireExternalCsrf, rateLimit(services.limiter, "external-otp-start", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.startInterest(routeParam(request, "token"), context(request))); }));
     app.post("/api/external/review/:token/interested/resend-code", requireExternalCsrf, rateLimit(services.limiter, "external-otp-resend", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.resendInterestCode(routeParam(request, "token"), context(request))); }));
-    app.post("/api/external/review/:token/interested/verify", requireExternalCsrf, rateLimit(services.limiter, "external-otp-verify", 20, 60), asyncRoute(async (request, response) => { const {code} = z.object({code: z.string().regex(/^\d{6}$/)}).strict().parse(request.body); response.json(await delivery.verifyInterest(routeParam(request, "token"), code, context(request))); }));
-    app.get("/api/external/access/:token", rateLimit(services.limiter, "external-access", 60, 60), asyncRoute(async (request, response) => { const result = await delivery.getAccess(routeParam(request, "token")); response.json({...result as object, csrfToken: issueCsrf(response)}); }));
+    app.post("/api/external/review/:token/interested/verify", requireExternalCsrf, rateLimit(services.limiter, "external-otp-verify", 20, 60), asyncRoute(async (request, response) => { const {code} = z.object({code: z.string().regex(/^\d{6}$/)}).strict().parse(request.body); const result = await delivery.verifyInterest(routeParam(request, "token"), code, context(request)); response.cookie(portalCookie, result.sessionToken, {httpOnly: true, secure: services.env.NODE_ENV === "production", sameSite: services.env.NODE_ENV === "production" ? "none" : "lax", path: "/api/external/portal", expires: result.expiresAt}); response.json({authenticated: true, decisionStatus: result.decisionStatus, accessStatus: result.accessStatus, fullAccessExpiresAt: result.fullAccessExpiresAt, expiresAt: result.expiresAt}); }));
+    app.get("/api/external/access/:token", rateLimit(services.limiter, "external-access", 60, 60), asyncRoute(async (request, response) => { const result = await delivery.getAccess(routeParam(request, "token"), session(request), context(request)); response.json({...result as object, csrfToken: issueCsrf(request, response)}); }));
     app.post("/api/external/access/:token/send-code", requireExternalCsrf, rateLimit(services.limiter, "external-access-code", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.sendAccessCode(routeParam(request, "token"), context(request))); }));
     app.post("/api/external/access/:token/verify-code", requireExternalCsrf, rateLimit(services.limiter, "external-access-verify", 20, 60), asyncRoute(async (request, response) => { const {code} = z.object({code: z.string().regex(/^\d{6}$/)}).strict().parse(request.body); const result = await delivery.verifyAccessCode(routeParam(request, "token"), code, context(request)); response.cookie(portalCookie, result.sessionToken, {httpOnly: true, secure: services.env.NODE_ENV === "production", sameSite: services.env.NODE_ENV === "production" ? "none" : "lax", path: "/api/external/portal", expires: result.expiresAt}); response.json({authenticated: true, expiresAt: result.expiresAt}); }));
     const session = (request: Request) => cookieValue(request, portalCookie);
-    app.get("/api/external/portal/case", rateLimit(services.limiter, "external-portal", 120, 60), asyncRoute(async (request, response) => { const result = await delivery.getPortalCase(session(request), context(request)); response.json({...result as object, csrfToken: issueCsrf(response)}); }));
+    app.get("/api/external/portal/case", rateLimit(services.limiter, "external-portal", 120, 60), asyncRoute(async (request, response) => { const result = await delivery.getPortalCase(session(request), context(request)); response.json({...result as object, csrfToken: issueCsrf(request, response)}); }));
     app.get("/api/external/portal/full-pdf", rateLimit(services.limiter, "external-portal-download", 30, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalPdf(session(request), context(request)); response.type("application/pdf").setHeader("Cache-Control", "no-store, max-age=0").setHeader("Pragma", "no-cache").setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
     app.get("/api/external/portal/documents", rateLimit(services.limiter, "external-portal", 120, 60), asyncRoute(async (request, response) => { response.json(await delivery.listPortalDocuments(session(request), context(request))); }));
     for (const mode of ["view", "download"]) app.get(`/api/external/portal/documents/:documentId/${mode}`, rateLimit(services.limiter, "external-portal-download", 30, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalDocument(session(request), routeParam(request, "documentId"), mode === "download", context(request)); response.type(file.contentType).setHeader("Content-Disposition", `${mode === "download" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
     app.get("/api/external/portal/download-all", rateLimit(services.limiter, "external-portal-zip", 5, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalZip(session(request), context(request)); response.type("application/zip").setHeader("Cache-Control", "no-store, max-age=0").setHeader("Pragma", "no-cache").setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
+    app.post("/api/external/portal/offers", requireExternalCsrf, rateLimit(services.limiter, "external-portal-offer", 10, 60), asyncRoute(async (request, response) => {
+      const input = z.object({idempotencyKey: z.string().uuid(), amount: strictNumber().pipe(z.number().positive()), interestRate: strictNumber().pipe(z.number().nonnegative().max(100)), termMonths: strictInteger().pipe(z.number().min(12).max(600)), monthlyPayment: strictNumber().pipe(z.number().nonnegative()).optional(), conditions: z.string().trim().max(4000).optional(), expiresAt: z.coerce.date().optional()}).strict().parse(request.body);
+      response.status(201).json(await delivery.createPortalOffer(session(request), input, context(request)));
+    }));
     app.post("/api/external/portal/logout", requireExternalCsrf, asyncRoute(async (request, response) => { await delivery.logoutPortal(session(request)); response.clearCookie(portalCookie, {path: "/api/external/portal"}); response.status(204).end(); }));
   }
 

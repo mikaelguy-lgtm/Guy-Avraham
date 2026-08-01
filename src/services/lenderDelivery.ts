@@ -41,6 +41,21 @@ export interface AdminDeliveryActor {
   userId: number;
 }
 
+export interface PortalSessionResult {
+  sessionToken: string;
+  expiresAt: Date;
+}
+
+export interface PortalOfferInput {
+  idempotencyKey: string;
+  amount: number;
+  interestRate: number;
+  termMonths: number;
+  monthlyPayment?: number;
+  conditions?: string;
+  expiresAt?: Date;
+}
+
 export interface LenderDeliveryApplication {
   listAdvisorCompanies(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryCompanySummary[]>;
   preflight(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryPreflight>;
@@ -69,16 +84,19 @@ export interface LenderDeliveryApplication {
   decideNotInterested(token: string, context: DeliveryContext): Promise<unknown>;
   startInterest(token: string, context: DeliveryContext): Promise<unknown>;
   resendInterestCode(token: string, context: DeliveryContext): Promise<unknown>;
-  verifyInterest(token: string, code: string, context: DeliveryContext): Promise<unknown>;
-  getAccess(token: string): Promise<unknown>;
+  verifyInterest(token: string, code: string, context: DeliveryContext): Promise<PortalSessionResult & {decisionStatus: "INTERESTED"; accessStatus: "ACTIVE"; fullAccessExpiresAt: Date}>;
+  getAccess(token: string, sessionToken?: string, context?: DeliveryContext): Promise<unknown>;
   sendAccessCode(token: string, context: DeliveryContext): Promise<unknown>;
-  verifyAccessCode(token: string, code: string, context: DeliveryContext): Promise<{sessionToken: string; expiresAt: Date}>;
+  verifyAccessCode(token: string, code: string, context: DeliveryContext): Promise<PortalSessionResult>;
   getPortalCase(sessionToken: string, context: DeliveryContext): Promise<unknown>;
   getPortalPdf(sessionToken: string, context: DeliveryContext): Promise<{body: Buffer; filename: string}>;
   listPortalDocuments(sessionToken: string, context: DeliveryContext): Promise<unknown[]>;
   getPortalDocument(sessionToken: string, publicDocumentId: string, download: boolean, context: DeliveryContext): Promise<{body: Buffer; contentType: string; filename: string}>;
   getPortalZip(sessionToken: string, context: DeliveryContext): Promise<{body: Buffer; filename: string}>;
+  createPortalOffer(sessionToken: string, input: PortalOfferInput, context: DeliveryContext): Promise<unknown>;
   logoutPortal(sessionToken: string): Promise<void>;
+  inspectTestFlow(clientId: number, companyId: number): Promise<unknown>;
+  expireTestPortalSessions(clientId: number, companyId: number): Promise<void>;
   processJobs(options?: {processEmail?: boolean}): Promise<void>;
 }
 
@@ -711,40 +729,56 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
 
   async resendInterestCode(token: string, context: DeliveryContext): Promise<unknown> { return this.startInterest(token, context); }
 
-  private async verifyChallenge(connection: PoolClient, row: Row, purpose: "INTEREST_DECISION" | "PORTAL_ACCESS", code: string): Promise<Row> {
+  private async verifyChallenge(connection: PoolClient, row: Row, purpose: "INTEREST_DECISION" | "PORTAL_ACCESS", code: string, context: DeliveryContext): Promise<Row> {
     const challenge = await connection.query(`select * from otp_challenges where company_submission_id=$1 and contact_id=$2 and purpose=$3 and used_at is null and cancelled_at is null order by created_at desc limit 1 for update`, [row.submission_id, row.contact_id, purpose]);
     const current = challenge.rows[0];
-    if (!current || new Date(current.expires_at).getTime() <= this.now().getTime()) throw new DeliveryError("OTP_EXPIRED", 410, "קוד האימות פג. יש לבקש קוד חדש.");
-    if (Number(current.attempts) >= Number(current.max_attempts)) throw new DeliveryError("OTP_LOCKED", 429, "מספר ניסיונות האימות חרג מהמותר.");
-    if (!this.tokens.verifyHash(code, current.code_hash)) { await connection.query("update otp_challenges set attempts=attempts+1,updated_at=now() where id=$1", [current.id]); throw new DeliveryError("OTP_INVALID", 400, "קוד האימות שגוי.", {attemptsRemaining: Number(current.max_attempts) - Number(current.attempts) - 1}); }
+    if (!current || new Date(current.expires_at).getTime() <= this.now().getTime()) { await this.event(connection, {submissionId: Number(row.submission_id), invitationId: row.invitation_id ? Number(row.invitation_id) : null, contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "OTP_FAILED", metadata: {purpose, reason: "EXPIRED_OR_USED"}}, context); throw new DeliveryError("OTP_EXPIRED", 410, "קוד האימות פג. יש לבקש קוד חדש."); }
+    if (Number(current.attempts) >= Number(current.max_attempts)) { await this.event(connection, {submissionId: Number(row.submission_id), invitationId: row.invitation_id ? Number(row.invitation_id) : null, contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "OTP_FAILED", metadata: {purpose, reason: "LOCKED"}}, context); throw new DeliveryError("OTP_LOCKED", 429, "מספר ניסיונות האימות חרג מהמותר."); }
+    if (!this.tokens.verifyHash(code, current.code_hash)) { await connection.query("update otp_challenges set attempts=attempts+1,updated_at=now() where id=$1", [current.id]); await this.event(connection, {submissionId: Number(row.submission_id), invitationId: row.invitation_id ? Number(row.invitation_id) : null, contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "OTP_FAILED", metadata: {purpose, reason: "INVALID"}}, context); throw new DeliveryError("OTP_INVALID", 400, "קוד האימות שגוי.", {attemptsRemaining: Number(current.max_attempts) - Number(current.attempts) - 1}); }
     await connection.query("update otp_challenges set used_at=now(),updated_at=now() where id=$1", [current.id]); return current;
   }
 
-  async verifyInterest(token: string, code: string, context: DeliveryContext): Promise<unknown> {
+  private async createPortalSession(connection: PoolClient, row: Row, accessGrantId: number): Promise<PortalSessionResult> {
+    const sessionToken = randomBytes(32).toString("base64url");
+    const now = this.now();
+    const expiresAt = new Date(Math.min(new Date(row.full_access_expires_at).getTime(), now.getTime() + 12 * 60 * 60_000));
+    const idleExpiresAt = new Date(Math.min(expiresAt.getTime(), now.getTime() + 30 * 60_000));
+    await connection.query(`insert into external_portal_sessions(access_grant_id,session_token_hash,expires_at,idle_expires_at,last_seen_at) values($1,$2,$3,$4,$5)`, [accessGrantId, this.tokens.hash(sessionToken), expiresAt, idleExpiresAt, now]);
+    await connection.query("update company_portal_access_grants set first_authenticated_at=coalesce(first_authenticated_at,now()),last_authenticated_at=now(),updated_at=now() where id=$1", [accessGrantId]);
+    return {sessionToken, expiresAt};
+  }
+
+  async verifyInterest(token: string, code: string, context: DeliveryContext): Promise<PortalSessionResult & {decisionStatus: "INTERESTED"; accessStatus: "ACTIVE"; fullAccessExpiresAt: Date}> {
     const connection = await this.pool.connect();
     try {
       await connection.query("begin");
       const row = await this.reviewByToken(token, connection, true); await this.ensureReviewAvailable(row, context, connection);
       if (["INTERESTED", "NOT_INTERESTED"].includes(row.decision_status)) throw new DeliveryError("COMPANY_DECISION_ALREADY_FINALIZED", 409, "כבר התקבלה החלטה מטעם חברתכם עבור תיק זה.");
-      await this.verifyChallenge(connection, row, "INTEREST_DECISION", code);
+      await this.verifyChallenge(connection, row, "INTEREST_DECISION", code, context);
       const accessExpiresAt = new Date(this.now().getTime() + 7 * 24 * 60 * 60_000);
       await connection.query("update company_submissions set decision_status='INTERESTED',decision_contact_id=$2,decision_at=now(),access_status='ACTIVE',full_access_starts_at=now(),full_access_expires_at=$3,updated_at=now() where id=$1", [row.submission_id, row.contact_id, accessExpiresAt]);
       await connection.query("update submission_contact_invitations set status='CLOSED',closed_at=now(),closed_reason='COMPANY_DECISION_FINALIZED',updated_at=now() where company_submission_id=$1 and closed_at is null", [row.submission_id]);
       await connection.query("update otp_challenges set cancelled_at=now(),updated_at=now() where company_submission_id=$1 and used_at is null and cancelled_at is null", [row.submission_id]);
       await connection.query("update email_outbox set status='CANCELLED',updated_at=now() where company_submission_id=$1 and template='LENDER_REMINDER' and status='PENDING'", [row.submission_id]);
       const contacts = await connection.query("select * from lender_contacts where lender_id=$1 and active=true and deleted_at is null", [row.company_id]);
+      let verifiedContactGrantId: number | null = null;
       for (const contact of contacts.rows) {
         const nonce = this.tokens.createNonce(); const identity = `${row.submission_public_id}:${contact.id}`; const accessToken = this.tokens.deriveToken("access", identity, nonce);
         const grant = await connection.query(`insert into company_portal_access_grants(company_submission_id,contact_id,access_token_hash,token_nonce,expires_at) values($1,$2,$3,$4,$5) on conflict(company_submission_id,contact_id) do update set access_token_hash=excluded.access_token_hash,token_nonce=excluded.token_nonce,expires_at=excluded.expires_at,revoked_at=null,updated_at=now() returning id`, [row.submission_id, contact.id, this.tokens.hash(accessToken), nonce, accessExpiresAt]);
-        await connection.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id) values($1,'FULL_ACCESS',$2,$3,'PENDING',now(),$4) on conflict(idempotency_key) do nothing`, [`full-access:${row.submission_id}:${contact.id}:${accessExpiresAt.toISOString()}`, contact.email, {grantId: grant.rows[0].id}, row.submission_id]);
+        if (Number(contact.id) === Number(row.contact_id)) verifiedContactGrantId = Number(grant.rows[0].id);
       }
+      if (!verifiedContactGrantId) throw new DeliveryError("VERIFIED_CONTACT_INACTIVE", 403, "איש הקשר אינו מורשה לפתוח את התיק.");
+      const session = await this.createPortalSession(connection, {...row, full_access_expires_at: accessExpiresAt}, verifiedContactGrantId);
       await this.queueDecisionMessages(connection, row, true, context);
       await this.event(connection, {submissionId: Number(row.submission_id), invitationId: Number(row.invitation_id), contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "OTP_VERIFIED", metadata: {purpose: "INTEREST_DECISION"}}, context);
       await this.event(connection, {submissionId: Number(row.submission_id), contactId: Number(row.contact_id), actorType: "SYSTEM", type: "FULL_ACCESS_GRANTED", metadata: {expiresAt: accessExpiresAt.toISOString()}}, context);
+      await this.event(connection, {submissionId: Number(row.submission_id), contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "FULL_ACCESS_OPENED"}, context);
       await connection.query("commit");
-      this.broker.publish({type: "COMPANY_INTERESTED", advisorId: Number(row.advisor_id), clientId: Number(row.client_id), submissionPublicId: row.submission_public_id}); this.scheduleJobs();
-      return {decisionStatus: "INTERESTED", accessStatus: "ACTIVE", fullAccessExpiresAt: accessExpiresAt};
-    } catch (error) { await connection.query(error instanceof DeliveryError && error.code === "OTP_INVALID" ? "commit" : "rollback"); throw error; } finally { connection.release(); }
+      this.broker.publish({type: "COMPANY_INTERESTED", advisorId: Number(row.advisor_id), clientId: Number(row.client_id), submissionPublicId: row.submission_public_id});
+      this.broker.publish({type: "COMPANY_FULL_ACCESS_OPENED", advisorId: Number(row.advisor_id), clientId: Number(row.client_id), submissionPublicId: row.submission_public_id});
+      this.scheduleJobs();
+      return {...session, decisionStatus: "INTERESTED", accessStatus: "ACTIVE", fullAccessExpiresAt: accessExpiresAt};
+    } catch (error) { await connection.query(error instanceof DeliveryError && error.code.startsWith("OTP_") ? "commit" : "rollback"); throw error; } finally { connection.release(); }
   }
 
   private async accessByToken(token: string, client: Pool | PoolClient = this.pool, lock = false): Promise<Row> {
@@ -765,8 +799,16 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     if (row.access_status !== "ACTIVE" || new Date(row.grant_expires_at).getTime() <= this.now().getTime() || new Date(row.full_access_expires_at).getTime() <= this.now().getTime()) throw new DeliveryError("ACCESS_EXPIRED", 410, "תקופת הגישה לתיק הסתיימה. יש לפנות ליועץ או למנהל המערכת.");
   }
 
-  async getAccess(token: string): Promise<unknown> {
+  async getAccess(token: string, sessionToken = "", context?: DeliveryContext): Promise<unknown> {
     const row = await this.accessByToken(token); this.ensureAccessAvailable(row);
+    if (sessionToken && context) {
+      try {
+        const session = await this.portalSession(sessionToken, context);
+        if (Number(session.access_grant_id) === Number(row.access_grant_id)) return {companyName: row.company_name, publicCaseNumber: row.public_case_number, versionNumber: Number(row.version_number), expiresAt: row.full_access_expires_at, requiresOtp: false, authenticated: true};
+      } catch (error) {
+        if (!(error instanceof DeliveryError) || !["PORTAL_SESSION_INVALID", "PORTAL_SESSION_EXPIRED", "PORTAL_SESSION_REQUIRED"].includes(error.code)) throw error;
+      }
+    }
     return {companyName: row.company_name, publicCaseNumber: row.public_case_number, versionNumber: Number(row.version_number), expiresAt: row.full_access_expires_at, requiresOtp: true};
   }
 
@@ -775,20 +817,18 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     return this.createOtp(row, "PORTAL_ACCESS", context, Number(row.access_grant_id));
   }
 
-  async verifyAccessCode(token: string, code: string, context: DeliveryContext): Promise<{sessionToken: string; expiresAt: Date}> {
+  async verifyAccessCode(token: string, code: string, context: DeliveryContext): Promise<PortalSessionResult> {
     const connection = await this.pool.connect();
     try {
       await connection.query("begin");
       const row = await this.accessByToken(token, connection, true); this.ensureAccessAvailable(row);
-      await this.verifyChallenge(connection, row, "PORTAL_ACCESS", code);
-      const sessionToken = randomBytes(32).toString("base64url"); const now = this.now(); const expiresAt = new Date(Math.min(new Date(row.full_access_expires_at).getTime(), now.getTime() + 12 * 60 * 60_000)); const idleExpiresAt = new Date(now.getTime() + 30 * 60_000);
-      await connection.query(`insert into external_portal_sessions(access_grant_id,session_token_hash,expires_at,idle_expires_at,last_seen_at) values($1,$2,$3,$4,$5)`, [row.access_grant_id, this.tokens.hash(sessionToken), expiresAt, idleExpiresAt, now]);
-      await connection.query("update company_portal_access_grants set first_authenticated_at=coalesce(first_authenticated_at,now()),last_authenticated_at=now(),updated_at=now() where id=$1", [row.access_grant_id]);
+      await this.verifyChallenge(connection, row, "PORTAL_ACCESS", code, context);
+      const session = await this.createPortalSession(connection, row, Number(row.access_grant_id));
       await this.event(connection, {submissionId: Number(row.submission_id), contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "FULL_ACCESS_OPENED"}, context);
       await connection.query("commit");
       this.broker.publish({type: "COMPANY_FULL_ACCESS_OPENED", advisorId: Number(row.advisor_id), clientId: Number(row.client_id), submissionPublicId: row.submission_public_id});
-      return {sessionToken, expiresAt};
-    } catch (error) { await connection.query(error instanceof DeliveryError && error.code === "OTP_INVALID" ? "commit" : "rollback"); throw error; } finally { connection.release(); }
+      return session;
+    } catch (error) { await connection.query(error instanceof DeliveryError && error.code.startsWith("OTP_") ? "commit" : "rollback"); throw error; } finally { connection.release(); }
   }
 
   private async portalSession(sessionToken: string, context: DeliveryContext): Promise<Row> {
@@ -817,6 +857,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   async getPortalCase(sessionToken: string, context: DeliveryContext): Promise<unknown> {
     const row = await this.portalSession(sessionToken, context);
     const snapshot = JSON.parse(this.encryption.decrypt(row.full_snapshot_encrypted)) as FullCaseSnapshot;
+    await this.event(this.pool, {submissionId: Number(row.submission_id), contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "FULL_CASE_VIEWED"}, context);
     return {companyName: row.company_name, versionNumber: Number(row.version_number), accessExpiresAt: row.full_access_expires_at, snapshot};
   }
 
@@ -858,8 +899,43 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     return {body, filename: `תיק-מלא-${snapshot.publicCaseNumber}.zip`};
   }
 
+  async createPortalOffer(sessionToken: string, input: PortalOfferInput, context: DeliveryContext): Promise<unknown> {
+    const session = await this.portalSession(sessionToken, context);
+    const result = await this.pool.query(`insert into company_portal_offers(company_submission_id,contact_id,idempotency_key,amount,interest_rate,term_months,monthly_payment,conditions,expires_at)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      on conflict(company_submission_id,contact_id,idempotency_key) do nothing returning *`, [session.submission_id, session.contact_id, input.idempotencyKey, input.amount, input.interestRate, input.termMonths, input.monthlyPayment ?? null, input.conditions?.trim() || null, input.expiresAt ?? null]);
+    const offer = result.rows[0] ?? (await this.pool.query("select * from company_portal_offers where company_submission_id=$1 and contact_id=$2 and idempotency_key=$3", [session.submission_id, session.contact_id, input.idempotencyKey])).rows[0];
+    if (!offer) throw new DeliveryError("OFFER_SAVE_FAILED", 500, "לא ניתן היה לשמור את ההצעה.");
+    if (result.rows[0]) {
+      const advisor = await this.pool.query("select u.id from advisor_profiles ap join users u on u.id=ap.user_id where ap.id=$1", [session.advisor_id]);
+      if (advisor.rows[0]) await this.pool.query("insert into notifications(user_id,type,title,body) values($1,'OFFER','הצעת מימון חדשה',$2)", [advisor.rows[0].id, `התקבלה הצעה חדשה לתיק ${session.public_case_number} מחברת ${session.company_name}.`]);
+      await this.event(this.pool, {submissionId: Number(session.submission_id), contactId: Number(session.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(session.contact_id), type: "OFFER_SUBMITTED", metadata: {offerId: Number(offer.id)}}, context);
+      this.broker.publish({type: "COMPANY_OFFER_SUBMITTED", advisorId: Number(session.advisor_id), clientId: Number(session.client_id), submissionPublicId: session.submission_public_id});
+    }
+    return {id: Number(offer.id), status: offer.status, createdAt: offer.created_at, idempotent: !result.rows[0]};
+  }
+
   async logoutPortal(sessionToken: string): Promise<void> {
     if (sessionToken) await this.pool.query("update external_portal_sessions set revoked_at=coalesce(revoked_at,now()) where session_token_hash=$1", [this.tokens.hash(sessionToken)]);
+  }
+
+  async inspectTestFlow(clientId: number, companyId: number): Promise<unknown> {
+    const result = await this.pool.query(`select
+      count(*) filter(where se.event_type='COMPANY_INTERESTED')::int interested_events,
+      count(*) filter(where se.event_type='FULL_ACCESS_GRANTED')::int grant_events,
+      count(*) filter(where se.event_type='FULL_ACCESS_OPENED')::int open_events,
+      count(*) filter(where se.event_type='OTP_FAILED')::int otp_failed_events,
+      (select count(*)::int from email_outbox eo where eo.company_submission_id=cs.id and eo.template='OTP') otp_emails,
+      (select count(*)::int from email_outbox eo where eo.company_submission_id=cs.id and eo.template='FULL_ACCESS') full_access_emails,
+      (select count(*)::int from company_portal_offers po where po.company_submission_id=cs.id) offers
+      from company_submissions cs left join submission_events se on se.company_submission_id=cs.id join case_versions cv on cv.id=cs.case_version_id
+      where cv.client_id=$1 and cs.company_id=$2 group by cs.id`, [clientId, companyId]);
+    if (!result.rows[0]) throw new DeliveryError("TEST_FLOW_NOT_FOUND", 404, "זרימת הבדיקה לא נמצאה.");
+    return result.rows[0];
+  }
+
+  async expireTestPortalSessions(clientId: number, companyId: number): Promise<void> {
+    await this.pool.query(`update external_portal_sessions s set expires_at=now()-interval '1 minute' from company_portal_access_grants g,company_submissions cs,case_versions cv where s.access_grant_id=g.id and g.company_submission_id=cs.id and cs.case_version_id=cv.id and cv.client_id=$1 and cs.company_id=$2`, [clientId, companyId]);
   }
 
   async listAdminSubmissions(): Promise<unknown[]> {
