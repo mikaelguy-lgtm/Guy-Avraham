@@ -251,3 +251,48 @@ The restricted SUPER_ADMIN-only state described above was the pre-opening state 
 - PostgreSQL, Redis, MinIO, API, Frontend and Worker are healthy; API health returns `ok` and API/Worker error-marker counts are zero.
 - The temporary Firebase advisor, PostgreSQL user/profile, client, company/contact, delivery records, notifications, audits, email logs, outbox rows, documents and MinIO objects were removed after verification. Post-cleanup marker counts are zero.
 - Public registration, email delivery and external portals remain enabled in their previously approved state. No SMTP credential, active link, token or secret value was written to this report.
+
+## Single-OTP Lender Portal Verification - 2026-08-01
+
+### Root cause and corrected flow
+
+- The previous interest verification endpoint finalized the company decision and created access grants, but only the later access-link verification endpoint created an authenticated portal session. This forced the company through a second email and a second OTP.
+- `POST /api/external/review/:token/interested/verify` is now the single transition point: it consumes the one-use interest OTP, records the interested decision, activates the disclosure grant, creates the server-side portal session, sets the restricted HttpOnly cookie and returns only sanitized authentication state.
+- The frontend immediately replaces the masked review route with `/external/portal`. The verified company is not sent a `FULL_ACCESS` or interested-decision follow-up email.
+- Legacy access links remain compatible, but a contact who already has a valid session for the same grant is redirected directly to the portal without another OTP.
+
+### Session and disclosure security
+
+- The portal session token is cryptographically random; PostgreSQL stores only its hash. The cookie is HttpOnly, Secure in Production, scoped to `/api/external/portal` and never stored in browser storage.
+- Sessions have a 12-hour absolute maximum, a 30-minute sliding idle timeout and cannot outlive or cross their exact company/contact/submission grant.
+- Full case data, documents, full PDF, ZIP and offer submission remain behind the authenticated portal session. The initial invite continues to expose only the existing masked snapshot and masked PDF.
+- OTP challenges are single-use, rate-limited and audited. A replay returns a conflict, an invalid OTP exposes nothing, and changing a document or submission identifier cannot cross lender boundaries.
+- Audit events cover masked review opening, interest selection, OTP sending, failed/successful OTP verification, disclosure grant, full-case opening/viewing, document access and offer submission.
+
+### Endpoints and implementation
+
+- Updated flow endpoints: `GET /api/external/review/:token`, `POST /api/external/review/:token/interested/start`, `POST /api/external/review/:token/interested/resend-code` and `POST /api/external/review/:token/interested/verify`.
+- Authenticated portal endpoints: `GET /api/external/portal/case`, `GET /api/external/portal/documents`, document view/download, full PDF, ZIP, `POST /api/external/portal/offers` and portal logout.
+- The obsolete second-step access endpoints remain only for backward-compatible old links and now recognize a matching valid session.
+- A CSRF race was removed by reusing the existing external CSRF cookie rather than rotating it during unrelated external GET requests.
+- Migration `0012` adds idempotent company portal offers linked to the exact submission and contact.
+
+### Automated verification
+
+- Typecheck and lint: passed.
+- Unit tests: 24 files, 131 tests passed.
+- Integration tests: 3 files, 110 tests passed.
+- Playwright E2E: 20 of 20 passed, including masked-before-OTP, wrong/replayed OTP, immediate full portal, refresh/new-tab session persistence, session expiry, cross-company denial, document/PDF/ZIP access, offer idempotency and absence of follow-up email.
+- Production build and bundle safety scan: passed.
+- Local development Docker stack: all seven services healthy; Drizzle migration check passed.
+
+### Controlled Production verification
+
+- Releases `c3ad17f49adc26dc6685f050018c01598ca584be` and `9e87b8922c109250e2bda12722a2a6efd142aa16` were deployed through the controlled release process with encrypted pre-deployment backup, Secret Provider validation, migration and health checks.
+- A dedicated temporary company received exactly two messages: the initial masked-review invitation and one OTP. Both outbox jobs were `SENT` with one attempt and a sanitized SMTP message identifier; two matching `email_logs` rows existed.
+- The invite opened only the masked view. The single correct OTP immediately opened the full portal, with eight document actions and the offer form available. Refresh and a second tab preserved the authenticated session without another OTP.
+- One temporary offer was submitted successfully. Database verification found one interest-start event, one interested decision event, one successful OTP event, one disclosure grant event, one portal-open event and one offer event.
+- No `FULL_ACCESS` email, interested `LENDER_DECISION` email, failed outbox item, duplicate job or unnecessary retry was created.
+- Session-expiry and wrong/replayed OTP behavior were verified by the full local E2E suite; Production verification intentionally used only the minimum two real messages.
+- The temporary Firebase user, PostgreSQL user/profile, client, lender/contact, submission, session, offer, documents, objects, notifications, audit entries, outbox rows and email logs were deleted. Post-cleanup verification returned zero rows and confirmed the temporary Firebase user no longer exists.
+- PostgreSQL, Redis, MinIO, API, Frontend and Worker are healthy. The API health response is `ok`; API and Worker logs contain zero fatal, unhandled or credential/secret error markers for the verification window.
