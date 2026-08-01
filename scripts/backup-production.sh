@@ -26,7 +26,10 @@ timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 staging="$(mktemp -d "$SYNCASH_ROOT/backups/.staging-$timestamp-XXXXXX")"
 archive="$destination/syncash-$timestamp-$RELEASE_SHA.tar.gz"
 encrypted="$archive.gpg"
-cleanup() { rm -rf -- "$staging"; rm -f -- "$archive"; }
+cleanup() {
+  sudo rm -rf -- "$staging"
+  rm -f -- "$archive"
+}
 trap cleanup EXIT
 
 mkdir -p "$staging/metadata" "$staging/config" "$staging/minio"
