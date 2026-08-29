@@ -219,25 +219,31 @@ function paragraph(document: PDFKit.PDFDocument, value: string, title: string, s
 }
 
 function liabilityFields(liability: FullCaseLiabilitySnapshot, prefix = ""): PdfField[] {
-  return [
+  const fields: PdfField[] = [
     {label: `${prefix}סוג התחייבות`, value: formatLiabilityType(liability.type)},
-    {label: "יתרה נוכחית", value: formatCurrency(liability.currentBalance)},
     {label: "החזר חודשי", value: formatCurrency(liability.monthlyPayment)},
     {label: "תאריך סיום", value: liability.endDate ? formatDate(liability.endDate) : "לא צוין"},
     {label: "הערות", value: liability.notes || "לא צוין"}
   ];
+  if (liability.type !== "ALIMONY" && liability.type !== "RENT") fields.splice(1, 0, {label: "יתרה נוכחית", value: formatCurrency(liability.currentBalance)});
+  if ((liability.type === "LOAN" || liability.type === "MORTGAGE") && liability.financialInstitution) fields.splice(1, 0, {label: "גוף פיננסי", value: liability.financialInstitution});
+  return fields;
 }
 
 function borrowerIncomeFields(borrower: FullCaseBorrowerSnapshot | MaskedCaseSnapshot["borrowers"][number], masked: boolean): PdfField[] {
+  const additionalIncomes = borrower.employment.additionalIncomes ?? (borrower.employment.hasAdditionalIncome && borrower.employment.additionalIncomeType ? [{type: borrower.employment.additionalIncomeType, monthlyAmount: borrower.employment.additionalIncomeAmount, description: borrower.employment.additionalIncomeDescription}] : []);
   return [
     {label: "סוג תעסוקה", value: formatEmploymentType(borrower.employment.employmentType)},
     {label: "מקום עבודה", value: masked ? "פרט מוסווה" : (borrower as FullCaseBorrowerSnapshot).employment.employerName},
     {label: "תפקיד", value: borrower.employment.jobTitle},
     {label: "ותק", value: `${borrower.employment.employmentSeniorityYears} שנים`},
     {label: "הכנסה חודשית נטו", value: formatCurrency(borrower.employment.monthlyNetIncome)},
-    {label: "הכנסה נוספת", value: borrower.employment.hasAdditionalIncome ? "כן" : "לא"},
-    {label: "סוג הכנסה נוספת", value: formatAdditionalIncomeType(borrower.employment.additionalIncomeType)},
-    {label: "סכום הכנסה נוספת", value: formatCurrency(borrower.employment.additionalIncomeAmount)}
+    {label: "הכנסה נוספת", value: additionalIncomes.length ? "כן" : "לא"},
+    ...additionalIncomes.flatMap((income, index) => [
+      {label: `הכנסה נוספת ${index + 1} — סוג`, value: formatAdditionalIncomeType(income.type)},
+      {label: `הכנסה נוספת ${index + 1} — סכום`, value: formatCurrency(income.monthlyAmount)},
+      ...(income.description ? [{label: `הכנסה נוספת ${index + 1} — תיאור`, value: income.description}] : [])
+    ])
   ];
 }
 

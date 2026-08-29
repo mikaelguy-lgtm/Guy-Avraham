@@ -31,6 +31,7 @@ export interface FullCaseBorrowerSnapshot {
     additionalIncomeType: string | null;
     additionalIncomeAmount: number;
     additionalIncomeDescription: string | null;
+    additionalIncomes?: Array<{type: string; monthlyAmount: number; description: string | null}>;
   };
   liabilities: FullCaseLiabilitySnapshot[];
 }
@@ -40,7 +41,8 @@ export interface FullCaseLiabilitySnapshot {
   borrowerOrder: number | null;
   type: string;
   otherTypeDescription: string | null;
-  currentBalance: number;
+  financialInstitution?: string | null;
+  currentBalance: number | null;
   monthlyPayment: number;
   endDate: string | null;
   notes: string;

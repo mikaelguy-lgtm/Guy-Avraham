@@ -32,7 +32,7 @@ export class CaseRedactionService {
       return value;
     };
 
-    const redactLiability = (liability: FullCaseSnapshot["householdLiabilities"][number]) => ({...liability, otherTypeDescription: sanitize(liability.otherTypeDescription), notes: sanitize(liability.notes) ?? ""});
+    const redactLiability = (liability: FullCaseSnapshot["householdLiabilities"][number]) => ({...liability, otherTypeDescription: sanitize(liability.otherTypeDescription), financialInstitution: sanitize(liability.financialInstitution ?? null), notes: sanitize(liability.notes) ?? ""});
     const maskedSnapshot: MaskedCaseSnapshot = {
       publicCaseNumber: source.publicCaseNumber,
       status: source.status,
@@ -55,7 +55,8 @@ export class CaseRedactionService {
           hasAdditionalIncome: borrower.employment.hasAdditionalIncome,
           additionalIncomeType: borrower.employment.additionalIncomeType,
           additionalIncomeAmount: borrower.employment.additionalIncomeAmount,
-          additionalIncomeDescription: sanitize(borrower.employment.additionalIncomeDescription)
+          additionalIncomeDescription: sanitize(borrower.employment.additionalIncomeDescription),
+          additionalIncomes: (borrower.employment.additionalIncomes ?? []).map((income) => ({...income, description: sanitize(income.description)}))
         },
         liabilities: borrower.liabilities.map(redactLiability)
       })),

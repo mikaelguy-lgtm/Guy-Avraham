@@ -48,6 +48,7 @@ export interface ExternalBorrowerDetailsModel {
     additionalIncomeType?: string | null;
     additionalIncomeAmount?: number | null;
     additionalIncomeDescription?: string | null;
+    additionalIncomes?: Array<{type?: string; monthlyAmount?: number | null; description?: string | null}>;
   };
   liabilities?: ExternalLiabilityDetails[];
 }
@@ -103,7 +104,7 @@ export function BorrowerLiabilitiesList({liabilities = [], mode, emptyMessage = 
       return <article className="external-liability-card" key={`${liability.type ?? "liability"}-${index}`}>
         <header><h5>{title}</h5><span>התחייבות {index + 1}</span></header>
         <dl className="external-detail-grid">
-          <DetailField label="יתרה נוכחית" value={optionalCurrency(liability.currentBalance)} />
+          {liability.type !== "ALIMONY" && liability.type !== "RENT" && <DetailField label="יתרה נוכחית" value={optionalCurrency(liability.currentBalance)} />}
           <DetailField label="החזר חודשי" value={optionalCurrency(liability.monthlyPayment)} />
           <DetailField label="תאריך סיום" value={formatDate(liability.endDate)} />
           <DetailField label="תקופה שנותרה" value={remaining ?? missingValue} />
@@ -119,11 +120,12 @@ export function ExternalBorrowerCard({mode, borrower, index, borrowerRelationshi
   const employment = borrower.employment;
   const childCount = household?.numberOfChildren ?? borrower.numberOfChildren;
   const childAges = household?.childrenAges ?? borrower.childrenAges;
-  const additionalIncome = employment?.additionalIncomeAmount ?? 0;
+  const additionalIncomes = employment?.additionalIncomes ?? (employment?.hasAdditionalIncome && employment.additionalIncomeType ? [{type: employment.additionalIncomeType, monthlyAmount: employment.additionalIncomeAmount, description: employment.additionalIncomeDescription}] : []);
+  const additionalIncome = additionalIncomes.reduce((sum, income) => sum + (income.monthlyAmount ?? 0), 0);
   const totalIncome = employment?.monthlyNetIncome === null || employment?.monthlyNetIncome === undefined
     ? null
     : employment.monthlyNetIncome + additionalIncome;
-  const hasAdditionalIncome = employment?.hasAdditionalIncome ?? additionalIncome > 0;
+  const hasAdditionalIncome = additionalIncomes.length > 0;
   return <article className="external-borrower-card" data-borrower-mode={mode.toLowerCase()}>
     <header className="external-borrower-header">
       <span className="external-borrower-icon"><CircleUserRound /></span>
@@ -159,9 +161,7 @@ export function ExternalBorrowerCard({mode, borrower, index, borrowerRelationshi
       <DetailField label="ותק" value={employment?.employmentSeniorityYears === null || employment?.employmentSeniorityYears === undefined ? missingValue : `${employment.employmentSeniorityYears} שנים`} />
       <DetailField label="הכנסה חודשית נטו" value={optionalCurrency(employment?.monthlyNetIncome)} />
       <DetailField label="האם קיימת הכנסה נוספת" value={hasAdditionalIncome ? "כן" : "לא"} />
-      {hasAdditionalIncome && <DetailField label="סוג הכנסה נוספת" value={formatAdditionalIncomeType(employment?.additionalIncomeType ?? null)} />}
-      {hasAdditionalIncome && <DetailField label="הכנסה נוספת" value={optionalCurrency(employment?.additionalIncomeAmount)} />}
-      {hasAdditionalIncome && employment?.additionalIncomeDescription && <DetailField label="תיאור הכנסה נוספת" value={employment.additionalIncomeDescription} wide />}
+      {additionalIncomes.map((income, incomeIndex) => <DetailField key={`${income.type ?? "income"}-${incomeIndex}`} label={`הכנסה נוספת ${incomeIndex + 1}`} value={`${formatAdditionalIncomeType(income.type ?? null)} · ${optionalCurrency(income.monthlyAmount)}${income.description ? ` · ${income.description}` : ""}`} wide />)}
       <DetailField label="סך הכנסה חודשית" value={optionalCurrency(totalIncome)} />
     </DetailsSection>
 

@@ -9,7 +9,7 @@ import { IDENTITY_FIELDS, type IdentityField } from "../domain/types.js";
 import { advisorProfileSchema, advisorRegistrationApiSchema, normalizeEmail } from "../domain/advisorRegistration.js";
 import {
   clientDealDetailsInputSchema, clientIncomeInputSchema, clientInputSchema, clientLiabilitiesInputSchema,
-  clientPersonalInputSchema, clientPropertyInputSchema,
+  clientPersonalInputSchema, clientPropertyInputSchema, newClientInputSchema,
   type ClientIncomeInput, type ClientInput, type ClientLiabilitiesInput, type ClientPersonalInput, type ClientPropertyInput
 } from "../domain/clientValidation.js";
 import { DOCUMENT_TYPES, REQUIRED_BORROWER_DOCUMENT_TYPES } from "../domain/clientFields.js";
@@ -155,6 +155,7 @@ function clientMutationRecord(input: ClientInput, encryption: EncryptionService,
   const liabilityRecord = (liability: ClientInput["householdLiabilities"][number]) => ({
     liabilityType: liability.type,
     otherTypeDescriptionEncrypted: liability.otherTypeDescription ? encrypt(liability.otherTypeDescription) : null,
+    financialInstitutionEncrypted: liability.financialInstitution ? encrypt(liability.financialInstitution) : null,
     currentBalance: liability.currentBalance,
     monthlyPayment: liability.monthlyPayment,
     endDate: liability.endDate,
@@ -168,32 +169,36 @@ function clientMutationRecord(input: ClientInput, encryption: EncryptionService,
     borrowerRelationshipOtherEncrypted: input.borrowerRelationshipOther ? encrypt(input.borrowerRelationshipOther) : null,
     householdChildrenCount: input.household.numberOfChildren,
     householdChildrenAges: input.household.childrenAges,
-    borrowers: input.borrowers.map((borrower) => ({
-      borrowerOrder: borrower.order,
-      isPrimary: borrower.isPrimary,
-      firstNameEncrypted: encrypt(borrower.firstName),
-      lastNameEncrypted: encrypt(borrower.lastName),
-      fullNameEncrypted: encrypt(`${borrower.firstName} ${borrower.lastName}`),
-      identityNumberEncrypted: encrypt(borrower.identityNumber),
-      identityNumberHash: createHash("sha256").update(borrower.identityNumber.replace(/\D/g, "")).digest("hex"),
-      birthDateEncrypted: encrypt(borrower.dateOfBirth),
-      phoneEncrypted: encrypt(borrower.phone),
-      emailEncrypted: encrypt(borrower.email),
-      addressEncrypted: encrypt(borrower.address),
-      maritalStatus: borrower.maritalStatus,
-      numberOfChildren: borrower.children.numberOfChildren,
-      childrenAges: borrower.children.childrenAges,
-      employmentType: borrower.employment.employmentType,
-      employerNameEncrypted: encrypt(borrower.employment.employerName),
-      jobTitle: borrower.employment.jobTitle,
-      employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
-      monthlyNetIncome: borrower.income.monthlyNetIncome,
-      hasAdditionalIncome: borrower.income.hasAdditionalIncome,
-      additionalIncomeType: borrower.income.additionalIncomeType,
-      additionalIncomeAmount: borrower.income.additionalIncomeAmount,
-      additionalIncomeDescriptionEncrypted: borrower.income.additionalIncomeDescription ? encrypt(borrower.income.additionalIncomeDescription) : null,
-      liabilities: borrower.liabilities.map(liabilityRecord)
-    })),
+    borrowers: input.borrowers.map((borrower) => {
+      const firstAdditionalIncome = borrower.income.additionalIncomes[0];
+      return {
+        borrowerOrder: borrower.order,
+        isPrimary: borrower.isPrimary,
+        firstNameEncrypted: encrypt(borrower.firstName),
+        lastNameEncrypted: encrypt(borrower.lastName),
+        fullNameEncrypted: encrypt(`${borrower.firstName} ${borrower.lastName}`),
+        identityNumberEncrypted: encrypt(borrower.identityNumber),
+        identityNumberHash: createHash("sha256").update(borrower.identityNumber.replace(/\D/g, "")).digest("hex"),
+        birthDateEncrypted: encrypt(borrower.dateOfBirth),
+        phoneEncrypted: encrypt(borrower.phone),
+        emailEncrypted: encrypt(borrower.email),
+        addressEncrypted: encrypt(borrower.address),
+        maritalStatus: borrower.maritalStatus,
+        numberOfChildren: borrower.children.numberOfChildren,
+        childrenAges: borrower.children.childrenAges,
+        employmentType: borrower.employment.employmentType,
+        employerNameEncrypted: encrypt(borrower.employment.employerName),
+        jobTitle: borrower.employment.jobTitle,
+        employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
+        monthlyNetIncome: borrower.income.monthlyNetIncome,
+        hasAdditionalIncome: borrower.income.additionalIncomes.length > 0,
+        additionalIncomeType: firstAdditionalIncome?.type ?? null,
+        additionalIncomeAmount: firstAdditionalIncome?.monthlyAmount ?? 0,
+        additionalIncomeDescriptionEncrypted: firstAdditionalIncome?.description ? encrypt(firstAdditionalIncome.description) : null,
+        additionalIncomes: borrower.income.additionalIncomes.map((income) => ({sourceType: income.type, monthlyAmount: income.monthlyAmount, descriptionEncrypted: income.description ? encrypt(income.description) : null})),
+        liabilities: borrower.liabilities.map(liabilityRecord)
+      };
+    }),
     householdLiabilities: input.householdLiabilities.map(liabilityRecord),
     loanPurpose: input.loanPurpose,
     propertyType: input.property.propertyType,
@@ -229,19 +234,35 @@ function personalMutationRecord(input: ClientPersonalInput, encryption: Encrypti
 }
 
 function incomeMutationRecord(input: ClientIncomeInput, encryption: EncryptionService): ClientIncomeMutationRecord {
-  return {borrowers: input.borrowers.map((borrower) => ({
-    id: borrower.id, employmentType: borrower.employment.employmentType,
-    employerNameEncrypted: encryption.encrypt(borrower.employment.employerName), jobTitle: borrower.employment.jobTitle,
-    employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
-    monthlyNetIncome: borrower.income.monthlyNetIncome, hasAdditionalIncome: borrower.income.hasAdditionalIncome,
-    additionalIncomeType: borrower.income.additionalIncomeType, additionalIncomeAmount: borrower.income.additionalIncomeAmount,
-    additionalIncomeDescriptionEncrypted: borrower.income.additionalIncomeDescription ? encryption.encrypt(borrower.income.additionalIncomeDescription) : null
-  }))};
+  return {borrowers: input.borrowers.map((borrower) => {
+    const firstAdditionalIncome = borrower.income.additionalIncomes[0];
+    return {
+      id: borrower.id, employmentType: borrower.employment.employmentType,
+      employerNameEncrypted: encryption.encrypt(borrower.employment.employerName), jobTitle: borrower.employment.jobTitle,
+      employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
+      monthlyNetIncome: borrower.income.monthlyNetIncome, hasAdditionalIncome: borrower.income.additionalIncomes.length > 0,
+      additionalIncomeType: firstAdditionalIncome?.type ?? null, additionalIncomeAmount: firstAdditionalIncome?.monthlyAmount ?? 0,
+      additionalIncomeDescriptionEncrypted: firstAdditionalIncome?.description ? encryption.encrypt(firstAdditionalIncome.description) : null,
+      additionalIncomes: borrower.income.additionalIncomes.map((income) => ({sourceType: income.type, monthlyAmount: income.monthlyAmount, descriptionEncrypted: income.description ? encryption.encrypt(income.description) : null}))
+    };
+  })};
+}
+
+function assertLegacySelectionsUnchanged(input: {borrowers: Array<{id?: number; maritalStatus?: string; employment?: {employmentType?: string}}>}, existing: {borrowers: Array<{id: number; maritalStatus: string; employment: {employmentType: string}}>}) {
+  const legacyMarital = new Set(["SEPARATED"]);
+  const legacyEmployment = new Set(["GOVERNMENT_EMPLOYEE", "SECURITY_FORCES"]);
+  for (const borrower of input.borrowers) {
+    const current = borrower.id ? existing.borrowers.find((item) => item.id === borrower.id) : undefined;
+    if (borrower.maritalStatus && legacyMarital.has(borrower.maritalStatus) && current?.maritalStatus !== borrower.maritalStatus) throw new DeliveryError("LEGACY_MARITAL_STATUS_NOT_SELECTABLE", 400, "מצב משפחתי זה זמין לתיק היסטורי קיים בלבד.");
+    const employmentType = borrower.employment?.employmentType;
+    if (employmentType && legacyEmployment.has(employmentType) && current?.employment.employmentType !== employmentType) throw new DeliveryError("LEGACY_EMPLOYMENT_TYPE_NOT_SELECTABLE", 400, "סוג תעסוקה זה זמין לתיק היסטורי קיים בלבד.");
+  }
 }
 
 function liabilitiesMutationRecord(input: ClientLiabilitiesInput, encryption: EncryptionService): ClientLiabilitiesMutationRecord {
   const liability = (item: ClientLiabilitiesInput["householdLiabilities"][number]): LiabilityMutationRecord => ({
     liabilityType: item.type, otherTypeDescriptionEncrypted: item.otherTypeDescription ? encryption.encrypt(item.otherTypeDescription) : null,
+    financialInstitutionEncrypted: item.financialInstitution ? encryption.encrypt(item.financialInstitution) : null,
     currentBalance: item.currentBalance, monthlyPayment: item.monthlyPayment, endDate: item.endDate,
     notesEncrypted: encryption.encrypt(item.notes)
   });
@@ -264,6 +285,7 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
     const birthDate = borrower.birthDateEncrypted
       ? encryption.decrypt(borrower.birthDateEncrypted)
       : borrower.birthDate?.toISOString().slice(0, 10) ?? "";
+    const additionalIncomes = borrower.additionalIncomes?.length ? borrower.additionalIncomes : borrower.hasAdditionalIncome && borrower.additionalIncomeType ? [{id: 0, sortOrder: 1, sourceType: borrower.additionalIncomeType, monthlyAmount: borrower.additionalIncomeAmount, descriptionEncrypted: borrower.additionalIncomeDescriptionEncrypted}] : [];
     return {
       id: borrower.id,
       borrowerOrder: borrower.borrowerOrder,
@@ -287,14 +309,19 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
       },
       income: {
         monthlyNetIncome: borrower.monthlyNetIncome,
-        hasAdditionalIncome: borrower.hasAdditionalIncome,
-        additionalIncomeType: borrower.additionalIncomeType,
-        additionalIncomeAmount: borrower.additionalIncomeAmount,
-        additionalIncomeDescription: borrower.additionalIncomeDescriptionEncrypted ? encryption.decrypt(borrower.additionalIncomeDescriptionEncrypted) : null
+        hasAdditionalIncome: additionalIncomes.length > 0,
+        additionalIncomeType: additionalIncomes[0]?.sourceType ?? null,
+        additionalIncomeAmount: additionalIncomes[0]?.monthlyAmount ?? 0,
+        additionalIncomeDescription: additionalIncomes[0]?.descriptionEncrypted ? encryption.decrypt(additionalIncomes[0].descriptionEncrypted) : null,
+        additionalIncomes: additionalIncomes.map((income) => ({
+          id: income.id || undefined, type: income.sourceType, monthlyAmount: income.monthlyAmount,
+          description: income.descriptionEncrypted ? encryption.decrypt(income.descriptionEncrypted) : null
+        }))
       },
       liabilities: borrower.liabilities.map((liability) => ({
         id: liability.id, scope: liability.scope, type: liability.liabilityType,
         otherTypeDescription: liability.otherTypeDescriptionEncrypted ? encryption.decrypt(liability.otherTypeDescriptionEncrypted) : null,
+        financialInstitution: liability.financialInstitutionEncrypted ? encryption.decrypt(liability.financialInstitutionEncrypted) : null,
         currentBalance: liability.currentBalance, monthlyPayment: liability.monthlyPayment, endDate: liability.endDate,
         notes: liability.notesEncrypted ? encryption.decrypt(liability.notesEncrypted) : "",
         incompleteLegacy: liability.legacyStatus === "INCOMPLETE_LEGACY"
@@ -304,17 +331,18 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
   const primary = publicBorrowers[0];
   const missingRequiredDocuments = await store.listMissingRequiredDocuments(client.id);
   const dealDetailsUpdatedBy = client.dealDetailsUpdatedByUserId ? await store.getUserDisplayName(client.dealDetailsUpdatedByUserId) : null;
-  const totalMonthlyIncome = publicBorrowers.reduce((sum, borrower) => sum + borrower.income.monthlyNetIncome + borrower.income.additionalIncomeAmount, 0);
+  const totalMonthlyIncome = publicBorrowers.reduce((sum, borrower) => sum + borrower.income.monthlyNetIncome + borrower.income.additionalIncomes.reduce((incomeSum, income) => incomeSum + income.monthlyAmount, 0), 0);
   const householdLiabilities = (details?.householdLiabilities ?? []).map((liability) => ({
     id: liability.id, scope: liability.scope, type: liability.liabilityType,
     otherTypeDescription: liability.otherTypeDescriptionEncrypted ? encryption.decrypt(liability.otherTypeDescriptionEncrypted) : null,
+    financialInstitution: liability.financialInstitutionEncrypted ? encryption.decrypt(liability.financialInstitutionEncrypted) : null,
     currentBalance: liability.currentBalance, monthlyPayment: liability.monthlyPayment, endDate: liability.endDate,
     notes: liability.notesEncrypted ? encryption.decrypt(liability.notesEncrypted) : "",
     incompleteLegacy: liability.legacyStatus === "INCOMPLETE_LEGACY"
   }));
   const allLiabilities = [...householdLiabilities, ...publicBorrowers.flatMap((borrower) => borrower.liabilities)];
   const totalMonthlyPayments = allLiabilities.reduce((sum, liability) => sum + liability.monthlyPayment, 0);
-  const totalLiabilityBalance = allLiabilities.reduce((sum, liability) => sum + liability.currentBalance, 0);
+  const totalLiabilityBalance = allLiabilities.reduce((sum, liability) => sum + (liability.currentBalance ?? 0), 0);
   return {
     id: client.id,
     publicCaseNumber: client.publicCaseNumber,
@@ -593,7 +621,7 @@ export function createApp(services: AppServices) {
   }));
 
   app.post("/api/clients", ...authenticated, auth.requireRole("ADVISOR"), asyncRoute(async (request, response) => {
-    const input = clientInputSchema.parse(request.body);
+    const input = newClientInputSchema.parse(request.body);
     const advisorId = request.user!.advisorId;
     if (!advisorId) { response.status(403).json({error: "ADVISOR_PROFILE_REQUIRED"}); return; }
     const publicCaseNumber = `SC-${randomBytes(8).toString("hex").toUpperCase()}`;
@@ -611,6 +639,9 @@ export function createApp(services: AppServices) {
 
   app.patch("/api/clients/:id", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientInputSchema.parse(request.body);
+    const existing = await publicClient(await services.store.getClient(request.authorizedClientId!), services.store, services.encryption);
+    if (!existing) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
+    assertLegacySelectionsUnchanged(input, existing);
     const client = await services.store.updateClient(request.authorizedClientId!, clientMutationRecord(input, services.encryption, request.user!.id));
     if (!client) { response.status(400).json({error: "CLIENT_UPDATE_FAILED", requestId: request.requestId}); return; }
     await services.store.addAudit(request.user!.id, "CLIENT_FULL_UPDATED", "client", request.authorizedClientId!, {section: "full", fields: ["personal", "income", "liabilities", "property", "dealDetails"]}, request.requestId);
@@ -622,6 +653,9 @@ export function createApp(services: AppServices) {
 
   app.patch("/api/clients/:id/personal", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientPersonalInputSchema.parse(request.body);
+    const existing = await publicClient(await services.store.getClient(request.authorizedClientId!), services.store, services.encryption);
+    if (!existing) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
+    assertLegacySelectionsUnchanged(input, existing);
     const client = await services.store.updateClientPersonal(request.authorizedClientId!, personalMutationRecord(input, services.encryption));
     if (!client) { response.status(400).json({error: "CLIENT_PERSONAL_UPDATE_FAILED", requestId: request.requestId}); return; }
     await services.store.addAudit(request.user!.id, "CLIENT_PERSONAL_UPDATED", "client", request.authorizedClientId!, {section: "personal", fields: ["borrowers", "relationship", "household"]}, request.requestId);
@@ -630,6 +664,9 @@ export function createApp(services: AppServices) {
 
   app.patch("/api/clients/:id/income", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientIncomeInputSchema.parse(request.body);
+    const existing = await publicClient(await services.store.getClient(request.authorizedClientId!), services.store, services.encryption);
+    if (!existing) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
+    assertLegacySelectionsUnchanged(input, existing);
     const client = await services.store.updateClientIncome(request.authorizedClientId!, incomeMutationRecord(input, services.encryption));
     if (!client) { response.status(400).json({error: "CLIENT_INCOME_UPDATE_FAILED", requestId: request.requestId}); return; }
     await services.store.addAudit(request.user!.id, "CLIENT_INCOME_UPDATED", "client", request.authorizedClientId!, {section: "income", fields: ["employment", "income"]}, request.requestId);

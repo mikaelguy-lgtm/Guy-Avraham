@@ -7,7 +7,9 @@ import {
   LIABILITY_TYPES,
   MARITAL_STATUSES,
   MAX_BORROWERS,
-  PROPERTY_TYPES
+  PROPERTY_TYPES,
+  SELECTABLE_EMPLOYMENT_TYPES,
+  SELECTABLE_MARITAL_STATUSES
 } from "./clientFields.js";
 import { validateAdultBirthDate } from "../utils/age.js";
 
@@ -44,10 +46,16 @@ const childrenSchema = z.object({
   if (input.childrenAges.length !== input.numberOfChildren) context.addIssue({code: "custom", path: ["childrenAges"], message: "יש להזין גיל עבור כל ילד"});
 });
 
+const optionalNumber = (message: string, maximum: number) => z.preprocess(
+  (value) => value === "" || value === null || value === undefined ? null : typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value) ? Number.NaN : value,
+  z.coerce.number({error: message}).finite(message).nonnegative("יש להזין מספר שאינו שלילי").max(maximum, "הסכום חורג מהטווח המותר").nullable()
+);
+
 export const liabilityInputSchema = z.object({
   type: z.enum(LIABILITY_TYPES, {error: "יש לבחור סוג התחייבות"}),
   otherTypeDescription: z.string().trim().max(300, "שם הגוף ארוך מדי").nullable(),
-  currentBalance: requiredNumber("יש להזין יתרה נוכחית", 100_000_000),
+  financialInstitution: z.string().trim().max(300, "שם הגוף הפיננסי ארוך מדי").nullable(),
+  currentBalance: optionalNumber("יש להזין יתרה נוכחית", 100_000_000),
   monthlyPayment: requiredNumber("יש להזין החזר חודשי", 10_000_000),
   endDate: z.string({error: "יש להזין תאריך סיום התחייבות"}).date("יש להזין תאריך סיום תקין"),
   notes: requiredText("יש להזין הערות להתחייבות", 1000)
@@ -55,6 +63,12 @@ export const liabilityInputSchema = z.object({
   if (input.type === "OTHER_FINANCIAL_ENTITY" && !input.otherTypeDescription?.trim()) {
     context.addIssue({code: "custom", path: ["otherTypeDescription"], message: "יש להזין את שם הגוף או סוג ההתחייבות"});
   }
+  const requiresBalance = input.type !== "ALIMONY" && input.type !== "RENT";
+  const requiresInstitution = input.type === "LOAN" || input.type === "MORTGAGE";
+  if (requiresBalance && input.currentBalance === null) context.addIssue({code: "custom", path: ["currentBalance"], message: "יש להזין יתרה נוכחית"});
+  if (!requiresBalance && input.currentBalance !== null) context.addIssue({code: "custom", path: ["currentBalance"], message: "אין להזין יתרה נוכחית עבור הוצאה חודשית"});
+  if (requiresInstitution && !input.financialInstitution?.trim()) context.addIssue({code: "custom", path: ["financialInstitution"], message: "יש להזין את הגוף הפיננסי"});
+  if (!requiresInstitution && input.financialInstitution !== null) context.addIssue({code: "custom", path: ["financialInstitution"], message: "הגוף הפיננסי אינו רלוונטי לסוג התחייבות זה"});
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const endDate = new Date(`${input.endDate}T00:00:00`);
@@ -62,6 +76,38 @@ export const liabilityInputSchema = z.object({
     context.addIssue({code: "custom", path: ["endDate"], message: "תאריך סיום ההתחייבות אינו יכול להיות בעבר"});
   }
 });
+
+const additionalIncomeSchema = z.object({
+  type: z.enum(ADDITIONAL_INCOME_TYPES, {error: "יש לבחור סוג הכנסה נוספת"}),
+  monthlyAmount: requiredNumber("יש להזין סכום הכנסה נוספת", 10_000_000),
+  description: z.string().trim().max(500, "התיאור ארוך מדי").nullable()
+}).strict().superRefine((input, context) => {
+  if (input.type === "OTHER" && !input.description?.trim()) context.addIssue({code: "custom", path: ["description"], message: "יש לתאר את ההכנסה הנוספת"});
+});
+
+const normalizeIncome = (value: unknown): unknown => {
+  if (!value || typeof value !== "object") return value;
+  const input = value as Record<string, unknown>;
+  if (Array.isArray(input.additionalIncomes)) return input;
+  const hasAdditionalIncome = input.hasAdditionalIncome === true;
+  return {
+    ...input,
+    additionalIncomes: hasAdditionalIncome && input.additionalIncomeType ? [{
+      type: input.additionalIncomeType,
+      monthlyAmount: input.additionalIncomeAmount,
+      description: input.additionalIncomeDescription ?? null
+    }] : []
+  };
+};
+
+const incomeSchema = z.preprocess(normalizeIncome, z.object({
+  monthlyNetIncome: requiredNumber("יש להזין הכנסה חודשית נטו", 10_000_000),
+  additionalIncomes: z.array(additionalIncomeSchema).max(100, "מספר ההכנסות הנוספות חורג מהמותר"),
+  hasAdditionalIncome: z.boolean().optional(),
+  additionalIncomeType: z.enum(ADDITIONAL_INCOME_TYPES).nullable().optional(),
+  additionalIncomeAmount: requiredNumber("יש להזין סכום הכנסה נוספת", 10_000_000).optional(),
+  additionalIncomeDescription: z.string().trim().max(500).nullable().optional()
+}).strict()).transform((input) => ({monthlyNetIncome: input.monthlyNetIncome, additionalIncomes: input.additionalIncomes}));
 
 const borrowerSchema = z.object({
   id: z.number().int().positive().optional(),
@@ -82,23 +128,11 @@ const borrowerSchema = z.object({
     jobTitle: requiredText("יש להזין תפקיד", 150),
     employmentSeniorityYears: requiredInteger("יש להזין ותק בשנים", 0, 70)
   }).strict(),
-  income: z.object({
-    monthlyNetIncome: requiredNumber("יש להזין הכנסה חודשית נטו", 10_000_000),
-    hasAdditionalIncome: z.boolean({error: "יש לבחור האם קיימת הכנסה נוספת"}),
-    additionalIncomeType: z.enum(ADDITIONAL_INCOME_TYPES, {error: "יש לבחור סוג הכנסה נוספת"}).nullable(),
-    additionalIncomeAmount: requiredNumber("יש להזין סכום הכנסה נוספת", 10_000_000),
-    additionalIncomeDescription: z.string().trim().max(500, "התיאור ארוך מדי").nullable()
-  }).strict(),
+  income: incomeSchema,
   liabilities: z.array(liabilityInputSchema).max(100, "מספר ההתחייבויות חורג מהמותר")
 }).strict().superRefine((input, context) => {
   const birthDateError = validateAdultBirthDate(input.dateOfBirth);
   if (birthDateError) context.addIssue({code: "custom", path: ["dateOfBirth"], message: birthDateError});
-  if (!input.income.hasAdditionalIncome && (input.income.additionalIncomeType !== null || input.income.additionalIncomeAmount !== 0 || input.income.additionalIncomeDescription !== null)) {
-    context.addIssue({code: "custom", path: ["income", "hasAdditionalIncome"], message: "כאשר אין הכנסה נוספת יש להשאיר את הפרטים הנוספים ריקים"});
-  }
-  if (input.income.hasAdditionalIncome && !input.income.additionalIncomeType) context.addIssue({code: "custom", path: ["income", "additionalIncomeType"], message: "יש לבחור סוג הכנסה נוספת"});
-  if (input.income.hasAdditionalIncome && input.income.additionalIncomeAmount <= 0) context.addIssue({code: "custom", path: ["income", "additionalIncomeAmount"], message: "יש להזין סכום הכנסה נוספת גדול מאפס"});
-  if (input.income.additionalIncomeType === "OTHER" && !input.income.additionalIncomeDescription?.trim()) context.addIssue({code: "custom", path: ["income", "additionalIncomeDescription"], message: "יש לתאר את ההכנסה הנוספת"});
 });
 
 const clientInputObjectSchema = z.object({
@@ -145,6 +179,13 @@ const clientInputObjectSchema = z.object({
 });
 
 export const clientInputSchema = z.preprocess(canonicalizeMarriedBorrowers, clientInputObjectSchema);
+
+export const newClientInputSchema = clientInputSchema.superRefine((input, context) => {
+  input.borrowers.forEach((borrower, index) => {
+    if (!SELECTABLE_MARITAL_STATUSES.includes(borrower.maritalStatus as never)) context.addIssue({code: "custom", path: ["borrowers", index, "maritalStatus"], message: "מצב משפחתי זה זמין לתיקים היסטוריים בלבד"});
+    if (!SELECTABLE_EMPLOYMENT_TYPES.includes(borrower.employment.employmentType as never)) context.addIssue({code: "custom", path: ["borrowers", index, "employment", "employmentType"], message: "סוג תעסוקה זה זמין לתיקים היסטוריים בלבד"});
+  });
+});
 
 export type ClientInput = z.infer<typeof clientInputSchema>;
 
@@ -200,19 +241,8 @@ const incomeBorrowerSchema = z.object({
     jobTitle: requiredText("יש להזין תפקיד", 150),
     employmentSeniorityYears: requiredInteger("יש להזין ותק בשנים", 0, 70)
   }).strict(),
-  income: z.object({
-    monthlyNetIncome: requiredNumber("יש להזין הכנסה חודשית נטו", 10_000_000),
-    hasAdditionalIncome: z.boolean({error: "יש לבחור האם קיימת הכנסה נוספת"}),
-    additionalIncomeType: z.enum(ADDITIONAL_INCOME_TYPES, {error: "יש לבחור סוג הכנסה נוספת"}).nullable(),
-    additionalIncomeAmount: requiredNumber("יש להזין סכום הכנסה נוספת", 10_000_000),
-    additionalIncomeDescription: z.string().trim().max(500, "התיאור ארוך מדי").nullable()
-  }).strict()
-}).strict().superRefine((input, context) => {
-  if (!input.income.hasAdditionalIncome && (input.income.additionalIncomeType !== null || input.income.additionalIncomeAmount !== 0 || input.income.additionalIncomeDescription !== null)) context.addIssue({code: "custom", path: ["income", "hasAdditionalIncome"], message: "כאשר אין הכנסה נוספת יש להשאיר את הפרטים הנוספים ריקים"});
-  if (input.income.hasAdditionalIncome && !input.income.additionalIncomeType) context.addIssue({code: "custom", path: ["income", "additionalIncomeType"], message: "יש לבחור סוג הכנסה נוספת"});
-  if (input.income.hasAdditionalIncome && input.income.additionalIncomeAmount <= 0) context.addIssue({code: "custom", path: ["income", "additionalIncomeAmount"], message: "יש להזין סכום הכנסה נוספת גדול מאפס"});
-  if (input.income.additionalIncomeType === "OTHER" && !input.income.additionalIncomeDescription?.trim()) context.addIssue({code: "custom", path: ["income", "additionalIncomeDescription"], message: "יש לתאר את ההכנסה הנוספת"});
-});
+  income: incomeSchema
+}).strict();
 
 export const clientIncomeInputSchema = z.object({borrowers: z.array(incomeBorrowerSchema).min(1).max(MAX_BORROWERS)}).strict();
 

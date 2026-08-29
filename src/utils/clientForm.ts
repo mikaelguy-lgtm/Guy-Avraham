@@ -1,6 +1,6 @@
 import {
-  ADDITIONAL_INCOME_TYPES, BORROWER_RELATIONSHIPS, DEAL_TYPES, EMPLOYMENT_TYPES, LIABILITY_TYPES,
-  MARITAL_STATUSES, MAX_BORROWERS, PROPERTY_TYPES
+  ADDITIONAL_INCOME_TYPES, BORROWER_RELATIONSHIPS, DEAL_TYPES, LIABILITY_TYPES,
+  MAX_BORROWERS, PROPERTY_TYPES, SELECTABLE_EMPLOYMENT_TYPES, SELECTABLE_MARITAL_STATUSES
 } from "../domain/clientFields";
 import type { Client, ClientBorrower, ClientLiability } from "../types";
 import { validateAdultBirthDate } from "./age";
@@ -14,11 +14,19 @@ export interface LiabilityFormState {
   id?: number;
   type: string;
   otherTypeDescription: string;
+  financialInstitution?: string;
   currentBalance: string;
   monthlyPayment: string;
   endDate: string;
   notes: string;
   incompleteLegacy?: boolean;
+}
+
+export interface AdditionalIncomeFormState {
+  id?: number;
+  type: string;
+  monthlyAmount: string;
+  description: string;
 }
 
 export interface BorrowerFormState {
@@ -27,7 +35,7 @@ export interface BorrowerFormState {
   address: string; maritalStatus: string; numberOfChildren: string; childrenAges: string[];
   employmentType: string; employerName: string; jobTitle: string; employmentSeniorityYears: string;
   monthlyNetIncome: string; hasAdditionalIncome: "" | "yes" | "no"; additionalIncomeType: string;
-  additionalIncomeAmount: string; additionalIncomeDescription: string; liabilities: LiabilityFormState[];
+  additionalIncomeAmount: string; additionalIncomeDescription: string; additionalIncomes: AdditionalIncomeFormState[]; liabilities: LiabilityFormState[];
   derivedAddressBackup?: string; derivedMaritalStatusBackup?: string;
 }
 
@@ -40,8 +48,8 @@ export interface ClientFormState {
 }
 
 export type ClientFormErrors = Record<string, string>;
-export const maritalStatusOptions = MARITAL_STATUSES.map((value) => [value, formatMaritalStatus(value)] as const);
-export const employmentTypeOptions = EMPLOYMENT_TYPES.map((value) => [value, formatEmploymentType(value)] as const);
+export const maritalStatusOptions = SELECTABLE_MARITAL_STATUSES.map((value) => [value, formatMaritalStatus(value)] as const);
+export const employmentTypeOptions = SELECTABLE_EMPLOYMENT_TYPES.map((value) => [value, formatEmploymentType(value)] as const);
 export const additionalIncomeTypeOptions = ADDITIONAL_INCOME_TYPES.map((value) => [value, formatAdditionalIncomeType(value)] as const);
 export const borrowerRelationshipOptions = BORROWER_RELATIONSHIPS.map((value) => [value, formatBorrowerRelationship(value)] as const);
 export const dealTypeOptions = DEAL_TYPES.map((value) => [value, formatDealType(value)] as const);
@@ -49,17 +57,18 @@ export const loanPurposeOptions = dealTypeOptions;
 export const liabilityTypeOptions = LIABILITY_TYPES.map((value) => [value, formatLiabilityType(value)] as const);
 export const propertyTypeOptions = PROPERTY_TYPES.map((value) => [value, formatPropertyType(value)] as const);
 
-export const emptyLiabilityForm = (): LiabilityFormState => ({type: "", otherTypeDescription: "", currentBalance: "", monthlyPayment: "", endDate: "", notes: ""});
+export const emptyLiabilityForm = (): LiabilityFormState => ({type: "", otherTypeDescription: "", financialInstitution: "", currentBalance: "", monthlyPayment: "", endDate: "", notes: ""});
+export const emptyAdditionalIncomeForm = (): AdditionalIncomeFormState => ({type: "", monthlyAmount: "", description: ""});
 export function emptyBorrowerForm(): BorrowerFormState {
-  return {firstName: "", lastName: "", identityNumber: "", birthDate: "", phone: "", email: "", address: "", maritalStatus: "", numberOfChildren: "0", childrenAges: [], employmentType: "", employerName: "", jobTitle: "", employmentSeniorityYears: "", monthlyNetIncome: "", hasAdditionalIncome: "", additionalIncomeType: "", additionalIncomeAmount: "", additionalIncomeDescription: "", liabilities: []};
+  return {firstName: "", lastName: "", identityNumber: "", birthDate: "", phone: "", email: "", address: "", maritalStatus: "", numberOfChildren: "0", childrenAges: [], employmentType: "", employerName: "", jobTitle: "", employmentSeniorityYears: "", monthlyNetIncome: "", hasAdditionalIncome: "no", additionalIncomeType: "", additionalIncomeAmount: "", additionalIncomeDescription: "", additionalIncomes: [], liabilities: []};
 }
 export function emptyClientForm(): ClientFormState {
   return {numberOfBorrowers: "1", borrowerRelationship: "", borrowerRelationshipOther: "", householdNumberOfChildren: "0", householdChildrenAges: [], borrowers: [emptyBorrowerForm()], householdLiabilities: [], loanPurpose: "", propertyType: "", propertyTypeOtherDescription: "", propertyCity: "", propertyAddress: "", propertyValue: "", requestedAmount: "", dealDetails: ""};
 }
 
-const liabilityToForm = (liability: ClientLiability): LiabilityFormState => ({id: liability.id, type: liability.type, otherTypeDescription: liability.otherTypeDescription ?? "", currentBalance: String(liability.currentBalance), monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate ?? "", notes: liability.notes, incompleteLegacy: liability.incompleteLegacy});
+const liabilityToForm = (liability: ClientLiability): LiabilityFormState => ({id: liability.id, type: liability.type, otherTypeDescription: liability.otherTypeDescription ?? "", financialInstitution: liability.financialInstitution ?? "", currentBalance: liability.currentBalance === null ? "" : String(liability.currentBalance), monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate ?? "", notes: liability.notes, incompleteLegacy: liability.incompleteLegacy});
 function borrowerToForm(borrower: ClientBorrower): BorrowerFormState {
-  return {id: borrower.id, firstName: borrower.firstName, lastName: borrower.lastName, identityNumber: borrower.identityNumber, birthDate: borrower.birthDate, phone: borrower.phone, email: borrower.email, address: borrower.address, maritalStatus: borrower.maritalStatus, numberOfChildren: String(borrower.children.numberOfChildren), childrenAges: borrower.children.childrenAges.map(String), employmentType: borrower.employment.employmentType, employerName: borrower.employment.employerName, jobTitle: borrower.employment.jobTitle, employmentSeniorityYears: String(borrower.employment.employmentSeniorityYears), monthlyNetIncome: String(borrower.income.monthlyNetIncome), hasAdditionalIncome: borrower.income.hasAdditionalIncome ? "yes" : "no", additionalIncomeType: borrower.income.additionalIncomeType ?? "", additionalIncomeAmount: String(borrower.income.additionalIncomeAmount), additionalIncomeDescription: borrower.income.additionalIncomeDescription ?? "", liabilities: borrower.liabilities.map(liabilityToForm)};
+  return {id: borrower.id, firstName: borrower.firstName, lastName: borrower.lastName, identityNumber: borrower.identityNumber, birthDate: borrower.birthDate, phone: borrower.phone, email: borrower.email, address: borrower.address, maritalStatus: borrower.maritalStatus, numberOfChildren: String(borrower.children.numberOfChildren), childrenAges: borrower.children.childrenAges.map(String), employmentType: borrower.employment.employmentType, employerName: borrower.employment.employerName, jobTitle: borrower.employment.jobTitle, employmentSeniorityYears: String(borrower.employment.employmentSeniorityYears), monthlyNetIncome: String(borrower.income.monthlyNetIncome), hasAdditionalIncome: borrower.income.additionalIncomes.length ? "yes" : "no", additionalIncomeType: borrower.income.additionalIncomeType ?? "", additionalIncomeAmount: String(borrower.income.additionalIncomeAmount), additionalIncomeDescription: borrower.income.additionalIncomeDescription ?? "", additionalIncomes: borrower.income.additionalIncomes.map((income) => ({id: income.id, type: income.type, monthlyAmount: String(income.monthlyAmount), description: income.description ?? ""})), liabilities: borrower.liabilities.map(liabilityToForm)};
 }
 export function clientToForm(client: Client): ClientFormState {
   return {numberOfBorrowers: String(client.numberOfBorrowers), borrowerRelationship: client.borrowerRelationship ?? "", borrowerRelationshipOther: client.borrowerRelationshipOther ?? "", householdNumberOfChildren: String(client.household.numberOfChildren), householdChildrenAges: client.household.childrenAges.map(String), borrowers: client.borrowers.map(borrowerToForm), householdLiabilities: client.householdLiabilities.map(liabilityToForm), loanPurpose: client.loanPurpose, propertyType: client.propertyType, propertyTypeOtherDescription: client.propertyTypeOtherDescription ?? "", propertyCity: client.propertyCity, propertyAddress: client.propertyAddress, propertyValue: String(client.propertyValue), requestedAmount: String(client.requestedAmount), dealDetails: client.dealDetails};
@@ -121,7 +130,8 @@ function validateLiabilities(errors: ClientFormErrors, prefix: string, liability
     const key = `${prefix}.${index}`;
     required(errors, `${key}.type`, liability.type, "יש לבחור סוג התחייבות");
     if (liability.type === "OTHER_FINANCIAL_ENTITY") required(errors, `${key}.otherTypeDescription`, liability.otherTypeDescription, "יש להזין את שם הגוף או סוג ההתחייבות");
-    numberField(errors, `${key}.currentBalance`, liability.currentBalance, "יש להזין יתרה נוכחית");
+    if (liability.type !== "ALIMONY" && liability.type !== "RENT") numberField(errors, `${key}.currentBalance`, liability.currentBalance, "יש להזין יתרה נוכחית");
+    if (liability.type === "LOAN" || liability.type === "MORTGAGE") required(errors, `${key}.financialInstitution`, liability.financialInstitution ?? "", "יש להזין את הגוף הפיננסי");
     numberField(errors, `${key}.monthlyPayment`, liability.monthlyPayment, "יש להזין החזר חודשי");
     if (!calculateRemainingCommitmentPeriod(liability.endDate)) errors[`${key}.endDate`] = "יש להזין תאריך סיום שאינו בעבר";
     required(errors, `${key}.notes`, liability.notes, "יש להזין הערות להתחייבות");
@@ -139,7 +149,20 @@ function validatePersonalSection(form: ClientFormState, errors: ClientFormErrors
 }
 
 function validateIncomeSection(form: ClientFormState, errors: ClientFormErrors): void {
-  form.borrowers.forEach((borrower, index) => { const prefix = `borrowers.${index}`; required(errors, `${prefix}.employmentType`, borrower.employmentType, "יש לבחור סוג תעסוקה"); required(errors, `${prefix}.employerName`, borrower.employerName, "יש להזין שם מעסיק או עסק"); required(errors, `${prefix}.jobTitle`, borrower.jobTitle, "יש להזין תפקיד"); numberField(errors, `${prefix}.employmentSeniorityYears`, borrower.employmentSeniorityYears, "יש להזין ותק תקין בשנים"); numberField(errors, `${prefix}.monthlyNetIncome`, borrower.monthlyNetIncome, "יש להזין הכנסה חודשית נטו"); if (!borrower.hasAdditionalIncome) errors[`${prefix}.hasAdditionalIncome`] = "יש לבחור האם קיימת הכנסה נוספת"; if (borrower.hasAdditionalIncome === "yes") { required(errors, `${prefix}.additionalIncomeType`, borrower.additionalIncomeType, "יש לבחור סוג הכנסה נוספת"); numberField(errors, `${prefix}.additionalIncomeAmount`, borrower.additionalIncomeAmount, "יש להזין סכום הכנסה נוספת גדול מאפס", true); if (borrower.additionalIncomeType === "OTHER") required(errors, `${prefix}.additionalIncomeDescription`, borrower.additionalIncomeDescription, "יש לתאר את ההכנסה הנוספת"); } });
+  form.borrowers.forEach((borrower, index) => {
+    const prefix = `borrowers.${index}`;
+    required(errors, `${prefix}.employmentType`, borrower.employmentType, "יש לבחור סוג תעסוקה");
+    required(errors, `${prefix}.employerName`, borrower.employerName, "יש להזין שם מעסיק או עסק");
+    required(errors, `${prefix}.jobTitle`, borrower.jobTitle, "יש להזין תפקיד");
+    numberField(errors, `${prefix}.employmentSeniorityYears`, borrower.employmentSeniorityYears, "יש להזין ותק תקין בשנים");
+    numberField(errors, `${prefix}.monthlyNetIncome`, borrower.monthlyNetIncome, "יש להזין הכנסה חודשית נטו");
+    borrower.additionalIncomes.forEach((income, incomeIndex) => {
+      const incomePrefix = `${prefix}.additionalIncomes.${incomeIndex}`;
+      required(errors, `${incomePrefix}.type`, income.type, "יש לבחור סוג הכנסה נוספת");
+      numberField(errors, `${incomePrefix}.monthlyAmount`, income.monthlyAmount, "יש להזין סכום הכנסה נוסף שאינו שלילי");
+      if (income.type === "OTHER") required(errors, `${incomePrefix}.description`, income.description, "יש לתאר את ההכנסה הנוספת");
+    });
+  });
 }
 
 function validateLiabilitiesSection(form: ClientFormState, errors: ClientFormErrors): void {
@@ -175,9 +198,9 @@ export function validateClientForm(form: ClientFormState, step?: 1 | 2 | 3): Cli
   return errors;
 }
 
-const liabilityPayload = (liability: LiabilityFormState) => ({type: liability.type, otherTypeDescription: liability.type === "OTHER_FINANCIAL_ENTITY" ? liability.otherTypeDescription.trim() : null, currentBalance: Number(liability.currentBalance), monthlyPayment: Number(liability.monthlyPayment), endDate: liability.endDate, notes: liability.notes.trim()});
+const liabilityPayload = (liability: LiabilityFormState) => ({type: liability.type, otherTypeDescription: liability.type === "OTHER_FINANCIAL_ENTITY" ? liability.otherTypeDescription.trim() : null, financialInstitution: liability.type === "LOAN" || liability.type === "MORTGAGE" ? (liability.financialInstitution ?? "").trim() : null, currentBalance: liability.type === "ALIMONY" || liability.type === "RENT" ? null : Number(liability.currentBalance), monthlyPayment: Number(liability.monthlyPayment), endDate: liability.endDate, notes: liability.notes.trim()});
 const personalBorrowerPayload = (borrower: BorrowerFormState, index: number, sharedChildren: boolean, relationship: string, primaryAddress: string) => ({id: borrower.id, order: index + 1, isPrimary: index === 0, firstName: borrower.firstName.trim(), lastName: borrower.lastName.trim(), identityNumber: borrower.identityNumber.trim(), dateOfBirth: borrower.birthDate, phone: borrower.phone.trim(), email: borrower.email.trim(), address: (relationship === "MARRIED" && index > 0 ? primaryAddress : borrower.address).trim(), maritalStatus: relationship === "MARRIED" ? "MARRIED" : borrower.maritalStatus, children: {numberOfChildren: sharedChildren ? 0 : Number(borrower.numberOfChildren), childrenAges: sharedChildren ? [] : borrower.childrenAges.map(Number)}});
-const incomeBorrowerPayload = (borrower: BorrowerFormState) => { const hasAdditionalIncome = borrower.hasAdditionalIncome === "yes"; return {id: borrower.id, employment: {employmentType: borrower.employmentType, employerName: borrower.employerName.trim(), jobTitle: borrower.jobTitle.trim(), employmentSeniorityYears: Number(borrower.employmentSeniorityYears)}, income: {monthlyNetIncome: Number(borrower.monthlyNetIncome), hasAdditionalIncome, additionalIncomeType: hasAdditionalIncome ? borrower.additionalIncomeType : null, additionalIncomeAmount: hasAdditionalIncome ? Number(borrower.additionalIncomeAmount) : 0, additionalIncomeDescription: hasAdditionalIncome && borrower.additionalIncomeType === "OTHER" ? borrower.additionalIncomeDescription.trim() : null}}; };
+const incomeBorrowerPayload = (borrower: BorrowerFormState) => ({id: borrower.id, employment: {employmentType: borrower.employmentType, employerName: borrower.employerName.trim(), jobTitle: borrower.jobTitle.trim(), employmentSeniorityYears: Number(borrower.employmentSeniorityYears)}, income: {monthlyNetIncome: Number(borrower.monthlyNetIncome), additionalIncomes: borrower.additionalIncomes.map((income) => ({type: income.type, monthlyAmount: Number(income.monthlyAmount), description: income.type === "OTHER" ? income.description.trim() : null}))}});
 
 export function clientPersonalPayload(form: ClientFormState): Record<string, unknown> {
   const sharedChildren = isSharedHousehold(form.borrowerRelationship);

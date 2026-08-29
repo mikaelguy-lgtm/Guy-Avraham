@@ -28,12 +28,16 @@ export function collectDeliveryBlockers(snapshot: FullCaseSnapshot): DeliveryBlo
     requiredText(borrower.employment.jobTitle, `BORROWER_${borrower.order}_JOB_TITLE`, `${prefix}: חסר תפקיד`, "ההכנסות");
     if (!Number.isFinite(borrower.employment.employmentSeniorityYears) || borrower.employment.employmentSeniorityYears < 0) addField(`BORROWER_${borrower.order}_SENIORITY`, `${prefix}: הוותק אינו תקין`, "יש להזין ותק בשנים שאינו שלילי.");
     if (!Number.isFinite(borrower.employment.monthlyNetIncome) || borrower.employment.monthlyNetIncome < 0) addField(`BORROWER_${borrower.order}_INCOME`, `${prefix}: ההכנסה החודשית אינה תקינה`, "יש להזין הכנסה חודשית שאינה שלילית.");
-    if (borrower.employment.hasAdditionalIncome && (!borrower.employment.additionalIncomeType || borrower.employment.additionalIncomeAmount <= 0)) addField(`BORROWER_${borrower.order}_ADDITIONAL_INCOME`, `${prefix}: פרטי ההכנסה הנוספת אינם מלאים`, "יש להשלים סוג וסכום הכנסה נוספת.");
-    if (borrower.employment.additionalIncomeType === "OTHER" && !borrower.employment.additionalIncomeDescription?.trim()) addField(`BORROWER_${borrower.order}_ADDITIONAL_INCOME_DESCRIPTION`, `${prefix}: חסר תיאור להכנסה הנוספת`, "יש לתאר את ההכנסה הנוספת מסוג אחר.");
+    (borrower.employment.additionalIncomes ?? []).forEach((income, incomeIndex) => {
+      if (!income.type || !Number.isFinite(income.monthlyAmount) || income.monthlyAmount < 0) addField(`BORROWER_${borrower.order}_ADDITIONAL_INCOME_${incomeIndex + 1}`, `${prefix}: הכנסה נוספת ${incomeIndex + 1} אינה מלאה`, "יש להשלים סוג וסכום הכנסה נוספת שאינו שלילי.");
+      if (income.type === "OTHER" && !income.description?.trim()) addField(`BORROWER_${borrower.order}_ADDITIONAL_INCOME_${incomeIndex + 1}_DESCRIPTION`, `${prefix}: חסר תיאור להכנסה נוספת`, "יש לתאר את ההכנסה הנוספת מסוג אחר.");
+    });
   }
   const liabilities = [...snapshot.borrowers.flatMap((borrower) => borrower.liabilities), ...snapshot.householdLiabilities];
   liabilities.forEach((liability, index) => {
-    if (liability.incompleteLegacy || !liability.type || !liability.endDate || !liability.notes.trim() || liability.currentBalance < 0 || liability.monthlyPayment < 0) addField(`LIABILITY_${index + 1}_INCOMPLETE`, `התחייבות ${index + 1} אינה מלאה`, "יש להשלים סוג, יתרה, החזר, תאריך סיום והערות.");
+    const requiresBalance = liability.type !== "ALIMONY" && liability.type !== "RENT";
+    const requiresInstitution = liability.type === "LOAN" || liability.type === "MORTGAGE";
+    if (liability.incompleteLegacy || !liability.type || !liability.endDate || !liability.notes.trim() || (requiresBalance && (liability.currentBalance === null || liability.currentBalance < 0)) || liability.monthlyPayment < 0 || (requiresInstitution && !liability.financialInstitution?.trim())) addField(`LIABILITY_${index + 1}_INCOMPLETE`, `התחייבות ${index + 1} אינה מלאה`, "יש להשלים את כל הפרטים הרלוונטיים להתחייבות.");
   });
   requiredText(snapshot.property.propertyType, "PROPERTY_TYPE_REQUIRED", "חסר סוג נכס", "פרטי הנכס");
   if (snapshot.property.propertyType === "OTHER" && !snapshot.property.propertyTypeOtherDescription?.trim()) addField("PROPERTY_TYPE_DESCRIPTION_REQUIRED", "חסר תיאור סוג הנכס", "יש לתאר את סוג הנכס בפרטי הנכס.");

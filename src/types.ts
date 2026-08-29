@@ -64,16 +64,24 @@ export interface ClientBorrower {
   maritalStatus: string;
   children: {numberOfChildren: number; childrenAges: number[]};
   employment: {employmentType: string; employerName: string; jobTitle: string; employmentSeniorityYears: number};
-  income: {monthlyNetIncome: number; hasAdditionalIncome: boolean; additionalIncomeType: string | null; additionalIncomeAmount: number; additionalIncomeDescription: string | null};
+  income: {monthlyNetIncome: number; hasAdditionalIncome: boolean; additionalIncomeType: string | null; additionalIncomeAmount: number; additionalIncomeDescription: string | null; additionalIncomes: ClientAdditionalIncome[]};
   liabilities: ClientLiability[];
+}
+
+export interface ClientAdditionalIncome {
+  id?: number;
+  type: string;
+  monthlyAmount: number;
+  description: string | null;
 }
 
 export interface ClientLiability {
   id: number;
   scope: "BORROWER" | "HOUSEHOLD";
-  type: "LOAN" | "MORTGAGE" | "ALIMONY" | "OTHER_FINANCIAL_ENTITY";
+  type: "LOAN" | "MORTGAGE" | "ALIMONY" | "RENT" | "OTHER_FINANCIAL_ENTITY";
   otherTypeDescription: string | null;
-  currentBalance: number;
+  financialInstitution: string | null;
+  currentBalance: number | null;
   monthlyPayment: number;
   endDate: string | null;
   notes: string;

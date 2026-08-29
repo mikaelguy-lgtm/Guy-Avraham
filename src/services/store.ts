@@ -54,7 +54,14 @@ export interface BorrowerMutationRecord {
   additionalIncomeType: string | null;
   additionalIncomeAmount: number;
   additionalIncomeDescriptionEncrypted: string | null;
+  additionalIncomes: AdditionalIncomeMutationRecord[];
   liabilities: LiabilityMutationRecord[];
+}
+
+export interface AdditionalIncomeMutationRecord {
+  sourceType: string;
+  monthlyAmount: number;
+  descriptionEncrypted: string | null;
 }
 
 export interface PersonalBorrowerMutationRecord {
@@ -96,6 +103,7 @@ export interface ClientIncomeMutationRecord {
     additionalIncomeType: string | null;
     additionalIncomeAmount: number;
     additionalIncomeDescriptionEncrypted: string | null;
+    additionalIncomes: AdditionalIncomeMutationRecord[];
   }>;
 }
 
@@ -115,9 +123,10 @@ export interface ClientPropertyMutationRecord {
 }
 
 export interface LiabilityMutationRecord {
-  liabilityType: "LOAN" | "MORTGAGE" | "ALIMONY" | "OTHER_FINANCIAL_ENTITY";
+  liabilityType: "LOAN" | "MORTGAGE" | "ALIMONY" | "RENT" | "OTHER_FINANCIAL_ENTITY";
   otherTypeDescriptionEncrypted: string | null;
-  currentBalance: number;
+  financialInstitutionEncrypted?: string | null;
+  currentBalance: number | null;
   monthlyPayment: number;
   endDate: string;
   notesEncrypted: string;
@@ -202,6 +211,7 @@ export interface BorrowerFinancialDetails {
   additionalIncomeType: string | null;
   additionalIncomeAmount: number;
   additionalIncomeDescriptionEncrypted: string | null;
+  additionalIncomes?: Array<{id: number; sortOrder: number; sourceType: string; monthlyAmount: number; descriptionEncrypted: string | null}>;
   liabilities: LiabilityFinancialDetails[];
 }
 
@@ -210,7 +220,8 @@ export interface LiabilityFinancialDetails {
   scope: string;
   liabilityType: string;
   otherTypeDescriptionEncrypted: string | null;
-  currentBalance: number;
+  financialInstitutionEncrypted?: string | null;
+  currentBalance: number | null;
   monthlyPayment: number;
   endDate: string | null;
   notesEncrypted: string | null;
@@ -569,17 +580,23 @@ export class PostgresStore implements AppStore {
           additionalIncomeAmount: String(borrowerRecord.additionalIncomeAmount),
           additionalIncomeDescriptionEncrypted: borrowerRecord.additionalIncomeDescriptionEncrypted
         });
+        if (borrowerRecord.additionalIncomes.length > 0) await transaction.insert(incomeSources).values(borrowerRecord.additionalIncomes.map((income, index) => ({
+          borrowerId: borrower.id, sortOrder: index + 1, sourceType: income.sourceType,
+          monthlyAmount: String(income.monthlyAmount), descriptionEncrypted: income.descriptionEncrypted
+        })));
         if (borrowerRecord.liabilities.length > 0) await transaction.insert(liabilities).values(borrowerRecord.liabilities.map((liability) => ({
           clientId: client.id, borrowerId: borrower.id, scope: "BORROWER", liabilityType: liability.liabilityType,
-          outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+          outstandingBalance: liability.currentBalance === null ? null : String(liability.currentBalance), currentBalance: liability.currentBalance === null ? null : String(liability.currentBalance),
           monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+          financialInstitutionEncrypted: liability.financialInstitutionEncrypted,
           otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
         })));
       }
       if (record.householdLiabilities.length > 0) await transaction.insert(liabilities).values(record.householdLiabilities.map((liability) => ({
         clientId: client.id, borrowerId: null, scope: "HOUSEHOLD", liabilityType: liability.liabilityType,
-        outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+        outstandingBalance: liability.currentBalance === null ? null : String(liability.currentBalance), currentBalance: liability.currentBalance === null ? null : String(liability.currentBalance),
         monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+        financialInstitutionEncrypted: liability.financialInstitutionEncrypted,
         otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
       })));
       await transaction.insert(properties).values({
@@ -636,9 +653,14 @@ export class PostgresStore implements AppStore {
     const liabilityRows = await db.select({
       id: liabilities.id, borrowerId: liabilities.borrowerId, scope: liabilities.scope, liabilityType: liabilities.liabilityType,
       outstandingBalance: liabilities.outstandingBalance, currentBalance: liabilities.currentBalance, monthlyPayment: liabilities.monthlyPayment,
-      endDate: liabilities.endDate, otherTypeDescriptionEncrypted: liabilities.otherTypeDescriptionEncrypted,
+      endDate: liabilities.endDate, financialInstitutionEncrypted: liabilities.financialInstitutionEncrypted, otherTypeDescriptionEncrypted: liabilities.otherTypeDescriptionEncrypted,
       notesEncrypted: liabilities.notesEncrypted, legacyStatus: liabilities.legacyStatus
     }).from(liabilities).where(and(eq(liabilities.clientId, id), isNull(liabilities.deletedAt)));
+    const incomeRows = borrowerRows.length ? await db.select({
+      id: incomeSources.id, borrowerId: incomeSources.borrowerId, sortOrder: incomeSources.sortOrder,
+      sourceType: incomeSources.sourceType, monthlyAmount: incomeSources.monthlyAmount,
+      descriptionEncrypted: incomeSources.descriptionEncrypted
+    }).from(incomeSources).where(inArray(incomeSources.borrowerId, borrowerRows.map((row) => row.id))).orderBy(asc(incomeSources.borrowerId), asc(incomeSources.sortOrder)) : [];
     const [latestSubmission] = await db.select({status: lenderSubmissions.status}).from(lenderSubmissions)
       .where(eq(lenderSubmissions.clientId, id)).orderBy(desc(lenderSubmissions.updatedAt)).limit(1);
     const [offersCount] = await db.select({value: sql<number>`count(*)::int`}).from(loanOffers)
@@ -651,10 +673,21 @@ export class PostgresStore implements AppStore {
         jobTitle: borrower.jobTitle ?? "",
         monthlyNetIncome: Number(borrower.monthlyNetIncome),
         additionalIncomeAmount: Number(borrower.additionalIncomeAmount),
+        additionalIncomes: (() => {
+          const normalized = incomeRows.filter((row) => row.borrowerId === borrower.id).map((row) => ({
+            id: row.id, sortOrder: row.sortOrder, sourceType: row.sourceType,
+            monthlyAmount: Number(row.monthlyAmount), descriptionEncrypted: row.descriptionEncrypted
+          }));
+          return normalized.length ? normalized : borrower.hasAdditionalIncome && borrower.additionalIncomeType ? [{
+            id: 0, sortOrder: 1, sourceType: borrower.additionalIncomeType,
+            monthlyAmount: Number(borrower.additionalIncomeAmount), descriptionEncrypted: borrower.additionalIncomeDescriptionEncrypted
+          }] : [];
+        })(),
         liabilities: ownLiabilities.map((row) => ({
           id: row.id, scope: row.scope, liabilityType: row.liabilityType,
           otherTypeDescriptionEncrypted: row.otherTypeDescriptionEncrypted,
-          currentBalance: Number(row.currentBalance ?? row.outstandingBalance), monthlyPayment: Number(row.monthlyPayment),
+          financialInstitutionEncrypted: row.financialInstitutionEncrypted,
+          currentBalance: row.currentBalance === null && row.outstandingBalance === null ? null : Number(row.currentBalance ?? row.outstandingBalance), monthlyPayment: Number(row.monthlyPayment),
           endDate: row.endDate, notesEncrypted: row.notesEncrypted, legacyStatus: row.legacyStatus
         }))
       };
@@ -676,7 +709,8 @@ export class PostgresStore implements AppStore {
       householdLiabilities: liabilityRows.filter((row) => row.scope === "HOUSEHOLD").map((row) => ({
         id: row.id, scope: row.scope, liabilityType: row.liabilityType,
         otherTypeDescriptionEncrypted: row.otherTypeDescriptionEncrypted,
-        currentBalance: Number(row.currentBalance ?? row.outstandingBalance), monthlyPayment: Number(row.monthlyPayment),
+        financialInstitutionEncrypted: row.financialInstitutionEncrypted,
+        currentBalance: row.currentBalance === null && row.outstandingBalance === null ? null : Number(row.currentBalance ?? row.outstandingBalance), monthlyPayment: Number(row.monthlyPayment),
         endDate: row.endDate, notesEncrypted: row.notesEncrypted, legacyStatus: row.legacyStatus
       })),
       loanPurpose: loan.purpose,
@@ -774,17 +808,24 @@ export class PostgresStore implements AppStore {
         };
         if (employment) await transaction.update(employmentRecords).set(employmentValues).where(eq(employmentRecords.id, employment.id));
         else await transaction.insert(employmentRecords).values({borrowerId, ...employmentValues});
+        await transaction.delete(incomeSources).where(eq(incomeSources.borrowerId, borrowerId));
+        if (borrowerRecord.additionalIncomes.length > 0) await transaction.insert(incomeSources).values(borrowerRecord.additionalIncomes.map((income, index) => ({
+          borrowerId, sortOrder: index + 1, sourceType: income.sourceType,
+          monthlyAmount: String(income.monthlyAmount), descriptionEncrypted: income.descriptionEncrypted
+        })));
         if (borrowerRecord.liabilities.length > 0) await transaction.insert(liabilities).values(borrowerRecord.liabilities.map((liability) => ({
           clientId: id, borrowerId, scope: "BORROWER", liabilityType: liability.liabilityType,
-          outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+          outstandingBalance: liability.currentBalance === null ? null : String(liability.currentBalance), currentBalance: liability.currentBalance === null ? null : String(liability.currentBalance),
           monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+          financialInstitutionEncrypted: liability.financialInstitutionEncrypted,
           otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
         })));
       }
       if (record.householdLiabilities.length > 0) await transaction.insert(liabilities).values(record.householdLiabilities.map((liability) => ({
         clientId: id, borrowerId: null, scope: "HOUSEHOLD", liabilityType: liability.liabilityType,
-        outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+        outstandingBalance: liability.currentBalance === null ? null : String(liability.currentBalance), currentBalance: liability.currentBalance === null ? null : String(liability.currentBalance),
         monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+        financialInstitutionEncrypted: liability.financialInstitutionEncrypted,
         otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
       })));
       const removedBorrowerIds = existingBorrowers.map((item) => item.id).filter((borrowerId) => !retainedBorrowerIds.includes(borrowerId));
@@ -878,6 +919,11 @@ export class PostgresStore implements AppStore {
           additionalIncomeDescriptionEncrypted: borrower.additionalIncomeDescriptionEncrypted, updatedAt: new Date()
         };
         await transaction.update(employmentRecords).set(values).where(eq(employmentRecords.borrowerId, borrower.id));
+        await transaction.delete(incomeSources).where(eq(incomeSources.borrowerId, borrower.id));
+        if (borrower.additionalIncomes.length > 0) await transaction.insert(incomeSources).values(borrower.additionalIncomes.map((income, index) => ({
+          borrowerId: borrower.id, sortOrder: index + 1, sourceType: income.sourceType,
+          monthlyAmount: String(income.monthlyAmount), descriptionEncrypted: income.descriptionEncrypted
+        })));
       }
       const [client] = await transaction.update(clients).set({updatedAt: new Date()}).where(and(eq(clients.id, id), isNull(clients.deletedAt))).returning();
       return client ?? null;
@@ -893,15 +939,17 @@ export class PostgresStore implements AppStore {
       for (const borrower of record.borrowers) {
         if (borrower.liabilities.length > 0) await transaction.insert(liabilities).values(borrower.liabilities.map((liability) => ({
           clientId: id, borrowerId: borrower.id, scope: "BORROWER", liabilityType: liability.liabilityType,
-          outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+          outstandingBalance: liability.currentBalance === null ? null : String(liability.currentBalance), currentBalance: liability.currentBalance === null ? null : String(liability.currentBalance),
           monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+          financialInstitutionEncrypted: liability.financialInstitutionEncrypted,
           otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
         })));
       }
       if (record.householdLiabilities.length > 0) await transaction.insert(liabilities).values(record.householdLiabilities.map((liability) => ({
         clientId: id, borrowerId: null, scope: "HOUSEHOLD", liabilityType: liability.liabilityType,
-        outstandingBalance: String(liability.currentBalance), currentBalance: String(liability.currentBalance),
+        outstandingBalance: liability.currentBalance === null ? null : String(liability.currentBalance), currentBalance: liability.currentBalance === null ? null : String(liability.currentBalance),
         monthlyPayment: String(liability.monthlyPayment), endDate: liability.endDate,
+        financialInstitutionEncrypted: liability.financialInstitutionEncrypted,
         otherTypeDescriptionEncrypted: liability.otherTypeDescriptionEncrypted, notesEncrypted: liability.notesEncrypted
       })));
       const [client] = await transaction.update(clients).set({updatedAt: new Date()}).where(and(eq(clients.id, id), isNull(clients.deletedAt))).returning();
@@ -976,6 +1024,7 @@ export class PostgresStore implements AppStore {
     const [property] = await db.select().from(properties).where(eq(properties.clientId, clientId)).limit(1);
     const [loan] = await db.select().from(loanRequests).where(eq(loanRequests.clientId, clientId)).limit(1);
     const employmentRows = await db.select({
+      borrowerId: borrowers.id,
       employmentType: employmentRecords.employmentType,
       monthlyNetIncome: employmentRecords.monthlyNetIncome,
       additionalIncomeAmount: employmentRecords.additionalIncomeAmount,
@@ -984,6 +1033,8 @@ export class PostgresStore implements AppStore {
     })
       .from(employmentRecords).innerJoin(borrowers, eq(borrowers.id, employmentRecords.borrowerId))
       .where(eq(borrowers.clientId, clientId)).orderBy(asc(borrowers.borrowerOrder));
+    const additionalIncomeRows = employmentRows.length ? await db.select({borrowerId: incomeSources.borrowerId, monthlyAmount: incomeSources.monthlyAmount})
+      .from(incomeSources).where(inArray(incomeSources.borrowerId, employmentRows.map((row) => row.borrowerId))) : [];
     const liabilityRows = await db.select({type: liabilities.liabilityType, balance: liabilities.currentBalance, legacyBalance: liabilities.outstandingBalance, monthly: liabilities.monthlyPayment})
       .from(liabilities).where(and(eq(liabilities.clientId, clientId), isNull(liabilities.deletedAt)));
     if (!property || !loan || employmentRows.length === 0) return null;
@@ -995,7 +1046,11 @@ export class PostgresStore implements AppStore {
       employmentTypes: employmentRows.map((employment) => employment.employmentType),
       borrowerBirthDatesEncrypted: employmentRows.map((employment) => employment.birthDateEncrypted),
       borrowerBirthDates: employmentRows.map((employment) => employment.birthDate),
-      totalMonthlyIncome: employmentRows.reduce((sum, employment) => sum + Number(employment.monthlyNetIncome) + Number(employment.additionalIncomeAmount), 0),
+      totalMonthlyIncome: employmentRows.reduce((sum, employment) => {
+        const normalized = additionalIncomeRows.filter((income) => income.borrowerId === employment.borrowerId);
+        const additional = normalized.length ? normalized.reduce((incomeSum, income) => incomeSum + Number(income.monthlyAmount), 0) : Number(employment.additionalIncomeAmount);
+        return sum + Number(employment.monthlyNetIncome) + additional;
+      }, 0),
       liabilityCount: liabilityRows.length,
       totalLiabilityBalance: liabilityRows.reduce((sum, liability) => sum + Number(liability.balance ?? liability.legacyBalance), 0),
       totalMonthlyPayments: liabilityRows.reduce((sum, liability) => sum + Number(liability.monthly), 0),

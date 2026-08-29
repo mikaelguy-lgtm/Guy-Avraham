@@ -8,6 +8,8 @@ describe("Hebrew display formatters", () => {
     expect(DEAL_TYPES.map(formatDealType)).toEqual(expectedDeals);
     expect(formatEmploymentType("SALARIED")).toBe("שכיר");
     expect(formatEmploymentType("SELF_EMPLOYED")).toBe("עצמאי");
+    expect(formatEmploymentType("CONTROLLING_SHAREHOLDER")).toBe("שכיר בעל שליטה");
+    expect(formatEmploymentType("TORAH_INSTITUTION")).toBe("מוסד תורני");
     expect(formatPropertyType("APARTMENT")).toBe("דירה");
     expect(formatPropertyType("HOUSE")).toBe("בית פרטי");
     expect(formatRegion("CENTER")).toBe("מרכז");
@@ -18,6 +20,7 @@ describe("Hebrew display formatters", () => {
     expect(formatMaritalStatus("COMMON_LAW")).toBe("ידועים בציבור");
     expect(formatMaritalStatus("SEPARATED")).toBe("פרוד/ה");
     expect(formatAdditionalIncomeType("RENTAL_INCOME")).toBe("שכר דירה");
+    expect(formatAdditionalIncomeType("SMALL_SELF_EMPLOYMENT")).toBe("הכנסה מעצמאות קטנה");
   });
 
   it("formats Israeli currency", () => {

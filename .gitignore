@@ -15,3 +15,11 @@ output/external-borrower-layout/
 .DS_Store
 codex-bridge/
 tmp/
+
+# Local-machine SSH/credential material for connecting to the SynCash server.
+# The real files live outside this repo entirely (C:\Users\guyav\.syncash\,
+# C:\Users\guyav\.ssh\) — these patterns are a defensive backstop only.
+credentials.env
+*.credentials.env
+.syncash/
+SYNCASH_PASSWORD

@@ -132,11 +132,12 @@ test("final client module delivery verifies all required fields and deal types",
     await page.getByLabel("תפקיד").fill("מנהלת תפעול");
     await page.getByLabel("ותק בשנים").fill("8");
     await page.getByLabel("הכנסה חודשית נטו").fill("20000");
-    await page.getByLabel("האם קיימת הכנסה נוספת").selectOption("yes");
+    await page.getByRole("button", {name: "הוספת הכנסה נוספת"}).click();
     await page.getByLabel("סוג הכנסה נוספת").selectOption("RENTAL_INCOME");
-    await page.getByLabel("סכום הכנסה נוספת חודשי").fill("3000");
+    await page.getByLabel("סכום הכנסה חודשי").fill("3000");
     await page.getByRole("button", {name: "הוספת התחייבות"}).click();
     await page.getByLabel("סוג התחייבות 1").selectOption("MORTGAGE");
+    await page.getByLabel("הגוף הפיננסי").fill("בנק למשכנתאות");
     await page.getByLabel("יתרה נוכחית").fill("450000");
     await page.getByLabel("החזר חודשי").fill("3500");
     await page.getByLabel("תאריך סיום התחייבות").fill("2040-07-31");
@@ -180,7 +181,7 @@ test("final client module delivery verifies all required fields and deal types",
     await page.getByLabel("ילד 1 — גיל").fill("6");
     await page.getByRole("button", {name: "הבא"}).click();
     await page.getByLabel("סוג הכנסה נוספת").selectOption("INVESTMENT_INCOME");
-    await page.getByLabel("סכום הכנסה נוספת חודשי").fill("4000");
+    await page.getByLabel("סכום הכנסה חודשי").fill("4000");
     await page.getByRole("button", {name: "הבא"}).click();
     phase = "save initial edit";
     const initialSave = waitForSuccessfulResponse(page, `/api/clients/${clientId}`, "PATCH");

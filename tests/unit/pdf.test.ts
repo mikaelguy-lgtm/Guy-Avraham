@@ -24,9 +24,9 @@ async function pdfContent(pdf: Buffer) {
 const fullSnapshot: FullCaseSnapshot = {
   publicCaseNumber: "SC-HEBREW-PDF", status: "ACTIVE", sourceClientUpdatedAt: "2026-07-27T00:00:00.000Z", numberOfBorrowers: 1, borrowerRelationship: null,
   household: {numberOfChildren: 0, childrenAges: []},
-  borrowers: [{order: 1, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", age: 41, phone: "0501234567", email: "dana@example.com", address: "רחוב סודי 1, תל אביב", residenceCity: "תל אביב", maritalStatus: "SINGLE", numberOfChildren: 0, childrenAges: [], employment: {employmentType: "SALARIED", employerName: "מעסיק סודי בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6, monthlyNetIncome: 20_000, hasAdditionalIncome: true, additionalIncomeType: "RENTAL_INCOME", additionalIncomeAmount: 2_500, additionalIncomeDescription: null}, liabilities: [{scope: "BORROWER", borrowerOrder: 1, type: "LOAN", otherTypeDescription: null, currentBalance: 100_000, monthlyPayment: 1_500, endDate: "2030-01-01", notes: "הלוואה פעילה"}]}],
+  borrowers: [{order: 1, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", age: 41, phone: "0501234567", email: "dana@example.com", address: "רחוב סודי 1, תל אביב", residenceCity: "תל אביב", maritalStatus: "SINGLE", numberOfChildren: 0, childrenAges: [], employment: {employmentType: "SALARIED", employerName: "מעסיק סודי בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6, monthlyNetIncome: 20_000, hasAdditionalIncome: true, additionalIncomeType: "RENTAL_INCOME", additionalIncomeAmount: 2_500, additionalIncomeDescription: null, additionalIncomes: [{type: "RENTAL_INCOME", monthlyAmount: 2_500, description: null}, {type: "SMALL_SELF_EMPLOYMENT", monthlyAmount: 750, description: null}]}, liabilities: [{scope: "BORROWER", borrowerOrder: 1, type: "LOAN", otherTypeDescription: null, financialInstitution: "בנק לדוגמה", currentBalance: 100_000, monthlyPayment: 1_500, endDate: "2030-01-01", notes: "הלוואה פעילה"}, {scope: "BORROWER", borrowerOrder: 1, type: "RENT", otherTypeDescription: null, financialInstitution: null, currentBalance: null, monthlyPayment: 4_000, endDate: "2030-01-01", notes: "שכירות חודשית"}]}],
   householdLiabilities: [], property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", address: "רחוב הנכס 9, תל אביב", value: 2_000_000},
-  loanRequest: {purpose: "SECOND_HAND_PURCHASE", requestedAmount: 1_250_000, requestedTermMonths: 240, loanToValue: 62.5}, dealDetails: "רכישת דירה יד שנייה במרכז הארץ", totals: {monthlyIncome: 22_500, liabilityBalance: 100_000, monthlyPayments: 1_500},
+  loanRequest: {purpose: "SECOND_HAND_PURCHASE", requestedAmount: 1_250_000, requestedTermMonths: 240, loanToValue: 62.5}, dealDetails: "רכישת דירה יד שנייה במרכז הארץ", totals: {monthlyIncome: 23_250, liabilityBalance: 100_000, monthlyPayments: 5_500},
   advisor: {fullName: "יועץ פרטי", businessName: "ייעוץ פרטי", phone: "0500000000", email: "advisor@example.com", website: null},
   documents: ["ID_FRONT", "ID_BACK", "ID_APPENDIX", "PROPERTY_RIGHTS", "POWER_OF_ATTORNEY"].map((documentType, index) => ({documentId: index + 1, borrowerId: index < 3 ? 1 : null, borrowerOrder: index < 3 ? 1 : null, documentType, customTitle: null, mimeType: "application/pdf", sizeBytes: 100, checksumSha256: "a".repeat(64), storageKey: `document-${index}`, createdAt: "2026-07-27T00:00:00.000Z"}))
 };
@@ -83,6 +83,7 @@ describe("anonymous PDF", () => {
     expect(document.numPages).toBeLessThanOrEqual(5);
     expect(pages.every((pageText) => pageText.replace(/SYNCASH|מידע סודי|הופק|עמוד|מתוך|\s/g, "").length > 10)).toBe(true);
     for (const expected of ["תיק מימון מלא", "תקציר העסקה", "פרטים אישיים", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(normalizedText).toContain(expected);
+    for (const expected of ["הכנסה נוספת 1", "הכנסה נוספת 2", "הכנסה מעצמאות קטנה", "גוף פיננסי", "בנק לדוגמה", "שכירות"]) expect(normalizedText).toContain(expected);
     expect(text.replace(/\s/g, "")).toContain("SYNCASH");
     expect(text).not.toMatch(/[�□■]/u);
     expect(pathCount).toBeGreaterThan(20);
@@ -97,6 +98,7 @@ describe("anonymous PDF", () => {
     expect(await createMaskedCasePdf(masked, metadata)).toEqual(pdf);
     const {text, normalizedText} = await pdfContent(pdf);
     for (const expected of ["תיק מימון מוסווה לבחינה", "תקציר העסקה", "רכישה יד שנייה", "דירה", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(normalizedText).toContain(expected);
+    for (const expected of ["הכנסה נוספת 1", "הכנסה נוספת 2", "הכנסה מעצמאות קטנה", "גוף פיננסי", "בנק לדוגמה", "שכירות"]) expect(normalizedText).toContain(expected);
     expect(text).not.toMatch(/[�□■]/u);
     for (const prohibited of ["דנה", "לוי", "123456789", "0501234567", "dana@example.com", "מעסיק סודי", "יועץ פרטי"]) expect(text).not.toContain(prohibited);
   });

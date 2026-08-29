@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyBorrowerRelationship, emptyBorrowerForm, emptyClientForm, isNonNegativeDecimalInput, isNonNegativeIntegerInput, isSharedHousehold, resizeBorrowers, resizeChildrenAges, validateClientFormSection } from "../../src/utils/clientForm";
+import { applyBorrowerRelationship, clientIncomePayload, clientLiabilitiesPayload, emptyAdditionalIncomeForm, emptyBorrowerForm, emptyClientForm, employmentTypeOptions, isNonNegativeDecimalInput, isNonNegativeIntegerInput, isSharedHousehold, maritalStatusOptions, resizeBorrowers, resizeChildrenAges, validateClientFormSection } from "../../src/utils/clientForm";
 import { calculateRepaymentRatio, calculateTotalMonthlyIncome, calculateTotalMonthlyPayments } from "../../src/utils/clientCalculations";
 
 describe("dynamic borrower form", () => {
@@ -52,6 +52,39 @@ describe("dynamic borrower form", () => {
   it("rejects malformed numeric text in frontend validation", () => {
     const form = {...emptyClientForm(), propertyValue: "1e3", requestedAmount: "+100"};
     expect(validateClientFormSection(form, "property")).toEqual(expect.objectContaining({propertyValue: expect.any(String), requestedAmount: expect.any(String)}));
+  });
+
+  it("starts without a blank income row and preserves ordered dynamic incomes", () => {
+    const borrower = {...emptyBorrowerForm(), id: 1, additionalIncomes: [
+      {...emptyAdditionalIncomeForm(), type: "RENTAL_INCOME", monthlyAmount: "4500"},
+      {...emptyAdditionalIncomeForm(), type: "SALARIED", monthlyAmount: "0"}
+    ]};
+    expect(emptyBorrowerForm().additionalIncomes).toEqual([]);
+    const payload = clientIncomePayload({...emptyClientForm(), borrowers: [borrower]}) as {borrowers: Array<{income: {additionalIncomes: unknown[]}}>};
+    expect(payload.borrowers[0].income.additionalIncomes).toEqual([
+      {type: "RENTAL_INCOME", monthlyAmount: 4500, description: null},
+      {type: "SALARIED", monthlyAmount: 0, description: null}
+    ]);
+  });
+
+  it("omits legacy selections from new-case option lists", () => {
+    expect(maritalStatusOptions.map(([value]) => value)).not.toContain("SEPARATED");
+    expect(employmentTypeOptions.map(([value]) => value)).not.toContain("GOVERNMENT_EMPLOYEE");
+    expect(employmentTypeOptions.map(([value]) => value)).not.toContain("SECURITY_FORCES");
+    expect(employmentTypeOptions).toContainEqual(["TORAH_INSTITUTION", "מוסד תורני"]);
+    expect(employmentTypeOptions).toContainEqual(["CONTROLLING_SHAREHOLDER", "שכיר בעל שליטה"]);
+  });
+
+  it("normalizes recurring expenses and conditionally includes financial institutions", () => {
+    const form = {...emptyClientForm(), borrowers: [{...emptyBorrowerForm(), id: 1, liabilities: [
+      {type: "RENT", otherTypeDescription: "", financialInstitution: "ערך מוסתר", currentBalance: "500", monthlyPayment: "4000", endDate: "2035-01-01", notes: "שכירות"},
+      {type: "LOAN", otherTypeDescription: "", financialInstitution: "בנק לדוגמה", currentBalance: "25000", monthlyPayment: "800", endDate: "2035-01-01", notes: "הלוואה"}
+    ]}]};
+    const payload = clientLiabilitiesPayload(form) as {borrowers: Array<{liabilities: Array<{financialInstitution: string | null; currentBalance: number | null}>}>};
+    expect(payload.borrowers[0].liabilities).toEqual(expect.arrayContaining([
+      expect.objectContaining({financialInstitution: null, currentBalance: null}),
+      expect.objectContaining({financialInstitution: "בנק לדוגמה", currentBalance: 25000})
+    ]));
   });
 
   it("aggregates income, payments and repayment ratio across borrowers", () => {

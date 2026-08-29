@@ -58,6 +58,7 @@ test("focused and full client editing use accessible full-page routes", async ({
     await page.getByRole("button", {name: "עריכת התחייבויות"}).click();
     await page.getByRole("button", {name: "הוספת התחייבות"}).click();
     await page.getByLabel("סוג התחייבות 1").selectOption("LOAN");
+    await page.getByLabel("הגוף הפיננסי").fill("בנק לדוגמה");
     await page.getByLabel("יתרה נוכחית").fill("50000");
     await page.getByLabel("החזר חודשי").fill("1000");
     await page.getByLabel("תאריך סיום התחייבות").fill("2035-12-31");

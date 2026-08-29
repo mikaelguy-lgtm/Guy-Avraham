@@ -184,20 +184,26 @@ export const employmentRecords = pgTable("employment_records", {
   startDate: timestamp("start_date", {withTimezone: false}),
   ...timestamps
 }, (table) => [
-  check("employment_type_check", sql`${table.employmentType} in ('SALARIED', 'SELF_EMPLOYED', 'CONTROLLING_SHAREHOLDER', 'RETIRED', 'GOVERNMENT_EMPLOYEE', 'SECURITY_FORCES', 'ALLOWANCE', 'UNEMPLOYED', 'OTHER')`),
+  check("employment_type_check", sql`${table.employmentType} in ('SALARIED', 'SELF_EMPLOYED', 'CONTROLLING_SHAREHOLDER', 'RETIRED', 'GOVERNMENT_EMPLOYEE', 'SECURITY_FORCES', 'ALLOWANCE', 'UNEMPLOYED', 'TORAH_INSTITUTION', 'OTHER')`),
   check("employment_income_check", sql`${table.monthlyNetIncome} >= 0 and ${table.monthlyGrossIncome} >= 0 and ${table.additionalIncome} >= 0 and ${table.additionalIncomeAmount} >= 0 and ${table.employmentSeniorityYears} >= 0`),
-  check("employment_additional_type_check", sql`${table.additionalIncomeType} is null or ${table.additionalIncomeType} in ('SECOND_BUSINESS', 'RENTAL_INCOME', 'ALLOWANCE', 'ALIMONY', 'PENSION', 'REGULAR_OVERTIME', 'REGULAR_BONUSES', 'FOREIGN_INCOME', 'INVESTMENT_INCOME', 'FAMILY_SUPPORT', 'OTHER')`),
-  check("employment_additional_income_check", sql`(${table.hasAdditionalIncome} = false and ${table.additionalIncomeType} is null and ${table.additionalIncomeAmount} = 0) or (${table.hasAdditionalIncome} = true and ${table.additionalIncomeType} is not null and ${table.additionalIncomeAmount} > 0)`)
+  check("employment_additional_type_check", sql`${table.additionalIncomeType} is null or ${table.additionalIncomeType} in ('SALARIED', 'SECOND_BUSINESS', 'RENTAL_INCOME', 'ALLOWANCE', 'ALIMONY', 'PENSION', 'REGULAR_OVERTIME', 'REGULAR_BONUSES', 'FOREIGN_INCOME', 'INVESTMENT_INCOME', 'SMALL_SELF_EMPLOYMENT', 'FAMILY_SUPPORT', 'OTHER')`),
+  check("employment_additional_income_check", sql`(${table.hasAdditionalIncome} = false and ${table.additionalIncomeType} is null and ${table.additionalIncomeAmount} = 0) or (${table.hasAdditionalIncome} = true and ${table.additionalIncomeType} is not null and ${table.additionalIncomeAmount} >= 0)`)
 ]);
 
 export const incomeSources = pgTable("income_sources", {
   id: serial("id").primaryKey(),
   borrowerId: integer("borrower_id").notNull().references(() => borrowers.id),
+  sortOrder: integer("sort_order").notNull().default(1),
   sourceType: varchar("source_type", {length: 50}).notNull(),
   monthlyAmount: numeric("monthly_amount", {precision: 14, scale: 2}).notNull(),
   descriptionEncrypted: text("description_encrypted"),
   ...timestamps
-}, (table) => [check("income_sources_amount_check", sql`${table.monthlyAmount} >= 0`)]);
+}, (table) => [
+  uniqueIndex("income_sources_borrower_order_uq").on(table.borrowerId, table.sortOrder),
+  check("income_sources_order_check", sql`${table.sortOrder} >= 1`),
+  check("income_sources_amount_check", sql`${table.monthlyAmount} >= 0`),
+  check("income_sources_type_check", sql`${table.sourceType} in ('SALARIED', 'SECOND_BUSINESS', 'RENTAL_INCOME', 'ALLOWANCE', 'ALIMONY', 'PENSION', 'REGULAR_OVERTIME', 'REGULAR_BONUSES', 'FOREIGN_INCOME', 'INVESTMENT_INCOME', 'SMALL_SELF_EMPLOYMENT', 'FAMILY_SUPPORT', 'OTHER')`)
+]);
 
 export const liabilities = pgTable("liabilities", {
   id: serial("id").primaryKey(),
@@ -205,10 +211,11 @@ export const liabilities = pgTable("liabilities", {
   borrowerId: integer("borrower_id").references(() => borrowers.id),
   scope: varchar("scope", {length: 20}).notNull().default("BORROWER"),
   liabilityType: varchar("liability_type", {length: 50}).notNull(),
-  outstandingBalance: numeric("outstanding_balance", {precision: 14, scale: 2}).notNull(),
+  outstandingBalance: numeric("outstanding_balance", {precision: 14, scale: 2}),
   currentBalance: numeric("current_balance", {precision: 14, scale: 2}),
   monthlyPayment: numeric("monthly_payment", {precision: 14, scale: 2}).notNull(),
   endDate: date("end_date"),
+  financialInstitutionEncrypted: text("financial_institution_encrypted"),
   otherTypeDescriptionEncrypted: text("other_type_description_encrypted"),
   notesEncrypted: text("notes_encrypted"),
   legacyStatus: varchar("legacy_status", {length: 30}),
@@ -218,9 +225,11 @@ export const liabilities = pgTable("liabilities", {
   index("liabilities_client_idx").on(table.clientId),
   index("liabilities_borrower_idx").on(table.borrowerId),
   index("liabilities_active_idx").on(table.clientId, table.deletedAt),
-  check("liabilities_amounts_check", sql`${table.outstandingBalance} >= 0 and ${table.monthlyPayment} >= 0 and (${table.currentBalance} is null or ${table.currentBalance} >= 0)`),
+  check("liabilities_amounts_check", sql`(${table.outstandingBalance} is null or ${table.outstandingBalance} >= 0) and ${table.monthlyPayment} >= 0 and (${table.currentBalance} is null or ${table.currentBalance} >= 0)`),
   check("liabilities_scope_check", sql`(${table.scope} = 'BORROWER' and ${table.borrowerId} is not null) or (${table.scope} = 'HOUSEHOLD' and ${table.borrowerId} is null)`),
-  check("liabilities_type_check", sql`${table.liabilityType} in ('LOAN', 'MORTGAGE', 'ALIMONY', 'OTHER_FINANCIAL_ENTITY')`)
+  check("liabilities_type_check", sql`${table.liabilityType} in ('LOAN', 'MORTGAGE', 'ALIMONY', 'RENT', 'OTHER_FINANCIAL_ENTITY')`),
+  check("liabilities_balance_relevance_check", sql`${table.liabilityType} not in ('RENT', 'ALIMONY') or (${table.currentBalance} is null and ${table.outstandingBalance} is null)`),
+  check("liabilities_institution_relevance_check", sql`${table.liabilityType} in ('LOAN', 'MORTGAGE') or ${table.financialInstitutionEncrypted} is null`)
 ]);
 
 export const properties = pgTable("properties", {

@@ -28,7 +28,6 @@ async function fillFinancial(page: Page, borrower: number, income: string) {
   await page.getByLabel(`תפקיד - לווה ${borrower}`, {exact: true}).fill(borrower === 1 ? "מנהלת" : "בעלים");
   await page.getByLabel(`ותק בשנים - לווה ${borrower}`, {exact: true}).fill("5");
   await page.getByLabel(`הכנסה חודשית נטו - לווה ${borrower}`, {exact: true}).fill(income);
-  await page.getByLabel(`האם קיימת הכנסה נוספת - לווה ${borrower}`, {exact: true}).selectOption("no");
 }
 
 test("creates, reorders and edits a two-borrower household", async ({page, request}) => {
@@ -62,6 +61,7 @@ test("creates, reorders and edits a two-borrower household", async ({page, reque
     await fillFinancial(page, 2, "18000");
     await page.getByRole("button", {name: "הוספת התחייבות"}).click();
     await page.getByLabel("סוג התחייבות 1").selectOption("MORTGAGE");
+    await page.getByLabel("הגוף הפיננסי").fill("בנק למשכנתאות");
     await page.getByLabel("יתרה נוכחית").fill("300000");
     await page.getByLabel("החזר חודשי").fill("3000");
     await page.getByLabel("תאריך סיום התחייבות").fill("2040-07-31");
