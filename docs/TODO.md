@@ -1,7 +1,9 @@
 # SynCash — Open Items
 
-Last synced 2026-08-29 after the Production deployment of `3f5685e` (migration
-`0013` applied) and the CRLF release-artifact hardening that followed. Only
+Last synced 2026-08-29 after the Production deployment of `0af63f4`
+(migrations `0014` and `0015` applied — the SynCash product rebuild),
+which superseded the earlier same-day `3f5685e` deploy (migration `0013`,
+CRLF release-artifact hardening). Only
 real, unresolved items — nothing here is a suggestion to refactor or a style
 preference. Resolved items are removed rather than archived here; see
 `docs/DECISIONS.md` and `docs/PRODUCTION_HANDOFF.md` for the historical record
@@ -82,3 +84,21 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
     blocker for the current task — no manager notification system needs to
     be built. Revisit only if a manager role/notification concept is
     introduced later.
+
+## Open from the 2026-08-29 Production deploy of `0af63f4`
+
+11. **Pre-migration row counts for `clients`/`borrowers`/`documents`/
+    `company_submissions` were not captured** before migration `0015` ran
+    (only the two offer tables' counts were, per the explicit deploy
+    instruction). Post-deploy counts are non-zero and plausible, and the
+    migration is structurally incapable of touching those tables (see
+    `docs/DECISIONS.md`), but there is no literal before/after count proof
+    on record for them. Not urgent — just noted so a future incident
+    investigation doesn't assume that comparison exists.
+12. **`response_deadline_business_days` has no explicit row in Production's
+    `system_settings`** — the code correctly falls back to the hardcoded
+    default of 2, so behavior is unaffected, but the setting was never
+    actually exercised end-to-end in Production (only its fallback path
+    was). Left unset deliberately, per the explicit "don't change the
+    Production setting right now" instruction — revisit only if the
+    business wants a different default.

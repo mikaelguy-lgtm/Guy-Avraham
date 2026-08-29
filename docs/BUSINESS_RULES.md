@@ -234,8 +234,9 @@ to Production. Key rule changes:
   route, store method, or type remains; the corresponding tables and enum
   were dropped in migration `0015_woozy_exiles.sql`. Existing offer rows
   were pilot data and were dropped with them (explicit product-owner
-  exception to the "don't touch other production data" rule — **not yet
-  applied to Production**, pending separate deploy approval).
+  exception to the "don't touch other production data" rule — **applied to
+  Production 2026-08-29** as part of the `0af63f4` deploy; see
+  `docs/PRODUCTION_HANDOFF.md` section 4).
 - **"מוסווה" wording removed everywhere user-facing.** The two-tier
   masked/full disclosure *mechanism* is unchanged — only the word itself
   was replaced (typically with "ראשוני"/"לבחינה ראשונית", and "********"
@@ -262,3 +263,10 @@ changed, and the `FINAL PRODUCT COMPLETION REPORT` for verification
 evidence (a real Playwright run against the local Docker stack, live
 portal screenshots at desktop/mobile, generated-PDF visual review, and
 migration dry-runs on both a fresh database and the existing local one).
+
+### Deployed to Production, same day
+
+This entire rebuild — including the completion pass above — was deployed
+to Production at commit `0af63f4` on 2026-08-29, with migrations `0014`
+and `0015` both applied. See `docs/PRODUCTION_HANDOFF.md` section 4 for
+the live-verified post-deploy state.

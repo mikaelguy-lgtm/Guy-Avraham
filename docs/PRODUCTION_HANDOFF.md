@@ -1,9 +1,15 @@
 # SynCash — Production Handoff
 
 Compiled 2026-08-28, updated through the 2026-08-29 Production deployment of
-`3f5685e` (migration `0013` applied) and the subsequent CRLF release-artifact
-hardening. Everything below reflects live-verified state as of that
-deployment unless marked otherwise.
+`0af63f4` (migrations `0014` and `0015` applied — the SynCash product
+rebuild: server-determined lender targeting, credit indication,
+self-employed income, address split, offer-feature removal, forbidden-
+wording ban, full lender portal/PDF/typography rebuild). This supersedes
+the earlier same-day `3f5685e` deploy (migration `0013`, CRLF
+release-artifact hardening), whose section below is kept for its incident
+history but no longer reflects the live active release. Everything below
+reflects live-verified state as of the `0af63f4` deployment unless marked
+otherwise.
 
 ## 1. Architecture
 
@@ -54,7 +60,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `3f5685e318f2d06ac2e247635e40602904d80e95` |
+| Active release | `/opt/syncash/current` (symlink) → `0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -129,29 +135,35 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-08-29 (post `3f5685e` deploy)
+## 4. Operational state — live-verified 2026-08-29 (post `0af63f4` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/3f5685e318f2d06ac2e247635e40602904d80e95` |
-| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `3f5685e...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `0af63f4...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
 | API health (`curl 127.0.0.1:3181/api/health`) | `200 {"status":"ok"}` |
 | Public site (`https://app.syncash.co.il`) | `200` externally |
-| Published DB/cache/object-storage ports | None — confirmed empty |
 | Nginx | `nginx -t` → syntax OK |
-| TLS (Certbot) | `app.syncash.co.il`, ECDSA, valid, expires 2026-10-26 |
 | Disk | ~6% used, ~275G free |
-| Memory | ~1.2Gi used of 23Gi |
-| Migration `0013` | Applied exactly once (migration id 14), hash matches the exact byte-correct Git blob |
-| API/Worker error logs (10 min post-deploy) | Zero error markers in either. The previously-flagged `UNHANDLED_REQUEST_ERROR` burst did not recur — closed, not investigated further per instruction |
-| Nginx errors (post-deploy) | Two expected SSE-disconnect log lines for a real advisor's live session, timed exactly to the API container restart during deploy — not an application error |
-| Backup | Pre-deploy backup completed, GPG-encrypted, checksum verified OK |
+| Memory | ~1.4Gi used of 23Gi |
+| Migration `0014` (additive) | Applied exactly once (migration id 15), byte-verified against Git blob before upload |
+| Migration `0015` (destructive: drops `loan_offers`, `company_portal_offers`, `offer_status`) | Applied exactly once (migration id 16), byte-verified against Git blob before upload |
+| Offer tables/type post-migration | Confirmed absent (`to_regclass` returns null for both tables; `offer_status` not in `pg_type`) |
+| New schema present | `credit_indications` table; `borrowers.city_encrypted`/`street_address_encrypted`; 7 `employment_records.self_employed_*` columns; `company_submissions.response_business_days` (default 2) |
+| `response_deadline_business_days` system setting | No explicit row exists — code falls back to the hardcoded default of 2, same effective behavior as before. Not set during this deploy per instruction |
+| API/Worker error logs (~15 min post-deploy) | Zero error markers in either |
+| Nginx errors (post-deploy) | None |
+| Backup | Two encrypted pre-deploy backups this deploy: a manually-triggered one before any change, plus the one `deploy-production.sh` takes automatically — both GPG-encrypted, checksum verified OK. A restore-test of the manual one (`restore-production.sh --test`) also passed |
+| Data safety | `clients`/`borrowers`/`documents`/`company_submissions` counts were **not** captured before this migration (only the offer-table counts were, per instruction) — post-deploy counts are non-zero and plausible (4/5/23/5). Confidence that no other table was affected rests on migration 0015 only doing `DROP TABLE ... CASCADE` on the two offer tables (no other table's schema holds a foreign key into either), not on a literal before/after count match |
 | Rollback required | No |
 
 ## 5. Git / release state — in sync as of 2026-08-29
 
 Local HEAD, `origin/codex-syncash-production-rebuild`, and the Production
-active release are all `3f5685e318f2d06ac2e247635e40602904d80e95`. No drift.
+active release are all `0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e`. No drift.
+(The prior same-day deploy at `3f5685e318f2d06ac2e247635e40602904d80e95` is
+superseded — see its history below, still accurate as a historical record
+of that specific deploy.)
 
 History: this commit bundled 31 previously-uncommitted files plus migration
 `0013` (dynamic additional incomes, RENT liability type, legacy-safe

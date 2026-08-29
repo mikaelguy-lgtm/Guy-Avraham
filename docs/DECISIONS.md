@@ -277,3 +277,44 @@ flow anywhere (tests or product) without first revisiting the
 lender-targeting decision itself — it would be a regression of the
 explicit "server always targets every eligible company, frozen at send
 time" rule.
+
+## SynCash product rebuild deployed to Production at `0af63f4` (2026-08-29)
+
+**Decision**: the entire product rebuild (server-determined lender
+targeting, credit indication, self-employed income, address split, offer
+removal, forbidden-wording ban, and the same-day portal/PDF/typography
+completion pass) was deployed to Production, with migrations `0014`
+(additive) and `0015` (destructive — drops `loan_offers`,
+`company_portal_offers`, `offer_status`) both applied exactly once. A
+manually-triggered pre-deploy backup was taken and restore-tested in
+isolation before the destructive migration ran, in addition to the
+automatic pre-deploy backup `deploy-production.sh` always takes.
+
+**Why**: explicit, detailed, per-item product-owner approval (approving
+Production deploy, both migrations, and deletion of the existing pilot
+offer data specifically; explicitly withholding approval for anything
+else — no DB reset, no deletion of clients/borrowers/documents/
+submissions/lenders/contacts/MinIO objects, no DNS/IAM/SSH/UFW changes, no
+merge to `main`, no force-push). Every gate in that approval (git/SSH
+verification, pre-deploy health, migration-history verification, backup
+completion + checksum, byte-for-byte release-artifact verification against
+Git blobs, post-deploy service/public/schema verification, forbidden-
+wording and offer-removal verification against the live bundle, log
+review) was checked in sequence before proceeding to the next one.
+
+**One gap, disclosed rather than papered over**: `clients`/`borrowers`/
+`documents`/`company_submissions` row counts were not captured *before*
+this migration — only the two offer tables' counts were (per the explicit
+instruction). Post-deploy counts are non-zero and plausible, and migration
+`0015` is structurally incapable of touching those tables (`DROP TABLE
+... CASCADE` only cascades to objects that reference the dropped tables,
+and nothing in the schema has a foreign key into `loan_offers` or
+`company_portal_offers`), but this is architectural reasoning, not a
+literal before/after count match. See `docs/PRODUCTION_HANDOFF.md`
+section 4.
+
+**How to apply**: any future Production deploy that includes a destructive
+migration should capture before-counts for every table that could
+plausibly be affected, not just the ones being intentionally dropped —
+this deploy got away with the narrower scope only because the destructive
+change was so structurally contained.
