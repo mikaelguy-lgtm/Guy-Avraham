@@ -60,7 +60,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `8bf3d2020d7d2addbccbb91677e0c52ab3bce36f` |
+| Active release | `/opt/syncash/current` (symlink) → `75df21008189532e54a61cf73b25131524d46999` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -135,26 +135,27 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-08-29 (post `8bf3d20` deploy)
+## 4. Operational state — live-verified 2026-08-30 (post `75df210` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/8bf3d2020d7d2addbccbb91677e0c52ab3bce36f` |
-| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `8bf3d20...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
-| Public site (`https://app.syncash.co.il`) | `200` externally; served CSS/JS bundle hashes match this build (`index-CvxT9jA6.css`) |
-| Migrations | No new migration beyond `0015` — `migrate-production.sh` ran as a no-op (UI/content-only release) |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/75df21008189532e54a61cf73b25131524d46999` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `75df210...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
+| Public site (`https://app.syncash.co.il`) | `200` externally; served CSS bundle hash matches this build (`index-BAZe6L1b.css`) |
+| Migrations | No new migration beyond `0015` — `migrate-production.sh` ran as a no-op (app-code-only release) |
 | API/Worker error logs (post-deploy) | Zero error markers in either |
 | Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release |
-| Scope of this release | UI/CSS/content only (credit indication redesign, company-response timestamps, borrower-labeled document names, removal of the "שליחת גרסה חדשה" button, larger `.eyebrow`/status-badge/meta type). No schema change, no data migration |
+| PDF generation verified against live Production code | Ran a one-off diagnostic inside `syncash-prod-api-1` importing the compiled `dist-server/src/services/pdf.js` directly (no client/business data touched) and rendered both the masked and full PDF from a synthetic snapshot; confirmed with `pdfjs-dist` text extraction that both contain the new "חיווי אשראי" section with correct values, and that `PDF_RENDERER_VERSION` is `4` |
+| Scope of this release | Credit-indication tab redesigned into a compact row list; credit indication now shown in the masked/initial PDF and lender review (previously full-portal/PDF only); `PDF_RENDERER_VERSION` bumped 3→4; PDF/ZIP download filenames normalized to `SynCash_תיק_מימון_<ראשוני\|מלא>_<CASE>`. No schema change, no data migration |
 | Rollback required | No |
 
-## 5. Git / release state — in sync as of 2026-08-29
+## 5. Git / release state — in sync as of 2026-08-30
 
-Production active release: `8bf3d2020d7d2addbccbb91677e0c52ab3bce36f`.
+Production active release: `75df21008189532e54a61cf73b25131524d46999`.
 Local HEAD and `origin/codex-syncash-production-rebuild`: same SHA
-(`8bf3d2020d7d2addbccbb91677e0c52ab3bce36f`) — fully in sync as of this deploy.
-Prior release `0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e` remains on disk at
-`/opt/syncash/releases/0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e` for rollback
+(`75df21008189532e54a61cf73b25131524d46999`) — fully in sync as of this deploy.
+Prior release `8bf3d2020d7d2addbccbb91677e0c52ab3bce36f` remains on disk at
+`/opt/syncash/releases/8bf3d2020d7d2addbccbb91677e0c52ab3bce36f` for rollback
 if needed. See the "Before starting any task"
 checklist in `CLAUDE.md` for how to reason about a HEAD/Production gap in
 future sessions; always confirm the exact current HEAD with `git log`
