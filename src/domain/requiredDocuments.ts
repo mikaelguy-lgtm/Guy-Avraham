@@ -23,6 +23,7 @@ const labels: Record<string, string> = {
   ID_FRONT: "תעודת זהות — צד קדמי",
   ID_BACK: "תעודת זהות — צד אחורי",
   ID_APPENDIX: "ספח תעודת זהות",
+  CREDIT_DATA_REPORT: "דוח ריכוז נתוני אשראי",
   PROPERTY_RIGHTS: "נסח טאבו או אישור זכויות",
   POWER_OF_ATTORNEY: "כתב הסמכה"
 };

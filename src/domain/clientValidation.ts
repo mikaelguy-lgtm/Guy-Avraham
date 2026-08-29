@@ -9,7 +9,8 @@ import {
   MAX_BORROWERS,
   PROPERTY_TYPES,
   SELECTABLE_EMPLOYMENT_TYPES,
-  SELECTABLE_MARITAL_STATUSES
+  SELECTABLE_MARITAL_STATUSES,
+  currentIsraelYear
 } from "./clientFields.js";
 import { validateAdultBirthDate } from "../utils/age.js";
 
@@ -28,13 +29,16 @@ const canonicalizeMarriedBorrowers = (value: unknown): unknown => {
   const input = value as Record<string, unknown>;
   if (input.borrowerRelationship !== "MARRIED" || !Array.isArray(input.borrowers)) return value;
   const primary = input.borrowers[0];
-  const primaryAddress = primary && typeof primary === "object" ? (primary as Record<string, unknown>).address : undefined;
+  const primaryRecord = primary && typeof primary === "object" ? (primary as Record<string, unknown>) : undefined;
+  const primaryCity = primaryRecord?.city;
+  const primaryStreetAddress = primaryRecord?.streetAddress;
   return {
     ...input,
     borrowers: input.borrowers.map((borrower, index) => borrower && typeof borrower === "object" ? {
       ...(borrower as Record<string, unknown>),
       maritalStatus: "MARRIED",
-      address: index === 0 ? (borrower as Record<string, unknown>).address : primaryAddress
+      city: index === 0 ? (borrower as Record<string, unknown>).city : primaryCity,
+      streetAddress: index === 0 ? (borrower as Record<string, unknown>).streetAddress : primaryStreetAddress
     } : borrower)
   };
 };
@@ -109,6 +113,35 @@ const incomeSchema = z.preprocess(normalizeIncome, z.object({
   additionalIncomeDescription: z.string().trim().max(500).nullable().optional()
 }).strict()).transform((input) => ({monthlyNetIncome: input.monthlyNetIncome, additionalIncomes: input.additionalIncomes}));
 
+const selfEmployedSchema = z.object({
+  businessType: requiredText("יש להזין סוג עיסוק", 200),
+  businessStartYear: requiredInteger("יש להזין שנת פתיחת העסק", 1900, currentIsraelYear()),
+  lastAssessedIncome: requiredNumber("יש להזין הכנסה משומה אחרונה", 100_000_000),
+  assessmentYear: requiredInteger("יש להזין שנת שומה", 1900, currentIsraelYear()),
+  accountantIncomePreviousYear: requiredNumber("יש להזין את אישור ההכנסות של רואה החשבון", 100_000_000),
+  accountantIncomeCurrentYear: requiredNumber("יש להזין את הכנסות רואה החשבון לשנה הנוכחית", 100_000_000),
+  accountantMonthsCount: requiredInteger("יש להזין למספר חודשים ההכנסה מתייחסת", 1, 12)
+}).strict();
+
+const employmentSchema = z.object({
+  employmentType: z.enum(EMPLOYMENT_TYPES, {error: "יש לבחור סוג תעסוקה"}),
+  employerName: z.string().trim().max(200, "הערך ארוך מדי"),
+  jobTitle: z.string().trim().max(150, "הערך ארוך מדי"),
+  employmentSeniorityYears: z.preprocess(
+    (value) => value === "" || value === null || value === undefined ? 0 : value,
+    z.coerce.number().int("יש להזין מספר שלם").min(0, "יש להזין ותק בשנים").max(70, "המספר חורג מהטווח המותר")
+  ),
+  selfEmployed: selfEmployedSchema.nullable().optional()
+}).strict().superRefine((input, context) => {
+  const isSelfEmployed = input.employmentType === "SELF_EMPLOYED";
+  if (isSelfEmployed && !input.selfEmployed) context.addIssue({code: "custom", path: ["selfEmployed"], message: "יש להזין את פרטי העסק העצמאי"});
+  if (!isSelfEmployed && input.selfEmployed) context.addIssue({code: "custom", path: ["selfEmployed"], message: "פרטי עסק עצמאי אינם רלוונטיים לסוג תעסוקה זה"});
+  if (!isSelfEmployed) {
+    if (!input.employerName.trim()) context.addIssue({code: "custom", path: ["employerName"], message: "יש להזין שם מעסיק או עסק"});
+    if (!input.jobTitle.trim()) context.addIssue({code: "custom", path: ["jobTitle"], message: "יש להזין תפקיד"});
+  }
+}).transform((input) => ({...input, employerName: input.employmentType === "SELF_EMPLOYED" ? "" : input.employerName, jobTitle: input.employmentType === "SELF_EMPLOYED" ? "" : input.jobTitle, employmentSeniorityYears: input.employmentType === "SELF_EMPLOYED" ? 0 : input.employmentSeniorityYears, selfEmployed: input.employmentType === "SELF_EMPLOYED" ? input.selfEmployed ?? null : null}));
+
 const borrowerSchema = z.object({
   id: z.number().int().positive().optional(),
   order: requiredInteger("יש להזין סדר לווה תקין", 1, MAX_BORROWERS),
@@ -119,15 +152,11 @@ const borrowerSchema = z.object({
   dateOfBirth: z.string({error: "יש להזין תאריך לידה"}).date("יש להזין תאריך לידה תקין"),
   phone: requiredText("יש להזין מספר טלפון", 30).min(7, "יש להזין מספר טלפון תקין"),
   email: z.string({error: "יש להזין כתובת דוא״ל"}).trim().email("יש להזין כתובת דוא״ל תקינה").max(320),
-  address: requiredText("יש להזין כתובת מגורים", 300),
+  city: requiredText("יש להזין עיר מגורים", 100),
+  streetAddress: requiredText("יש להזין רחוב ומספר בית", 300),
   maritalStatus: z.enum(MARITAL_STATUSES, {error: "יש לבחור מצב משפחתי"}),
   children: childrenSchema,
-  employment: z.object({
-    employmentType: z.enum(EMPLOYMENT_TYPES, {error: "יש לבחור סוג תעסוקה"}),
-    employerName: requiredText("יש להזין שם מעסיק או עסק", 200),
-    jobTitle: requiredText("יש להזין תפקיד", 150),
-    employmentSeniorityYears: requiredInteger("יש להזין ותק בשנים", 0, 70)
-  }).strict(),
+  employment: employmentSchema,
   income: incomeSchema,
   liabilities: z.array(liabilityInputSchema).max(100, "מספר ההתחייבויות חורג מהמותר")
 }).strict().superRefine((input, context) => {
@@ -199,7 +228,8 @@ const personalBorrowerSchema = z.object({
   dateOfBirth: z.string({error: "יש להזין תאריך לידה"}).date("יש להזין תאריך לידה תקין"),
   phone: requiredText("יש להזין מספר טלפון", 30).min(7, "יש להזין מספר טלפון תקין"),
   email: z.string({error: "יש להזין כתובת דוא״ל"}).trim().email("יש להזין כתובת דוא״ל תקינה").max(320),
-  address: requiredText("יש להזין כתובת מגורים", 300),
+  city: requiredText("יש להזין עיר מגורים", 100),
+  streetAddress: requiredText("יש להזין רחוב ומספר בית", 300),
   maritalStatus: z.enum(MARITAL_STATUSES, {error: "יש לבחור מצב משפחתי"}),
   children: childrenSchema
 }).strict().superRefine((input, context) => {
@@ -235,12 +265,7 @@ export const clientPersonalInputSchema = z.preprocess(canonicalizeMarriedBorrowe
 
 const incomeBorrowerSchema = z.object({
   id: z.number().int().positive(),
-  employment: z.object({
-    employmentType: z.enum(EMPLOYMENT_TYPES, {error: "יש לבחור סוג תעסוקה"}),
-    employerName: requiredText("יש להזין שם מעסיק או עסק", 200),
-    jobTitle: requiredText("יש להזין תפקיד", 150),
-    employmentSeniorityYears: requiredInteger("יש להזין ותק בשנים", 0, 70)
-  }).strict(),
+  employment: employmentSchema,
   income: incomeSchema
 }).strict();
 
@@ -271,6 +296,26 @@ export const clientPropertyInputSchema = z.object({
 });
 
 export const clientDealDetailsInputSchema = z.object({dealDetails: requiredText("יש להזין פירוט עסקה", 5000)}).strict();
+
+const yesNoField = (message: string) => z.boolean({error: message}).nullable();
+
+export const creditIndicationInputSchema = z.object({
+  bouncedChecks: yesNoField("יש לציין האם היו החזרי צ׳קים"),
+  bouncedChecksCount: requiredInteger("יש להזין מספר צ׳קים", 1, 1000).nullable(),
+  bouncedDirectDebits: yesNoField("יש לציין האם היו החזרי הוראות קבע"),
+  bouncedDirectDebitsCount: requiredInteger("יש להזין מספר הוראות קבע", 1, 1000).nullable(),
+  collectionProceedings: yesNoField("יש לציין האם הייתה הוצאה לפועל"),
+  bankruptcy: yesNoField("יש לציין האם הייתה פשיטת רגל"),
+  liens: yesNoField("יש לציין האם היו עיקולים"),
+  mortgageArrears: yesNoField("יש לציין האם היו פיגורים במשכנתא")
+}).strict().superRefine((input, context) => {
+  if (input.bouncedChecks && input.bouncedChecksCount === null) context.addIssue({code: "custom", path: ["bouncedChecksCount"], message: "יש להזין כמה צ׳קים"});
+  if (!input.bouncedChecks && input.bouncedChecksCount !== null) context.addIssue({code: "custom", path: ["bouncedChecksCount"], message: "אין להזין כמות כאשר אין החזרי צ׳קים"});
+  if (input.bouncedDirectDebits && input.bouncedDirectDebitsCount === null) context.addIssue({code: "custom", path: ["bouncedDirectDebitsCount"], message: "יש להזין כמה הוראות קבע"});
+  if (!input.bouncedDirectDebits && input.bouncedDirectDebitsCount !== null) context.addIssue({code: "custom", path: ["bouncedDirectDebitsCount"], message: "אין להזין כמות כאשר אין החזרי הוראות קבע"});
+});
+
+export type CreditIndicationInput = z.infer<typeof creditIndicationInputSchema>;
 
 export type ClientPersonalInput = z.infer<typeof clientPersonalInputSchema>;
 export type ClientIncomeInput = z.infer<typeof clientIncomeInputSchema>;

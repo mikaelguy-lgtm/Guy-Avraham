@@ -35,12 +35,7 @@ export const advisorProfileSchema = z.object({
 }).strict();
 
 export const passwordSchema = z.string()
-  .min(10, "הסיסמה חייבת לכלול לפחות 10 תווים")
-  .regex(/[A-Z]/, "הסיסמה חייבת לכלול אות גדולה באנגלית")
-  .regex(/[a-z]/, "הסיסמה חייבת לכלול אות קטנה באנגלית")
-  .regex(/\d/, "הסיסמה חייבת לכלול מספר")
-  .regex(/[^A-Za-z0-9\s]/, "הסיסמה חייבת לכלול תו מיוחד")
-  .regex(/^\S+$/, "הסיסמה אינה יכולה לכלול רווחים");
+  .min(8, "הסיסמה חייבת לכלול לפחות 8 תווים");
 
 export const advisorRegistrationFormSchema = advisorRegistrationApiSchema.extend({
   password: passwordSchema,
@@ -51,17 +46,12 @@ export type AdvisorRegistrationInput = z.infer<typeof advisorRegistrationApiSche
 
 export function passwordRequirements(password: string, confirmPassword: string) {
   return [
-    {key: "length", label: "לפחות 10 תווים", met: password.length >= 10, field: "password" as const},
-    {key: "uppercase", label: "אות גדולה באנגלית", met: /[A-Z]/.test(password), field: "password" as const},
-    {key: "lowercase", label: "אות קטנה באנגלית", met: /[a-z]/.test(password), field: "password" as const},
-    {key: "number", label: "מספר אחד לפחות", met: /\d/.test(password), field: "password" as const},
-    {key: "special", label: "תו מיוחד", met: /[^A-Za-z0-9\s]/.test(password), field: "password" as const},
-    {key: "spaces", label: "ללא רווחים", met: password.length > 0 && !/\s/.test(password), field: "password" as const},
+    {key: "length", label: "לפחות 8 תווים", met: password.length >= 8, field: "password" as const},
     {key: "match", label: "הסיסמאות זהות", met: password.length > 0 && password === confirmPassword, field: "confirmPassword" as const}
   ];
 }
 
 export function passwordStrength(password: string, confirmPassword = ""): {score: number; label: string} {
   const score = passwordRequirements(password, confirmPassword).filter((requirement) => requirement.met).length;
-  return {score, label: score <= 2 ? "חלשה" : score <= 4 ? "בינונית" : score <= 6 ? "חזקה" : "חזקה מאוד"};
+  return {score, label: score === 0 ? "חלשה" : score === 1 ? "בינונית" : "חזקה"};
 }

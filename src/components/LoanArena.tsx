@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from "react";
-import {Building2, CheckCircle2, ChevronLeft, ChevronRight, Eye, Mail, Send, ShieldCheck, Sparkles, X} from "lucide-react";
-import type {Client, DeliveryBlocker, DeliveryCompany, DeliveryPreview} from "../types";
+import {CheckCircle2, ChevronLeft, ChevronRight, Eye, Send, Sparkles, X} from "lucide-react";
+import type {Client, DeliveryBlocker, DeliveryPreview} from "../types";
 import {ApiError, api} from "../utils/apiClient";
 import {formatCurrency, formatDate} from "../utils/formatters";
 import {openFreshPdfBlob, revokeActivePdfBlob} from "../utils/pdfBlob";
@@ -33,10 +33,10 @@ function MaskedSummary({preview}: {preview: DeliveryPreview}) {
 
 export default function LoanArena({clientId, onMissingDocuments, onSent}: {clientId?: number; onMissingDocuments?: () => void; onSent?: () => void}) {
   const [clients, setClients] = useState<Client[]>([]);
-  const [companies, setCompanies] = useState<DeliveryCompany[]>([]);
+  const [eligibleCompanyCount, setEligibleCompanyCount] = useState<number | null>(null);
   const [selectedClientId, setSelectedClientId] = useState(clientId ?? 0);
-  const [selectedCompanies, setSelectedCompanies] = useState<number[]>([]);
   const [preview, setPreview] = useState<DeliveryPreview | null>(null);
+  const [sentCompanyCount, setSentCompanyCount] = useState<number | null>(null);
   const [stage, setStage] = useState<Stage>("companies");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -52,12 +52,11 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
   }, [clientId]);
   useEffect(() => {
     if (!selectedClientId) return;
-    setStage("companies"); setPreview(null); setSelectedCompanies([]);
-    void api.deliveryCompanies(selectedClientId).then(setCompanies).catch((error) => setMessage(error instanceof ApiError ? error.publicMessage ?? "לא ניתן לטעון חברות מימון." : "לא ניתן לטעון חברות מימון."));
+    setStage("companies"); setPreview(null); setEligibleCompanyCount(null);
+    void api.deliveryCompanies(selectedClientId).then((result) => setEligibleCompanyCount(result.length)).catch((error) => setMessage(error instanceof ApiError ? error.publicMessage ?? "לא ניתן לבדוק את חברות המימון הפעילות." : "לא ניתן לבדוק את חברות המימון הפעילות."));
   }, [selectedClientId]);
 
   const client = useMemo(() => clients.find((item) => item.id === selectedClientId), [clients, selectedClientId]);
-  const contactCount = companies.filter((company) => selectedCompanies.includes(company.id)).reduce((total, company) => total + company.activeContactCount, 0);
 
   const showError = (caught: unknown) => {
     if (caught instanceof ApiError) {
@@ -67,9 +66,9 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
   };
 
   const createPreview = async () => {
-    if (!selectedClientId || !selectedCompanies.length) return;
+    if (!selectedClientId || !eligibleCompanyCount) return;
     setBusy(true); setMessage("");
-    try { setPreview(await api.deliveryPreview(selectedClientId, selectedCompanies)); setStage("preview"); }
+    try { setPreview(await api.deliveryPreview(selectedClientId)); setStage("preview"); }
     catch (caught) { showError(caught); }
     finally { setBusy(false); }
   };
@@ -78,51 +77,45 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
     if (!selectedClientId || !preview) return;
     setBusy(true); setMessage("");
     try {
-      await api.deliverySend(selectedClientId, {companyIds: selectedCompanies, idempotencyKey: crypto.randomUUID(), previewConfirmation: preview.previewConfirmation});
-      setStage("complete"); setMessage("התיק נשמר והודעות נפרדות הועברו לתור השליחה לאנשי הקשר שנבחרו."); onSent?.();
+      const result = await api.deliverySend(selectedClientId, {idempotencyKey: crypto.randomUUID(), previewConfirmation: preview.previewConfirmation});
+      const companies = (result as {companies?: unknown[]}).companies;
+      const count = Array.isArray(companies) ? companies.length : preview.eligibleCompanyCount;
+      setSentCompanyCount(count);
+      setStage("complete"); setMessage(`התיק הוגש בהצלחה ל-${count} חברות מימון.`); onSent?.();
     } catch (caught) { showError(caught); }
     finally { setBusy(false); }
   };
 
   return <section className="arena-workspace delivery-flow" aria-busy={busy}>
     <ol className="delivery-steps" aria-label="שלבי שליחת תיק">
-      <li className={stage === "companies" ? "active" : "done"}><span>1</span>בחירת חברות</li>
-      <li className={stage === "preview" ? "active" : stage === "confirm" || stage === "complete" ? "done" : ""}><span>2</span>תצוגה מוסווית</li>
+      <li className={stage === "companies" ? "active" : "done"}><span>1</span>חברות מימון</li>
+      <li className={stage === "preview" ? "active" : stage === "confirm" || stage === "complete" ? "done" : ""}><span>2</span>תצוגה</li>
       <li className={stage === "confirm" ? "active" : stage === "complete" ? "done" : ""}><span>3</span>אישור ושליחה</li>
     </ol>
     {!clientId && <label className="client-picker"><span>בחירת תיק לקוח</span><select aria-label="בחירת תיק לקוח" value={selectedClientId} onChange={(event) => setSelectedClientId(Number(event.target.value))}>{clients.map((item) => <option value={item.id} key={item.id}>{item.firstName} {item.lastName} — {item.publicCaseNumber}</option>)}</select></label>}
     {client && <div className="arena-summary"><span className="stat-icon cyan"><Sparkles /></span><div><small>התיק שנבחר</small><h3>{client.firstName} {client.lastName}</h3><p>{client.publicCaseNumber} · מימון מבוקש {formatCurrency(client.requestedAmount)}</p></div></div>}
 
     {stage === "companies" && <>
-      <header className="section-heading compact"><div><h2>בחירת חברות מימון</h2><p>הבחירה היא ברמת החברה. כל אנשי הקשר הפעילים יקבלו קישור אישי ונפרד.</p></div></header>
-      <div className="lenders-grid">{companies.map((company) => {
-        const selected = selectedCompanies.includes(company.id);
-        return <label className={`lender-card${selected ? " selected" : ""}`} key={company.id}>
-          <input type="checkbox" aria-label={`בחירת ${company.name}`} checked={selected} disabled={company.activeContactCount === 0} onChange={(event) => setSelectedCompanies((current) => event.target.checked ? [...current, company.id] : current.filter((id) => id !== company.id))} />
-          <div className="lender-card-top"><span className="lender-logo"><Building2 /><b>{company.name.slice(0, 1)}</b></span><span className="status-badge status-active">פעילה</span></div>
-          <div><h3>{company.name}</h3><p>{company.activityAreas.length ? company.activityAreas.join(" · ") : "מימון חוץ־בנקאי"}</p></div>
-          <div className="lender-meta"><span><Mail size={16} />{company.activeContactCount} אנשי קשר פעילים</span><span><CheckCircle2 size={16} />שליחה אחרונה: {company.lastSentAt ? formatDate(company.lastSentAt) : "טרם נשלח"}</span></div>
-        </label>;
-      })}</div>
-      {!companies.length && <div className="empty-state">אין חברות מימון פעילות עם אנשי קשר זמינים.</div>}
-      <div className="arena-actions"><button type="button" className="primary-action large" disabled={!selectedCompanies.length || busy} onClick={() => void createPreview()}>{busy ? "מכין תצוגה מוסווית…" : <><Eye size={19} />המשך לתצוגה מוסווית</>}</button><small>{selectedCompanies.length} חברות · {contactCount} אנשי קשר</small></div>
+      <header className="section-heading compact"><div><h2>חברות מימון</h2><p>התיק יישלח אוטומטית לכל חברות המימון הפעילות שיש להן איש קשר פעיל.</p></div></header>
+      {eligibleCompanyCount === null && <div className="empty-state">בודק חברות מימון פעילות…</div>}
+      {eligibleCompanyCount !== null && eligibleCompanyCount > 0 && <div className="arena-summary"><span className="stat-icon cyan"><Sparkles /></span><div><small>מוכן לשליחה</small><h3>התיק יוגש ל-{eligibleCompanyCount} חברות מימון</h3></div></div>}
+      {eligibleCompanyCount === 0 && <div className="empty-state">אין כרגע חברות מימון פעילות עם איש קשר פעיל. לא ניתן לשלוח את התיק.</div>}
+      <div className="arena-actions"><button type="button" className="primary-action large" disabled={!eligibleCompanyCount || busy} onClick={() => void createPreview()}>{busy ? "מכין תצוגה…" : <><Eye size={19} />המשך</>}</button></div>
     </>}
 
     {stage === "preview" && preview && <>
-      <header className="section-heading compact"><div><h2>תצוגה מקדימה מוסווית</h2><p>בדוק שהמידע העסקי מלא ושאין בו פרטים מזהים.</p></div><button type="button" className="secondary-action" onClick={() => openPdf(preview.maskedPdfBase64)}><Eye size={18} />צפייה ב־PDF המוסווה</button></header>
+      <header className="section-heading compact"><div><h2>תצוגה מקדימה</h2><p>בדוק שהמידע העסקי מלא ושאין בו פרטים מזהים.</p></div><button type="button" className="secondary-action" onClick={() => openPdf(preview.maskedPdfBase64)}><Eye size={18} />צפייה ב-PDF</button></header>
       <MaskedSummary preview={preview} />
-      <div className="security-note"><ShieldCheck /><p><strong>הגנה על פרטיות הלקוח</strong><br />בשלב הראשון החברות יקבלו תיק מוסווה בלבד, ללא מסמכי הלקוח וללא פרטי היועץ.</p></div>
-      <div className="arena-actions split"><button type="button" className="secondary-action" onClick={() => setStage("companies")}><ChevronRight />חזרה לבחירה</button><button type="button" className="primary-action" onClick={() => setStage("confirm")}>המשך לאישור<ChevronLeft /></button></div>
+      <div className="arena-actions split"><button type="button" className="secondary-action" onClick={() => setStage("companies")}><ChevronRight />חזרה</button><button type="button" className="primary-action" onClick={() => setStage("confirm")}>המשך לאישור<ChevronLeft /></button></div>
     </>}
 
     {stage === "confirm" && preview && <>
       <header className="section-heading compact"><div><h2>אישור ושליחת התיק</h2><p>לאחר השליחה תיווצר גרסה קבועה ובלתי ניתנת לשינוי של התיק והמסמכים.</p></div></header>
-      <div className="delivery-confirmation content-card"><dl><div><dt>חברות נבחרות</dt><dd>{preview.selectedCompanyCount}</dd></div><div><dt>נמענים</dt><dd>{preview.selectedContactCount}</dd></div><div><dt>מועד אחרון לתגובה</dt><dd>{formatDate(preview.responseDeadlineAt)}</dd></div></dl><p><ShieldCheck /> לכל נמען יישלח קישור אישי. קבצים אינם מצורפים למייל.</p></div>
-      <label className="confirmation-check"><input type="checkbox" required />אני מאשר/ת שהמידע המוסווה נבדק ושהתיק מוכן לשליחה.</label>
-      <div className="arena-actions split"><button type="button" className="secondary-action" onClick={() => setStage("preview")}><ChevronRight />חזרה לתצוגה</button><button type="button" className="primary-action large" disabled={busy} onClick={(event) => {const checkbox = event.currentTarget.closest("section")?.querySelector<HTMLInputElement>(".confirmation-check input"); if (checkbox && !checkbox.checked) {setMessage("יש לאשר את בדיקת התיק לפני השליחה."); checkbox.focus(); return;} void send();}}><Send size={19} />{busy ? "שולח…" : "אישור ושליחת התיק"}</button></div>
+      <div className="delivery-confirmation content-card"><dl><div><dt>חברות מימון</dt><dd>{preview.eligibleCompanyCount}</dd></div><div><dt>מועד אחרון למענה</dt><dd>{formatDate(preview.responseDeadlineAt)}</dd></div></dl><p>לכל איש קשר פעיל יישלח קישור אישי. קבצים אינם מצורפים למייל.</p></div>
+      <div className="arena-actions split"><button type="button" className="secondary-action" onClick={() => setStage("preview")}><ChevronRight />חזרה לתצוגה</button><button type="button" className="primary-action large" disabled={busy} onClick={() => void send()}><Send size={19} />{busy ? "שולח…" : "אישור ושליחת התיק"}</button></div>
     </>}
 
-    {stage === "complete" && <div className="delivery-complete"><CheckCircle2 /><h2>התיק הועבר לתור השליחה</h2><p>הודעות נפרדות הוכנסו לתור לכל אנשי הקשר הפעילים. סטטוס SMTP יתעדכן לכל חברה בנפרד; לאחר קבלת ההודעה מומלץ לבדוק גם ספאם, דואר זבל וקידומי מכירות.</p><button type="button" className="secondary-action" onClick={() => {setStage("companies"); setPreview(null); setSelectedCompanies([]);}}>שליחת גרסה חדשה</button></div>}
+    {stage === "complete" && <div className="delivery-complete"><CheckCircle2 /><h2>התיק הוגש בהצלחה{sentCompanyCount ? ` ל-${sentCompanyCount} חברות מימון` : ""}</h2><button type="button" className="secondary-action" onClick={() => {setStage("companies"); setPreview(null); setSentCompanyCount(null);}}>שליחת גרסה חדשה</button></div>}
     {message && <p className={stage === "complete" ? "form-message success" : "form-message error"} role="status">{message}</p>}
     {blockers.length > 0 && <div className="modal-backdrop"><section className="modal content-card" role="dialog" aria-modal="true" aria-labelledby="delivery-guard-title"><header className="modal-heading"><div><span className="eyebrow">בדיקת מוכנות</span><h2 id="delivery-guard-title">לא ניתן לשלוח את התיק</h2></div><button type="button" className="icon-action" aria-label="סגירה" onClick={() => setBlockers([])}><X /></button></header><p>התיק השתנה ויש להשלים את הפריטים הבאים:</p><ul className="delivery-blockers-list">{blockers.map((blocker) => <li key={blocker.code}><span><strong>{blocker.label}</strong><small>{blocker.hint}</small></span></li>)}</ul><div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setBlockers([])}>סגירה</button>{onMissingDocuments && blockers.some((item) => item.action === "documents") && <button type="button" className="primary-action" onClick={onMissingDocuments}>מעבר למסמכים</button>}</div></section></div>}
   </section>;

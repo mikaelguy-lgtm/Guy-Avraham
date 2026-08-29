@@ -46,21 +46,11 @@ export interface PortalSessionResult {
   expiresAt: Date;
 }
 
-export interface PortalOfferInput {
-  idempotencyKey: string;
-  amount: number;
-  interestRate: number;
-  termMonths: number;
-  monthlyPayment?: number;
-  conditions?: string;
-  expiresAt?: Date;
-}
-
 export interface LenderDeliveryApplication {
   listAdvisorCompanies(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryCompanySummary[]>;
   preflight(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryPreflight>;
-  preview(clientId: number, companyIds: number[], actor: AdvisorDeliveryActor): Promise<DeliveryPreview>;
-  send(clientId: number, input: {companyIds: number[]; idempotencyKey: string; previewConfirmation: string}, actor: AdvisorDeliveryActor, context: DeliveryContext): Promise<Record<string, unknown>>;
+  preview(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryPreview>;
+  send(clientId: number, input: {idempotencyKey: string; previewConfirmation: string}, actor: AdvisorDeliveryActor, context: DeliveryContext): Promise<Record<string, unknown>>;
   listClientResponses(clientId: number, actor: AdvisorDeliveryActor): Promise<unknown[]>;
   getClientResponse(clientId: number, submissionPublicId: string, actor: AdvisorDeliveryActor): Promise<unknown>;
   listCompaniesForAdmin(): Promise<unknown[]>;
@@ -93,7 +83,6 @@ export interface LenderDeliveryApplication {
   listPortalDocuments(sessionToken: string, context: DeliveryContext): Promise<unknown[]>;
   getPortalDocument(sessionToken: string, publicDocumentId: string, download: boolean, context: DeliveryContext): Promise<{body: Buffer; contentType: string; filename: string}>;
   getPortalZip(sessionToken: string, context: DeliveryContext): Promise<{body: Buffer; filename: string}>;
-  createPortalOffer(sessionToken: string, input: PortalOfferInput, context: DeliveryContext): Promise<unknown>;
   logoutPortal(sessionToken: string): Promise<void>;
   inspectTestFlow(clientId: number, companyId: number): Promise<unknown>;
   expireTestPortalSessions(clientId: number, companyId: number): Promise<void>;
@@ -141,6 +130,18 @@ const normalizeEmail = (value: string) => value.trim().toLowerCase();
 const safeText = (value: unknown, maximum = 255) => String(value ?? "").replace(/[\r\n\t]/g, " ").slice(0, maximum);
 const localDateTime = formatIsraelDateTime;
 const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
+// node-postgres parses a `date` column into a Date built from local
+// year/month/day (see postgres-date's parseDate). Reading it back with the
+// LOCAL getters (not toISOString/toString/UTC) reconstructs the exact
+// stored calendar date regardless of the process's TZ — a business "date
+// only" value must never round-trip through a timezone conversion.
+const toDateOnly = (value: unknown): string | null => {
+  if (!value) return null;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
 
 export class PostgresLenderDeliveryService implements LenderDeliveryApplication {
   private readonly pool: Pool;
@@ -275,24 +276,45 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     const borrowerResult = await this.pool.query(`
       select b.*, e.employment_type, e.employer_name_encrypted, e.job_title, e.employment_seniority_years,
         e.monthly_net_income, e.has_additional_income, e.additional_income_type, e.additional_income_amount,
-        e.additional_income_description_encrypted
+        e.additional_income_description_encrypted, e.self_employed_business_type_encrypted, e.self_employed_business_start_year,
+        e.self_employed_last_assessed_income, e.self_employed_assessment_year, e.self_employed_accountant_income_previous_year,
+        e.self_employed_accountant_income_current_year, e.self_employed_accountant_months_count
       from borrowers b join employment_records e on e.borrower_id = b.id
       where b.client_id = $1 order by b.borrower_order`, [clientId]);
+    const creditIndicationResult = await this.pool.query(`select * from credit_indications where client_id = $1`, [clientId]);
     const liabilityResult = await this.pool.query(`select l.*, b.borrower_order from liabilities l left join borrowers b on b.id = l.borrower_id where l.client_id = $1 and l.deleted_at is null order by l.id`, [clientId]);
     const incomeResult = await this.pool.query(`select i.* from income_sources i join borrowers b on b.id=i.borrower_id where b.client_id=$1 order by i.borrower_id,i.sort_order`, [clientId]);
     const documentResult = await this.pool.query(`select d.*, b.borrower_order from documents d left join borrowers b on b.id = d.borrower_id where d.client_id = $1 and d.deleted_at is null and d.status in ('UPLOADED','VERIFIED','REPLACED') order by d.id`, [clientId]);
-    const liabilities = liabilityResult.rows.map((row): FullCaseLiabilitySnapshot => ({scope: row.scope, borrowerOrder: row.borrower_order ? Number(row.borrower_order) : null, type: row.liability_type, otherTypeDescription: this.decrypt(row.other_type_description_encrypted) || null, financialInstitution: this.decrypt(row.financial_institution_encrypted) || null, currentBalance: row.current_balance === null && row.outstanding_balance === null ? null : Number(row.current_balance ?? row.outstanding_balance), monthlyPayment: Number(row.monthly_payment), endDate: row.end_date ? String(row.end_date).slice(0, 10) : null, notes: this.decrypt(row.notes_encrypted), incompleteLegacy: row.legacy_status === "INCOMPLETE_LEGACY"}));
+    const liabilities = liabilityResult.rows.map((row): FullCaseLiabilitySnapshot => ({scope: row.scope, borrowerOrder: row.borrower_order ? Number(row.borrower_order) : null, type: row.liability_type, otherTypeDescription: this.decrypt(row.other_type_description_encrypted) || null, financialInstitution: this.decrypt(row.financial_institution_encrypted) || null, currentBalance: row.current_balance === null && row.outstanding_balance === null ? null : Number(row.current_balance ?? row.outstanding_balance), monthlyPayment: Number(row.monthly_payment), endDate: toDateOnly(row.end_date), notes: this.decrypt(row.notes_encrypted), incompleteLegacy: row.legacy_status === "INCOMPLETE_LEGACY"}));
     const borrowers = borrowerResult.rows.map((row): FullCaseBorrowerSnapshot => {
       const dateOfBirth = this.decrypt(row.date_of_birth_encrypted) || (row.birth_date ? new Date(row.birth_date).toISOString().slice(0, 10) : "");
       const address = this.decrypt(row.address_encrypted);
       const additionalIncomes = incomeResult.rows.filter((income) => Number(income.borrower_id) === Number(row.id)).map((income) => ({type: income.source_type, monthlyAmount: Number(income.monthly_amount), description: this.decrypt(income.description_encrypted) || null}));
       const normalizedAdditionalIncomes = additionalIncomes.length ? additionalIncomes : row.has_additional_income && row.additional_income_type ? [{type: row.additional_income_type, monthlyAmount: Number(row.additional_income_amount), description: this.decrypt(row.additional_income_description_encrypted) || null}] : [];
+      const city = row.city_encrypted ? this.decrypt(row.city_encrypted) : "";
+      const streetAddress = row.street_address_encrypted ? this.decrypt(row.street_address_encrypted) : "";
+      const selfEmployed = row.employment_type === "SELF_EMPLOYED" ? {
+        businessType: row.self_employed_business_type_encrypted ? this.decrypt(row.self_employed_business_type_encrypted) : null,
+        businessStartYear: row.self_employed_business_start_year ?? null,
+        lastAssessedIncome: row.self_employed_last_assessed_income === null ? null : Number(row.self_employed_last_assessed_income),
+        assessmentYear: row.self_employed_assessment_year ?? null,
+        accountantIncomePreviousYear: row.self_employed_accountant_income_previous_year === null ? null : Number(row.self_employed_accountant_income_previous_year),
+        accountantIncomeCurrentYear: row.self_employed_accountant_income_current_year === null ? null : Number(row.self_employed_accountant_income_current_year),
+        accountantMonthsCount: row.self_employed_accountant_months_count ?? null
+      } : null;
       return {
-        order: Number(row.borrower_order), firstName: this.decrypt(row.first_name_encrypted), lastName: this.decrypt(row.last_name_encrypted), identityNumber: this.decrypt(row.identity_number_encrypted), dateOfBirth, age: calculateAge(dateOfBirth), phone: this.decrypt(row.phone_encrypted), email: this.decrypt(row.email_encrypted), address, residenceCity: residenceCityFromAddress(address), maritalStatus: row.marital_status, numberOfChildren: Number(row.number_of_children), childrenAges: row.children_ages ?? [],
-        employment: {employmentType: row.employment_type, employerName: this.decrypt(row.employer_name_encrypted), jobTitle: row.job_title ?? "", employmentSeniorityYears: Number(row.employment_seniority_years), monthlyNetIncome: Number(row.monthly_net_income), hasAdditionalIncome: normalizedAdditionalIncomes.length > 0, additionalIncomeType: normalizedAdditionalIncomes[0]?.type ?? null, additionalIncomeAmount: normalizedAdditionalIncomes[0]?.monthlyAmount ?? 0, additionalIncomeDescription: normalizedAdditionalIncomes[0]?.description ?? null, additionalIncomes: normalizedAdditionalIncomes},
+        order: Number(row.borrower_order), firstName: this.decrypt(row.first_name_encrypted), lastName: this.decrypt(row.last_name_encrypted), identityNumber: this.decrypt(row.identity_number_encrypted), dateOfBirth, age: calculateAge(dateOfBirth), phone: this.decrypt(row.phone_encrypted), email: this.decrypt(row.email_encrypted), address, city, streetAddress, residenceCity: city || residenceCityFromAddress(address), maritalStatus: row.marital_status, numberOfChildren: Number(row.number_of_children), childrenAges: row.children_ages ?? [],
+        employment: {employmentType: row.employment_type, employerName: this.decrypt(row.employer_name_encrypted), jobTitle: row.job_title ?? "", employmentSeniorityYears: Number(row.employment_seniority_years), monthlyNetIncome: Number(row.monthly_net_income), hasAdditionalIncome: normalizedAdditionalIncomes.length > 0, additionalIncomeType: normalizedAdditionalIncomes[0]?.type ?? null, additionalIncomeAmount: normalizedAdditionalIncomes[0]?.monthlyAmount ?? 0, additionalIncomeDescription: normalizedAdditionalIncomes[0]?.description ?? null, additionalIncomes: normalizedAdditionalIncomes, selfEmployed},
         liabilities: liabilities.filter((liability) => liability.scope === "BORROWER" && liability.borrowerOrder === Number(row.borrower_order))
       };
     });
+    const creditIndicationRow = creditIndicationResult.rows[0];
+    const creditIndication = creditIndicationRow ? {
+      bouncedChecks: creditIndicationRow.bounced_checks, bouncedChecksCount: creditIndicationRow.bounced_checks_count,
+      bouncedDirectDebits: creditIndicationRow.bounced_direct_debits, bouncedDirectDebitsCount: creditIndicationRow.bounced_direct_debits_count,
+      collectionProceedings: creditIndicationRow.collection_proceedings, bankruptcy: creditIndicationRow.bankruptcy,
+      liens: creditIndicationRow.liens, mortgageArrears: creditIndicationRow.mortgage_arrears
+    } : null;
     const documents: VersionDocumentSnapshot[] = documentResult.rows.map((row) => ({documentId: Number(row.id), borrowerId: row.borrower_id ? Number(row.borrower_id) : null, borrowerOrder: row.borrower_order ? Number(row.borrower_order) : null, documentType: row.document_type, customTitle: row.custom_title, mimeType: row.mime_type, sizeBytes: Number(row.size_bytes), checksumSha256: row.checksum_sha256, storageKey: row.storage_key, createdAt: new Date(row.created_at).toISOString()}));
     const householdLiabilities = liabilities.filter((liability) => liability.scope === "HOUSEHOLD");
     return {
@@ -302,7 +324,8 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       loanRequest: {purpose: client.purpose, requestedAmount: Number(client.requested_amount), requestedTermMonths: Number(client.requested_term_months), loanToValue: Number(client.loan_to_value)},
       dealDetails: this.decrypt(client.deal_details_encrypted),
       totals: {monthlyIncome: borrowers.reduce((sum, borrower) => sum + borrower.employment.monthlyNetIncome + (borrower.employment.additionalIncomes ?? []).reduce((incomeSum, income) => incomeSum + income.monthlyAmount, 0), 0), liabilityBalance: liabilities.reduce((sum, liability) => sum + (liability.currentBalance ?? 0), 0), monthlyPayments: liabilities.reduce((sum, liability) => sum + liability.monthlyPayment, 0)},
-      advisor: {fullName: `${client.advisor_first_name} ${client.advisor_last_name}`.trim(), businessName: client.business_name ?? "", phone: this.decrypt(client.business_phone_encrypted || client.advisor_phone_encrypted), email: client.business_email ?? "", website: null}, documents
+      advisor: {fullName: `${client.advisor_first_name} ${client.advisor_last_name}`.trim(), businessName: client.business_name ?? "", phone: this.decrypt(client.business_phone_encrypted || client.advisor_phone_encrypted), email: client.business_email ?? "", website: null}, documents,
+      creditIndication
     };
   }
 
@@ -317,38 +340,42 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     return {ready: blockers.length === 0, blockers};
   }
 
-  private async selectedCompanies(companyIds: number[]): Promise<Row[]> {
-    const unique = [...new Set(companyIds)];
-    if (!unique.length) throw new DeliveryError("COMPANY_REQUIRED", 400, "יש לבחור לפחות חברת מימון אחת.");
-    const result = await this.pool.query(`select l.*, count(c.id)::int as active_contact_count from lenders l left join lender_contacts c on c.lender_id=l.id and c.active=true and c.deleted_at is null where l.id = any($1::int[]) and l.active=true and l.deleted_at is null group by l.id`, [unique]);
-    if (result.rows.length !== unique.length) throw new DeliveryError("INVALID_COMPANY", 422, "אחת מחברות המימון שנבחרו אינה פעילה.");
-    const missingContacts = result.rows.filter((row) => Number(row.active_contact_count) === 0);
-    if (missingContacts.length) throw new DeliveryError("COMPANY_WITHOUT_ACTIVE_CONTACT", 422, "לחברת מימון שנבחרה אין איש קשר פעיל.", {companyIds: missingContacts.map((row) => row.id)});
+  // Server-determined target list (section 4/77 of the product brief): the
+  // advisor never selects lender companies. Every send targets every
+  // currently-active lender company that has at least one active contact.
+  // The frontend never sends a company-ID list, and this method never
+  // accepts one.
+  private async eligibleCompanies(): Promise<Row[]> {
+    const result = await this.pool.query(`select l.*, count(c.id)::int as active_contact_count from lenders l join lender_contacts c on c.lender_id=l.id and c.active=true and c.deleted_at is null where l.active=true and l.deleted_at is null group by l.id having count(c.id) > 0 order by l.id`);
+    if (!result.rows.length) throw new DeliveryError("NO_ELIGIBLE_COMPANIES", 422, "אין כרגע חברות מימון פעילות שניתן לשלוח אליהן תיק.");
     return result.rows;
+  }
+
+  private async responseBusinessDays(client: Pool | PoolClient = this.pool): Promise<number> {
+    const result = await client.query("select value from system_settings where key='response_deadline_business_days'");
+    const parsed = Number(result.rows[0]?.value);
+    return Number.isInteger(parsed) && parsed >= 1 ? parsed : 2;
   }
 
   async listAdvisorCompanies(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryCompanySummary[]> {
     await this.loadFullSnapshot(clientId, actor.advisorId);
-    const result = await this.pool.query(`
-      select l.id, l.name, l.activity_areas, l.logo_storage_key, count(distinct c.id)::int active_contact_count,
-        max(cs.created_at) last_sent_at
-      from lenders l left join lender_contacts c on c.lender_id=l.id and c.active=true and c.deleted_at is null
-      left join company_submissions cs on cs.company_id=l.id and cs.advisor_id=$1
-      where l.active=true and l.deleted_at is null group by l.id order by l.name`, [actor.advisorId]);
-    return result.rows.map((row) => ({id: Number(row.id), name: row.name, logoUrl: null, activityAreas: row.activity_areas ?? [], activeContactCount: Number(row.active_contact_count), lastSentAt: row.last_sent_at ? new Date(row.last_sent_at).toISOString() : null, alreadySentCurrentVersion: false}));
+    const result = await this.pool.query(`select l.id, count(distinct c.id)::int active_contact_count from lenders l left join lender_contacts c on c.lender_id=l.id and c.active=true and c.deleted_at is null where l.active=true and l.deleted_at is null group by l.id having count(distinct c.id) > 0`);
+    return result.rows.map((row) => ({id: Number(row.id), activeContactCount: Number(row.active_contact_count)}));
   }
 
-  async preview(clientId: number, companyIds: number[], actor: AdvisorDeliveryActor): Promise<DeliveryPreview> {
+  async preview(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryPreview> {
     const snapshot = await this.loadFullSnapshot(clientId, actor.advisorId); this.assertReady(snapshot);
-    const companies = await this.selectedCompanies(companyIds);
+    const companies = await this.eligibleCompanies();
     const redacted = this.redaction.redact(snapshot);
     const versionResult = await this.pool.query("select coalesce(max(version_number),0)::int + 1 as version_number from case_versions where client_id=$1", [clientId]);
     const createdAt = this.now();
     const contentHash = sha256(JSON.stringify(snapshot));
     const pdf = await createMaskedCasePdf(redacted.maskedSnapshot, {versionNumber: Number(versionResult.rows[0].version_number), createdAt});
-    const deadline = (await this.calendar()).calculateResponseDeadline(createdAt);
-    const payload = JSON.stringify({clientId, advisorId: actor.advisorId, companyIds: [...new Set(companyIds)].sort((a, b) => a - b), sourceClientUpdatedAt: snapshot.sourceClientUpdatedAt, contentHash, pdfGeneratedAt: createdAt.toISOString(), expiresAt: createdAt.getTime() + 5 * 60_000});
-    return {maskedSnapshot: redacted.maskedSnapshot, maskedPdfBase64: pdf.toString("base64"), pdfRendererVersion: PDF_RENDERER_VERSION, pdfFontFingerprint: loadPdfHebrewFonts().fingerprint, pdfGeneratedAt: createdAt.toISOString(), pdfContentHash: contentHash, companies: companies.map((row) => ({id: Number(row.id), name: row.name, logoUrl: null, activityAreas: row.activity_areas ?? [], activeContactCount: Number(row.active_contact_count), lastSentAt: null, alreadySentCurrentVersion: false})), selectedCompanyCount: companies.length, selectedContactCount: companies.reduce((sum, row) => sum + Number(row.active_contact_count), 0), responseDeadlineAt: deadline.toISOString(), previewConfirmation: this.tokens.signPreview(payload)};
+    const businessDays = await this.responseBusinessDays();
+    const deadline = (await this.calendar()).calculateResponseDeadline(createdAt, businessDays);
+    const companyIds = companies.map((row) => Number(row.id)).sort((a, b) => a - b);
+    const payload = JSON.stringify({clientId, advisorId: actor.advisorId, companyIds, sourceClientUpdatedAt: snapshot.sourceClientUpdatedAt, contentHash, pdfGeneratedAt: createdAt.toISOString(), expiresAt: createdAt.getTime() + 5 * 60_000, responseBusinessDays: businessDays});
+    return {maskedSnapshot: redacted.maskedSnapshot, maskedPdfBase64: pdf.toString("base64"), pdfRendererVersion: PDF_RENDERER_VERSION, pdfFontFingerprint: loadPdfHebrewFonts().fingerprint, pdfGeneratedAt: createdAt.toISOString(), pdfContentHash: contentHash, eligibleCompanyCount: companies.length, responseDeadlineAt: deadline.toISOString(), previewConfirmation: this.tokens.signPreview(payload)};
   }
 
   private async batchSummary(client: Pool | PoolClient, batchId: number): Promise<Record<string, unknown>> {
@@ -361,25 +388,32 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     return {batchId, caseVersionId: result.rows[0]?.case_version_id, versionNumber: result.rows[0]?.version_number, status: result.rows[0]?.version_status, companies: result.rows.map((row) => ({submissionPublicId: row.submission_public_id, companyId: row.company_id, companyName: row.company_name, deliveryStatus: row.delivery_status, decisionStatus: row.decision_status, accessStatus: row.access_status, responseDeadlineAt: row.response_deadline_at, contactCount: row.contact_count}))};
   }
 
-  async send(clientId: number, input: {companyIds: number[]; idempotencyKey: string; previewConfirmation: string}, actor: AdvisorDeliveryActor, context: DeliveryContext): Promise<Record<string, unknown>> {
+  async send(clientId: number, input: {idempotencyKey: string; previewConfirmation: string}, actor: AdvisorDeliveryActor, context: DeliveryContext): Promise<Record<string, unknown>> {
     const confirmationValue = this.tokens.verifyPreview(input.previewConfirmation);
     if (!confirmationValue) throw new DeliveryError("PREVIEW_CONFIRMATION_INVALID", 409, "אישור התצוגה המקדימה אינו תקף. יש ליצור תצוגה מקדימה חדשה.");
     let confirmation: Row;
     try { confirmation = JSON.parse(confirmationValue) as Row; } catch { throw new DeliveryError("PREVIEW_CONFIRMATION_INVALID", 409, "אישור התצוגה המקדימה אינו תקף."); }
-    const selectedIds = [...new Set(input.companyIds)].sort((left, right) => left - right);
-    if (confirmation.clientId !== clientId || confirmation.advisorId !== actor.advisorId || Number(confirmation.expiresAt) < this.now().getTime() || JSON.stringify(confirmation.companyIds) !== JSON.stringify(selectedIds)) throw new DeliveryError("PREVIEW_CONFIRMATION_EXPIRED", 409, "פרטי התיק או בחירת החברות השתנו. יש ליצור תצוגה מקדימה חדשה.");
+    if (confirmation.clientId !== clientId || confirmation.advisorId !== actor.advisorId || Number(confirmation.expiresAt) < this.now().getTime()) throw new DeliveryError("PREVIEW_CONFIRMATION_EXPIRED", 409, "אישור התצוגה המקדימה פג. יש ליצור תצוגה מקדימה חדשה.");
     const existing = await this.pool.query("select id from delivery_batches where advisor_id=$1 and idempotency_key=$2", [actor.advisorId, input.idempotencyKey]);
     if (existing.rows[0]) return this.batchSummary(this.pool, Number(existing.rows[0].id));
     const snapshot = await this.loadFullSnapshot(clientId, actor.advisorId); this.assertReady(snapshot);
     const contentHash = sha256(JSON.stringify(snapshot));
     if (snapshot.sourceClientUpdatedAt !== confirmation.sourceClientUpdatedAt || contentHash !== confirmation.contentHash) throw new DeliveryError("CLIENT_CHANGED_AFTER_PREVIEW", 409, "התיק השתנה לאחר התצוגה המקדימה. יש לעיין בגרסה המעודכנת לפני השליחה.");
-    const companies = await this.selectedCompanies(selectedIds);
+    // The eligible-company list is re-derived fresh at send time (never
+    // taken from client input) and compared to what the preview showed; any
+    // change to which companies are active/have an active contact between
+    // preview and send requires a fresh preview, exactly like any other
+    // case-content change.
+    const companies = await this.eligibleCompanies();
+    const currentIds = companies.map((row) => Number(row.id)).sort((a, b) => a - b);
+    if (JSON.stringify(currentIds) !== JSON.stringify(confirmation.companyIds)) throw new DeliveryError("ELIGIBLE_COMPANIES_CHANGED", 409, "רשימת חברות המימון הפעילות השתנתה. יש ליצור תצוגה מקדימה חדשה.");
+    const responseBusinessDays = Number.isInteger(confirmation.responseBusinessDays) && confirmation.responseBusinessDays >= 1 ? Number(confirmation.responseBusinessDays) : await this.responseBusinessDays();
     const redacted = this.redaction.redact(snapshot);
     const createdAt = this.now();
     const pdfGeneratedAt = new Date(String(confirmation.pdfGeneratedAt));
     if (Number.isNaN(pdfGeneratedAt.getTime())) throw new DeliveryError("PREVIEW_CONFIRMATION_INVALID", 409, "אישור התצוגה המקדימה אינו תקף.");
     const calendar = await this.calendar();
-    const deadline = calendar.calculateResponseDeadline(createdAt);
+    const deadline = calendar.calculateResponseDeadline(createdAt, responseBusinessDays);
     const storagePrefix = `case-versions/${randomUUID()}`;
     let batchId = 0;
     let versionId = 0;
@@ -426,7 +460,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
         for (const document of immutableDocuments) await finalize.query(`insert into case_version_documents(case_version_id,document_id,immutable_object_key,document_type,custom_title,borrower_id,mime_type,size_bytes,checksum_sha256) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [versionId, document.documentId, document.immutableObjectKey, document.documentType, document.customTitle, document.borrowerId, document.mimeType, document.sizeBytes, document.checksumSha256]);
         for (const company of companies) {
           const submissionPublicId = randomUUID();
-          const submissionResult = await finalize.query(`insert into company_submissions(public_id,case_version_id,company_id,advisor_id,batch_id,delivery_status,decision_status,access_status,response_deadline_at) values($1,$2,$3,$4,$5,'QUEUED','PENDING','NONE',$6) returning id`, [submissionPublicId, versionId, company.id, actor.advisorId, batchId, deadline]);
+          const submissionResult = await finalize.query(`insert into company_submissions(public_id,case_version_id,company_id,advisor_id,batch_id,delivery_status,decision_status,access_status,response_deadline_at,response_business_days) values($1,$2,$3,$4,$5,'QUEUED','PENDING','NONE',$6,$7) returning id`, [submissionPublicId, versionId, company.id, actor.advisorId, batchId, deadline, responseBusinessDays]);
           const submissionId = Number(submissionResult.rows[0].id);
           const contacts = await finalize.query("select * from lender_contacts where lender_id=$1 and active=true and deleted_at is null order by is_primary desc,id", [company.id]);
           for (const contact of contacts.rows) {
@@ -667,7 +701,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     await this.pool.query(`update submission_contact_invitations set ${column}=coalesce(${column},now()),updated_at=now() where id=$1`, [row.invitation_id]);
     await this.event(this.pool, {submissionId: Number(row.submission_id), invitationId: Number(row.invitation_id), contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: download ? "MASKED_PDF_DOWNLOADED" : "MASKED_PDF_VIEWED"}, context);
     const body = await this.getCurrentVersionPdf(Number(row.case_version_id), "masked");
-    return {body, filename: `תיק-מימון-מוסווה-${row.public_case_number}.pdf`};
+    return {body, filename: `תיק-מימון-ראשוני-${row.public_case_number}.pdf`};
   }
 
   private async queueDecisionMessages(client: PoolClient, row: Row, interested: boolean, context: DeliveryContext): Promise<void> {
@@ -904,22 +938,6 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     return {body, filename: `תיק-מלא-${snapshot.publicCaseNumber}.zip`};
   }
 
-  async createPortalOffer(sessionToken: string, input: PortalOfferInput, context: DeliveryContext): Promise<unknown> {
-    const session = await this.portalSession(sessionToken, context);
-    const result = await this.pool.query(`insert into company_portal_offers(company_submission_id,contact_id,idempotency_key,amount,interest_rate,term_months,monthly_payment,conditions,expires_at)
-      values($1,$2,$3,$4,$5,$6,$7,$8,$9)
-      on conflict(company_submission_id,contact_id,idempotency_key) do nothing returning *`, [session.submission_id, session.contact_id, input.idempotencyKey, input.amount, input.interestRate, input.termMonths, input.monthlyPayment ?? null, input.conditions?.trim() || null, input.expiresAt ?? null]);
-    const offer = result.rows[0] ?? (await this.pool.query("select * from company_portal_offers where company_submission_id=$1 and contact_id=$2 and idempotency_key=$3", [session.submission_id, session.contact_id, input.idempotencyKey])).rows[0];
-    if (!offer) throw new DeliveryError("OFFER_SAVE_FAILED", 500, "לא ניתן היה לשמור את ההצעה.");
-    if (result.rows[0]) {
-      const advisor = await this.pool.query("select u.id from advisor_profiles ap join users u on u.id=ap.user_id where ap.id=$1", [session.advisor_id]);
-      if (advisor.rows[0]) await this.pool.query("insert into notifications(user_id,type,title,body) values($1,'OFFER','הצעת מימון חדשה',$2)", [advisor.rows[0].id, `התקבלה הצעה חדשה לתיק ${session.public_case_number} מחברת ${session.company_name}.`]);
-      await this.event(this.pool, {submissionId: Number(session.submission_id), contactId: Number(session.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(session.contact_id), type: "OFFER_SUBMITTED", metadata: {offerId: Number(offer.id)}}, context);
-      this.broker.publish({type: "COMPANY_OFFER_SUBMITTED", advisorId: Number(session.advisor_id), clientId: Number(session.client_id), submissionPublicId: session.submission_public_id});
-    }
-    return {id: Number(offer.id), status: offer.status, createdAt: offer.created_at, idempotent: !result.rows[0]};
-  }
-
   async logoutPortal(sessionToken: string): Promise<void> {
     if (sessionToken) await this.pool.query("update external_portal_sessions set revoked_at=coalesce(revoked_at,now()) where session_token_hash=$1", [this.tokens.hash(sessionToken)]);
   }
@@ -932,8 +950,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       count(*) filter(where se.event_type='OTP_FAILED')::int otp_failed_events,
       (select count(*)::int from email_outbox eo where eo.company_submission_id=cs.id and eo.template='OTP') otp_emails,
       (select count(*)::int from email_outbox eo where eo.company_submission_id=cs.id and eo.template='FULL_ACCESS') full_access_emails,
-      (select count(*)::int from email_outbox eo where eo.company_submission_id=cs.id and eo.template='LENDER_DECISION') lender_follow_up_emails,
-      (select count(*)::int from company_portal_offers po where po.company_submission_id=cs.id) offers
+      (select count(*)::int from email_outbox eo where eo.company_submission_id=cs.id and eo.template='LENDER_DECISION') lender_follow_up_emails
       from company_submissions cs left join submission_events se on se.company_submission_id=cs.id join case_versions cv on cv.id=cs.case_version_id
       where cv.client_id=$1 and cs.company_id=$2 group by cs.id`, [clientId, companyId]);
     if (!result.rows[0]) throw new DeliveryError("TEST_FLOW_NOT_FOUND", 404, "זרימת הבדיקה לא נמצאה.");
@@ -977,7 +994,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     if (!row) throw new DeliveryError("SUBMISSION_NOT_FOUND", 404, "השליחה לא נמצאה.");
     const body = await this.getCurrentVersionPdf(Number(row.case_version_id), kind);
     await this.audit(this.pool, actor.userId, kind === "masked" ? "ADMIN_MASKED_PDF_VIEWED" : "ADMIN_FULL_PDF_VIEWED", "company_submission", Number(row.id), {publicId}, context);
-    return {body, filename: `תיק-מימון-${kind === "masked" ? "מוסווה" : "מלא"}-${row.public_case_number}.pdf`};
+    return {body, filename: `תיק-מימון-${kind === "masked" ? "ראשוני" : "מלא"}-${row.public_case_number}.pdf`};
   }
 
   async adminAction(publicId: string, action: string, values: Record<string, unknown>, actor: AdminDeliveryActor, context: DeliveryContext): Promise<unknown> {
@@ -1001,7 +1018,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
         if (action === "resend-failed" && queued.rows[0]) await this.pool.query("update submission_contact_invitations set status='QUEUED',email_failed_at=null,email_failure_reason=null,updated_at=now() where id=$1 and status='FAILED'", [invitation.id]);
       }
     } else if (action === "reissue") {
-      const deadline = (await this.calendar()).calculateResponseDeadline(this.now()); const invitations = await this.pool.query("select sci.id,sci.public_id,sci.contact_id,lc.email from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id where sci.company_submission_id=$1", [row.id]);
+      const deadline = (await this.calendar()).calculateResponseDeadline(this.now(), Number(row.response_business_days) || 2); const invitations = await this.pool.query("select sci.id,sci.public_id,sci.contact_id,lc.email from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id where sci.company_submission_id=$1", [row.id]);
       await this.pool.query("update company_submissions set decision_status='PENDING',access_status='NONE',response_deadline_at=$2,cancelled_at=null,cancellation_reason=null,updated_at=now() where id=$1", [row.id, deadline]);
       for (const invitation of invitations.rows) { const nonce = this.tokens.createNonce(); const token = this.tokens.deriveToken("review", invitation.public_id, nonce); await this.pool.query("update submission_contact_invitations set token_hash=$2,token_nonce=$3,token_expires_at=$4,status='QUEUED',closed_at=null,closed_reason=null,email_queued_at=now(),updated_at=now() where id=$1", [invitation.id, this.tokens.hash(token), nonce, deadline]); await this.pool.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id,invitation_id) values($1,'LENDER_INITIAL',$2,$3,'PENDING',now(),$4,$5)`, [`reissue:${invitation.id}:${deadline.toISOString()}`, invitation.email, {invitationId: invitation.id}, row.id, invitation.id]); }
     } else throw new DeliveryError("ADMIN_ACTION_INVALID", 400, "הפעולה המבוקשת אינה נתמכת.");

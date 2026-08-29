@@ -56,7 +56,7 @@ describe("ExternalBorrowerDetails", () => {
 
   it("renders married household liabilities once after all borrower cards", () => {
     const second = {...borrower, order: 2, label: "לווה 2", firstName: "נועם", liabilities: []};
-    const markup = renderToStaticMarkup(<ExternalBorrowersSection mode="MASKED" title="לווים מוסווים" borrowers={[borrower, second]} borrowerRelationship="MARRIED" household={{numberOfChildren: 2, childrenAges: [4, 8]}} householdLiabilities={[{type: "MORTGAGE", currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "משותפת"}]} />);
+    const markup = renderToStaticMarkup(<ExternalBorrowersSection mode="MASKED" title="פרטי הלווים" borrowers={[borrower, second]} borrowerRelationship="MARRIED" household={{numberOfChildren: 2, childrenAges: [4, 8]}} householdLiabilities={[{type: "MORTGAGE", currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "משותפת"}]} />);
     expect(markup.match(/התחייבויות משותפות למשק הבית/gu)).toHaveLength(1);
     expect(markup.match(/משותפת/gu)).toHaveLength(1);
     expect(markup.indexOf("לווה 2")).toBeLessThan(markup.indexOf("התחייבויות משותפות למשק הבית"));

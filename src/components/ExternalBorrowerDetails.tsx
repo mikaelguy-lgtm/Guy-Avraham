@@ -182,7 +182,7 @@ export function ExternalBorrowersSection({mode, title, borrowers = [], borrowerR
       {borrowers.map((borrower, index) => <ExternalBorrowerCard key={borrower.order ?? borrower.label ?? index} mode={mode} borrower={borrower} index={index} borrowerRelationship={borrowerRelationship} household={household} />)}
     </div>
     {showHouseholdLiabilities && <section className="external-household-liabilities">
-      <header><div><House /><div><span className="eyebrow">משותף לכל הלווים</span><h3>התחייבויות משותפות למשק הבית</h3></div></div><dl><DetailField label="סך יתרות" value={formatCurrency(totalBalance)} /><DetailField label="סך החזרים" value={formatCurrency(totalPayments)} /></dl></header>
+      <header><div><House /><div><span className="eyebrow">משותף לכל הלווים</span><h3>התחייבויות משותפות למשק הבית</h3></div></div><dl><DetailField label="סך התחייבויות" value={formatCurrency(totalBalance)} /><DetailField label="סך החזרים" value={formatCurrency(totalPayments)} /></dl></header>
       <BorrowerLiabilitiesList liabilities={householdLiabilities} mode={mode} emptyMessage="לא קיימות התחייבויות משותפות למשק הבית" />
     </section>}
   </section>;

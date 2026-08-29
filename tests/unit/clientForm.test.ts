@@ -35,17 +35,17 @@ describe("dynamic borrower form", () => {
       ...emptyClientForm(),
       numberOfBorrowers: "2",
       borrowers: [
-        {...emptyBorrowerForm(), address: "רחוב ראשון", maritalStatus: "DIVORCED", liabilities: [{type: "LOAN", otherTypeDescription: "", currentBalance: "0", monthlyPayment: "0", endDate: "2035-01-01", notes: "בדיקה"}]},
-        {...emptyBorrowerForm(), address: "רחוב שני", maritalStatus: "SINGLE"}
+        {...emptyBorrowerForm(), streetAddress: "רחוב ראשון", maritalStatus: "DIVORCED", liabilities: [{type: "LOAN", otherTypeDescription: "", currentBalance: "0", monthlyPayment: "0", endDate: "2035-01-01", notes: "בדיקה"}]},
+        {...emptyBorrowerForm(), streetAddress: "רחוב שני", maritalStatus: "SINGLE"}
       ]
     };
     const married = applyBorrowerRelationship(form, "MARRIED");
     expect(married.borrowers.map((item) => item.maritalStatus)).toEqual(["MARRIED", "MARRIED"]);
-    expect(married.borrowers[1].address).toBe("רחוב ראשון");
+    expect(married.borrowers[1].streetAddress).toBe("רחוב ראשון");
     expect(married.householdLiabilities).toHaveLength(1);
     const restored = applyBorrowerRelationship(married, "PARTNERS");
     expect(restored.borrowers.map((item) => item.maritalStatus)).toEqual(["DIVORCED", "SINGLE"]);
-    expect(restored.borrowers[1].address).toBe("רחוב שני");
+    expect(restored.borrowers[1].streetAddress).toBe("רחוב שני");
     expect(restored.borrowers[0].liabilities).toHaveLength(1);
   });
 

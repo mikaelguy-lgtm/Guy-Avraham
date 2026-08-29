@@ -4,7 +4,7 @@ import { clientInputSchema, newClientInputSchema } from "../../src/domain/client
 const borrower = {
   order: 1, isPrimary: true,
   firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15",
-  phone: "0501234567", email: "dana@example.com", address: "רחוב הדוגמה 1, תל אביב",
+  phone: "0501234567", email: "dana@example.com", city: "תל אביב", streetAddress: "רחוב הדוגמה 1",
   maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []},
   employment: {employmentType: "SALARIED", employerName: "חברה בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6},
   income: {monthlyNetIncome: 20_000, additionalIncomes: [{type: "RENTAL_INCOME", monthlyAmount: 2_500, description: null}]},
@@ -129,11 +129,13 @@ describe("client input validation", () => {
       borrowers: completeInput.borrowers.map((item, index) => ({
         ...item,
         maritalStatus: index === 0 ? undefined : "SINGLE",
-        address: index === 0 ? "כתובת משותפת" : "כתובת שנשלחה ידנית"
+        city: index === 0 ? "עיר משותפת" : "עיר שנשלחה ידנית",
+        streetAddress: index === 0 ? "רחוב משותף" : "רחוב שנשלח ידנית"
       }))
     };
     const parsed = clientInputSchema.parse(manipulated);
     expect(parsed.borrowers.map((item) => item.maritalStatus)).toEqual(["MARRIED", "MARRIED"]);
-    expect(parsed.borrowers.map((item) => item.address)).toEqual(["כתובת משותפת", "כתובת משותפת"]);
+    expect(parsed.borrowers.map((item) => item.city)).toEqual(["עיר משותפת", "עיר משותפת"]);
+    expect(parsed.borrowers.map((item) => item.streetAddress)).toEqual(["רחוב משותף", "רחוב משותף"]);
   });
 });

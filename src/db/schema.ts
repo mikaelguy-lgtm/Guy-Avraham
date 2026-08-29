@@ -26,7 +26,6 @@ export const submissionStatusEnum = pgEnum("submission_status", [
   "OFFER_RECEIVED", "DECLINED", "EXPIRED", "CANCELLED"
 ]);
 export const responseTypeEnum = pgEnum("response_type", ["MESSAGE", "MORE_INFO_REQUEST", "INTERESTED", "DECLINED"]);
-export const offerStatusEnum = pgEnum("offer_status", ["DRAFT", "SUBMITTED", "UPDATED", "WITHDRAWN", "ACCEPTED", "REJECTED", "EXPIRED"]);
 export const identityRequestStatusEnum = pgEnum("identity_request_status", ["PENDING", "PARTIALLY_APPROVED", "APPROVED", "REJECTED", "CANCELLED"]);
 export const businessCalendarExceptionTypeEnum = pgEnum("business_calendar_exception_type", ["HOLIDAY", "NON_WORKING_DAY", "FORCED_WORKING_DAY"]);
 export const caseVersionStatusEnum = pgEnum("case_version_status", ["CREATING", "READY", "FAILED", "ARCHIVED"]);
@@ -153,6 +152,8 @@ export const borrowers = pgTable("borrowers", {
   phoneEncrypted: text("phone_encrypted"),
   emailEncrypted: text("email_encrypted"),
   addressEncrypted: text("address_encrypted"),
+  cityEncrypted: text("city_encrypted"),
+  streetAddressEncrypted: text("street_address_encrypted"),
   maritalStatus: varchar("marital_status", {length: 30}),
   numberOfChildren: integer("number_of_children").notNull().default(0),
   childrenAges: jsonb("children_ages").$type<number[]>().notNull().default([]),
@@ -182,12 +183,21 @@ export const employmentRecords = pgTable("employment_records", {
   additionalIncomeDescriptionEncrypted: text("additional_income_description_encrypted"),
   employmentSeniorityYears: integer("employment_seniority_years").notNull().default(0),
   startDate: timestamp("start_date", {withTimezone: false}),
+  selfEmployedBusinessTypeEncrypted: text("self_employed_business_type_encrypted"),
+  selfEmployedBusinessStartYear: integer("self_employed_business_start_year"),
+  selfEmployedLastAssessedIncome: numeric("self_employed_last_assessed_income", {precision: 14, scale: 2}),
+  selfEmployedAssessmentYear: integer("self_employed_assessment_year"),
+  selfEmployedAccountantIncomePreviousYear: numeric("self_employed_accountant_income_previous_year", {precision: 14, scale: 2}),
+  selfEmployedAccountantIncomeCurrentYear: numeric("self_employed_accountant_income_current_year", {precision: 14, scale: 2}),
+  selfEmployedAccountantMonthsCount: integer("self_employed_accountant_months_count"),
   ...timestamps
 }, (table) => [
   check("employment_type_check", sql`${table.employmentType} in ('SALARIED', 'SELF_EMPLOYED', 'CONTROLLING_SHAREHOLDER', 'RETIRED', 'GOVERNMENT_EMPLOYEE', 'SECURITY_FORCES', 'ALLOWANCE', 'UNEMPLOYED', 'TORAH_INSTITUTION', 'OTHER')`),
   check("employment_income_check", sql`${table.monthlyNetIncome} >= 0 and ${table.monthlyGrossIncome} >= 0 and ${table.additionalIncome} >= 0 and ${table.additionalIncomeAmount} >= 0 and ${table.employmentSeniorityYears} >= 0`),
   check("employment_additional_type_check", sql`${table.additionalIncomeType} is null or ${table.additionalIncomeType} in ('SALARIED', 'SECOND_BUSINESS', 'RENTAL_INCOME', 'ALLOWANCE', 'ALIMONY', 'PENSION', 'REGULAR_OVERTIME', 'REGULAR_BONUSES', 'FOREIGN_INCOME', 'INVESTMENT_INCOME', 'SMALL_SELF_EMPLOYMENT', 'FAMILY_SUPPORT', 'OTHER')`),
-  check("employment_additional_income_check", sql`(${table.hasAdditionalIncome} = false and ${table.additionalIncomeType} is null and ${table.additionalIncomeAmount} = 0) or (${table.hasAdditionalIncome} = true and ${table.additionalIncomeType} is not null and ${table.additionalIncomeAmount} >= 0)`)
+  check("employment_additional_income_check", sql`(${table.hasAdditionalIncome} = false and ${table.additionalIncomeType} is null and ${table.additionalIncomeAmount} = 0) or (${table.hasAdditionalIncome} = true and ${table.additionalIncomeType} is not null and ${table.additionalIncomeAmount} >= 0)`),
+  check("employment_self_employed_relevance_check", sql`${table.employmentType} = 'SELF_EMPLOYED' or (${table.selfEmployedBusinessTypeEncrypted} is null and ${table.selfEmployedBusinessStartYear} is null and ${table.selfEmployedLastAssessedIncome} is null and ${table.selfEmployedAssessmentYear} is null and ${table.selfEmployedAccountantIncomePreviousYear} is null and ${table.selfEmployedAccountantIncomeCurrentYear} is null and ${table.selfEmployedAccountantMonthsCount} is null)`),
+  check("employment_self_employed_values_check", sql`(${table.selfEmployedBusinessStartYear} is null or ${table.selfEmployedBusinessStartYear} between 1900 and 2200) and (${table.selfEmployedLastAssessedIncome} is null or ${table.selfEmployedLastAssessedIncome} >= 0) and (${table.selfEmployedAssessmentYear} is null or ${table.selfEmployedAssessmentYear} between 1900 and 2200) and (${table.selfEmployedAccountantIncomePreviousYear} is null or ${table.selfEmployedAccountantIncomePreviousYear} >= 0) and (${table.selfEmployedAccountantIncomeCurrentYear} is null or ${table.selfEmployedAccountantIncomeCurrentYear} >= 0) and (${table.selfEmployedAccountantMonthsCount} is null or ${table.selfEmployedAccountantMonthsCount} between 1 and 12)`)
 ]);
 
 export const incomeSources = pgTable("income_sources", {
@@ -261,6 +271,24 @@ export const loanRequests = pgTable("loan_requests", {
   check("loan_requests_amounts_check", sql`${table.requestedAmount} >= 0 and ${table.requestedTermMonths} > 0 and ${table.loanToValue} >= 0`)
 ]);
 
+export const creditIndications = pgTable("credit_indications", {
+  id: serial("id").primaryKey(),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  bouncedChecks: boolean("bounced_checks"),
+  bouncedChecksCount: integer("bounced_checks_count"),
+  bouncedDirectDebits: boolean("bounced_direct_debits"),
+  bouncedDirectDebitsCount: integer("bounced_direct_debits_count"),
+  collectionProceedings: boolean("collection_proceedings"),
+  bankruptcy: boolean("bankruptcy"),
+  liens: boolean("liens"),
+  mortgageArrears: boolean("mortgage_arrears"),
+  ...timestamps
+}, (table) => [
+  uniqueIndex("credit_indications_client_uq").on(table.clientId),
+  check("credit_indications_bounced_checks_count_check", sql`(${table.bouncedChecks} is not true and ${table.bouncedChecksCount} is null) or (${table.bouncedChecks} is true and ${table.bouncedChecksCount} >= 1)`),
+  check("credit_indications_bounced_direct_debits_count_check", sql`(${table.bouncedDirectDebits} is not true and ${table.bouncedDirectDebitsCount} is null) or (${table.bouncedDirectDebits} is true and ${table.bouncedDirectDebitsCount} >= 1)`)
+]);
+
 export const documents = pgTable("documents", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull().references(() => clients.id),
@@ -320,20 +348,6 @@ export const identityRevealRequests = pgTable("identity_reveal_requests", {
   decidedAt: timestamp("decided_at", {withTimezone: true}),
   ...timestamps
 });
-
-export const loanOffers = pgTable("loan_offers", {
-  id: serial("id").primaryKey(),
-  submissionId: integer("submission_id").notNull().references(() => lenderSubmissions.id),
-  lenderUserId: integer("lender_user_id").notNull().references(() => users.id),
-  amount: numeric("amount", {precision: 14, scale: 2}).notNull(),
-  interestRate: numeric("interest_rate", {precision: 7, scale: 4}).notNull(),
-  termMonths: integer("term_months").notNull(),
-  monthlyPayment: numeric("monthly_payment", {precision: 14, scale: 2}),
-  conditions: text("conditions"),
-  status: offerStatusEnum("status").notNull().default("SUBMITTED"),
-  expiresAt: timestamp("expires_at", {withTimezone: true}),
-  ...timestamps
-}, (table) => [check("loan_offers_values_check", sql`${table.amount} >= 0 and ${table.interestRate} >= 0 and ${table.interestRate} <= 100 and ${table.termMonths} between 12 and 600 and (${table.monthlyPayment} is null or ${table.monthlyPayment} >= 0)`)]);
 
 export const notifications = pgTable("notifications", {
   id: serial("id").primaryKey(),
@@ -524,6 +538,7 @@ export const companySubmissions = pgTable("company_submissions", {
   decisionStatus: companyDecisionStatusEnum("decision_status").notNull().default("PENDING"),
   accessStatus: companyAccessStatusEnum("access_status").notNull().default("NONE"),
   responseDeadlineAt: timestamp("response_deadline_at", {withTimezone: true}).notNull(),
+  responseBusinessDays: integer("response_business_days").notNull().default(2),
   decisionContactId: integer("decision_contact_id").references(() => lenderContacts.id),
   decisionAt: timestamp("decision_at", {withTimezone: true}),
   fullAccessStartsAt: timestamp("full_access_starts_at", {withTimezone: true}),
@@ -534,7 +549,8 @@ export const companySubmissions = pgTable("company_submissions", {
 }, (table) => [
   uniqueIndex("company_submissions_version_company_uq").on(table.caseVersionId, table.companyId),
   index("company_submissions_client_status_idx").on(table.advisorId, table.decisionStatus),
-  index("company_submissions_deadline_idx").on(table.decisionStatus, table.responseDeadlineAt)
+  index("company_submissions_deadline_idx").on(table.decisionStatus, table.responseDeadlineAt),
+  check("company_submissions_response_business_days_check", sql`${table.responseBusinessDays} >= 1`)
 ]);
 
 export const submissionContactInvitations = pgTable("submission_contact_invitations", {
@@ -610,25 +626,6 @@ export const externalPortalSessions = pgTable("external_portal_sessions", {
   revokedAt: timestamp("revoked_at", {withTimezone: true}),
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow()
 }, (table) => [index("external_portal_sessions_grant_idx").on(table.accessGrantId)]);
-
-export const companyPortalOffers = pgTable("company_portal_offers", {
-  id: serial("id").primaryKey(),
-  companySubmissionId: integer("company_submission_id").notNull().references(() => companySubmissions.id),
-  contactId: integer("contact_id").notNull().references(() => lenderContacts.id),
-  idempotencyKey: varchar("idempotency_key", {length: 100}).notNull(),
-  amount: numeric("amount", {precision: 14, scale: 2}).notNull(),
-  interestRate: numeric("interest_rate", {precision: 7, scale: 4}).notNull(),
-  termMonths: integer("term_months").notNull(),
-  monthlyPayment: numeric("monthly_payment", {precision: 14, scale: 2}),
-  conditions: text("conditions"),
-  expiresAt: timestamp("expires_at", {withTimezone: true}),
-  status: offerStatusEnum("status").notNull().default("SUBMITTED"),
-  ...timestamps
-}, (table) => [
-  uniqueIndex("company_portal_offers_idempotency_uq").on(table.companySubmissionId, table.contactId, table.idempotencyKey),
-  index("company_portal_offers_submission_idx").on(table.companySubmissionId, table.createdAt),
-  check("company_portal_offers_values_check", sql`${table.amount} > 0 and ${table.interestRate} >= 0 and ${table.interestRate} <= 100 and ${table.termMonths} between 12 and 600 and (${table.monthlyPayment} is null or ${table.monthlyPayment} >= 0)`)
-]);
 
 export const submissionEvents = pgTable("submission_events", {
   id: serial("id").primaryKey(),

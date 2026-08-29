@@ -11,7 +11,13 @@ const prohibited = [
   "DATABASE_URL",
   "FIELD_ENCRYPTION_KEY",
   "PRIVATE_KEY",
-  "S3_SECRET"
+  "S3_SECRET",
+  "מוסווה",
+  "מוסווית",
+  "מוסווים",
+  "מוסוות",
+  "הסוואה",
+  "להסוות"
 ];
 
 async function files(directory) {

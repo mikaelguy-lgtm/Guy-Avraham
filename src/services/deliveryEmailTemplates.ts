@@ -8,7 +8,7 @@ export const deliveryEmailTemplates = {
   initial(values: {contactFirstName: string; companyName: string; publicCaseNumber: string; deadline: string; url: string}): DeliveryEmailContent {
     const subject = `תיק מימון חדש לבחינתכם | SynCash | תיק ${values.publicCaseNumber}`;
     const text = `שלום ${values.contactFirstName},\n\nהתקבל עבור חברת ${values.companyName} תיק מימון חדש לבחינה. בשלב זה אין גישה לפרטים מזהים, לפרטי היועץ או למסמכים.\nמועד אחרון: ${values.deadline}\n${values.url}\n\nSynCash`;
-    return {subject, text, html: shell(`<p>שלום ${escapeHtml(values.contactFirstName)},</p><p>התקבל עבור חברת ${escapeHtml(values.companyName)} תיק מימון חדש לבחינה.</p><p>יש לעבור תחילה על התיק המוסווה ולבחור האם חברתכם מעוניינת להמשיך. בשלב זה אין גישה לפרטי הזיהוי, לפרטי היועץ או למסמכי הלקוח.</p><p><strong>המועד האחרון למתן תשובה:</strong><br>${escapeHtml(values.deadline)}</p>${button("מעבר לבדיקת התיק", values.url)}<p>הקישור אישי ומיועד לאנשי הקשר המורשים בחברתכם.</p><p>בברכה,<br>SynCash</p>`) };
+    return {subject, text, html: shell(`<p>שלום ${escapeHtml(values.contactFirstName)},</p><p>התקבל עבור חברת ${escapeHtml(values.companyName)} תיק מימון חדש לבחינה.</p><p>יש לעבור תחילה על פרטי התיק ולבחור האם חברתכם מעוניינת להמשיך. בשלב זה אין גישה לפרטי הזיהוי, לפרטי היועץ או למסמכי הלקוח.</p><p><strong>המועד האחרון למתן תשובה:</strong><br>${escapeHtml(values.deadline)}</p>${button("מעבר לבדיקת התיק", values.url)}<p>הקישור אישי ומיועד לאנשי הקשר המורשים בחברתכם.</p><p>בברכה,<br>SynCash</p>`) };
   },
   reminder(values: {contactFirstName: string; companyName: string; publicCaseNumber: string; deadline: string; url: string}): DeliveryEmailContent {
     const subject = `תזכורת: נדרשת תגובתכם לתיק מימון | SynCash | תיק ${values.publicCaseNumber}`;

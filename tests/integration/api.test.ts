@@ -84,8 +84,8 @@ const completeClientInput = {
   numberOfBorrowers: 2, borrowerRelationship: "MARRIED", borrowerRelationshipOther: null,
   household: {numberOfChildren: 2, childrenAges: [4, 8]},
   borrowers: [
-    {order: 1, isPrimary: true, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", phone: "0501234567", email: "dana@example.com", address: "רחוב הדוגמה 1", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SALARIED", employerName: "חברה בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6}, income: {monthlyNetIncome: 20_000, additionalIncomes: [{type: "RENTAL_INCOME", monthlyAmount: 2_500, description: null}, {type: "SALARIED", monthlyAmount: 0, description: null}]}, liabilities: []},
-    {order: 2, isPrimary: false, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", phone: "0501234568", email: "noam@example.com", address: "רחוב הדוגמה 1", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SELF_EMPLOYED", employerName: "עסק", jobTitle: "בעלים", employmentSeniorityYears: 8}, income: {monthlyNetIncome: 15_000, additionalIncomes: []}, liabilities: []}
+    {order: 1, isPrimary: true, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", phone: "0501234567", email: "dana@example.com", city: "תל אביב", streetAddress: "רחוב הדוגמה 1", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SALARIED", employerName: "חברה בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6, selfEmployed: null}, income: {monthlyNetIncome: 20_000, additionalIncomes: [{type: "RENTAL_INCOME", monthlyAmount: 2_500, description: null}, {type: "SALARIED", monthlyAmount: 0, description: null}]}, liabilities: []},
+    {order: 2, isPrimary: false, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", phone: "0501234568", email: "noam@example.com", city: "תל אביב", streetAddress: "רחוב הדוגמה 1", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SELF_EMPLOYED", employerName: "", jobTitle: "", employmentSeniorityYears: 0, selfEmployed: {businessType: "עסק", businessStartYear: 2018, lastAssessedIncome: 150_000, assessmentYear: 2025, accountantIncomePreviousYear: 140_000, accountantIncomeCurrentYear: 160_000, accountantMonthsCount: 12}}, income: {monthlyNetIncome: 15_000, additionalIncomes: []}, liabilities: []}
   ],
   householdLiabilities: [{type: "LOAN", otherTypeDescription: null, financialInstitution: "בנק לדוגמה", currentBalance: 120_000, monthlyPayment: 1_500, endDate: "2035-07-31", notes: "הלוואה בנקאית"}, {type: "MORTGAGE", otherTypeDescription: null, financialInstitution: "בנק למשכנתאות", currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "משכנתה קיימת"}],
   property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", address: "רחוב הנכס 2", value: 2_000_000},
@@ -467,7 +467,7 @@ describe("focused client updates", () => {
     borrowers: completeClientInput.borrowers.map((borrower, index) => ({
       id: index + 1, order: borrower.order, isPrimary: borrower.isPrimary, firstName: borrower.firstName,
       lastName: borrower.lastName, identityNumber: borrower.identityNumber, dateOfBirth: borrower.dateOfBirth,
-      phone: borrower.phone, email: borrower.email, address: borrower.address,
+      phone: borrower.phone, email: borrower.email, city: borrower.city, streetAddress: borrower.streetAddress,
       maritalStatus: borrower.maritalStatus, children: borrower.children
     }))
   };
@@ -598,13 +598,15 @@ describe("multi-borrower client create and update", () => {
       borrowers: completeClientInput.borrowers.map((borrower, index) => ({
         ...borrower,
         maritalStatus: index === 0 ? undefined : "SINGLE",
-        address: index === 0 ? "כתובת משותפת" : "כתובת עוקפת"
+        city: index === 0 ? "עיר משותפת" : "עיר עוקפת",
+        streetAddress: index === 0 ? "רחוב משותף 1" : "רחוב עוקף 2"
       }))
     };
     await request(app({createClient})).post("/api/clients").set("authorization", "Bearer advisor").send(payload).expect(201);
     expect(createClient.mock.calls[0][0].borrowers.map((item: {maritalStatus: string}) => item.maritalStatus)).toEqual(["MARRIED", "MARRIED"]);
     const encryption = new EncryptionService(Buffer.alloc(32, 4));
-    expect(createClient.mock.calls[0][0].borrowers.map((item: {addressEncrypted: string}) => encryption.decrypt(item.addressEncrypted))).toEqual(["כתובת משותפת", "כתובת משותפת"]);
+    expect(createClient.mock.calls[0][0].borrowers.map((item: {cityEncrypted: string}) => encryption.decrypt(item.cityEncrypted))).toEqual(["עיר משותפת", "עיר משותפת"]);
+    expect(createClient.mock.calls[0][0].borrowers.map((item: {streetAddressEncrypted: string}) => encryption.decrypt(item.streetAddressEncrypted))).toEqual(["רחוב משותף 1", "רחוב משותף 1"]);
   });
 
   it.each([
@@ -661,10 +663,12 @@ describe("documents", () => {
 });
 
 describe("lender isolation", () => {
-  it("requires authentication for replies, offers, and identity requests", async () => {
+  it("requires authentication for replies and identity requests", async () => {
     await request(app()).post("/api/lender/submissions/1/reply").expect(401);
-    await request(app()).post("/api/lender/submissions/1/offers").expect(401);
     await request(app()).post("/api/lender/submissions/1/identity-request").expect(401);
+  });
+  it("no longer exposes an offer-submission endpoint for lenders", async () => {
+    await request(app()).post("/api/lender/submissions/1/offers").set("authorization", "Bearer lender").send({amount: 1_000_000, interestRate: 6.5, termMonths: 240}).expect(404);
   });
   it("blocks a lender from another company", async () => { await request(app()).get("/api/lender/submissions/1").set("authorization", "Bearer lender2").expect(403); });
   it("allows the assigned lender and does not expose PII", async () => {
@@ -674,10 +678,6 @@ describe("lender isolation", () => {
   });
   it("creates replies with the authenticated user", async () => {
     await request(app()).post("/api/lender/submissions/1/reply").set("authorization", "Bearer lender").send({responseType: "MESSAGE", message: "Reviewing"}).expect(201);
-  });
-  it("accepts an offer from the assigned lender", async () => {
-    await request(app()).post("/api/lender/submissions/1/offers").set("authorization", "Bearer lender")
-      .send({amount: 1_000_000, interestRate: 6.5, termMonths: 240}).expect(201);
   });
   it("returns only approved identity fields", async () => {
     const encryption = new EncryptionService(Buffer.alloc(32, 4));
@@ -738,15 +738,6 @@ describe("submission delivery", () => {
     expect(response.body).toEqual(expect.objectContaining({error: "EMAIL_DELIVERY_DISABLED", requestId: expect.any(String)}));
     expect(createSubmission).not.toHaveBeenCalled();
   });
-  it.each([
-    {amount: -1, interestRate: 6.5, termMonths: 240},
-    {amount: 1_000_000, interestRate: 101, termMonths: 240},
-    {amount: "1e6", interestRate: 6.5, termMonths: 240},
-    {amount: 1_000_000, interestRate: 6.5, termMonths: "24e1"}
-  ])("rejects invalid lender offer values", async (payload) => {
-    await request(app()).post("/api/lender/submissions/1/offers").set("authorization", "Bearer lender").send(payload).expect(400);
-  });
-
   it("marks a successful SMTP delivery as SENT without creating an automatic response", async () => {
     const markSent = vi.fn().mockResolvedValue(undefined);
     const createResponse = vi.fn();

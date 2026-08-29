@@ -85,7 +85,7 @@ function expectHealthyHebrewPdf(extracted: {pageCount: number; pageTexts: string
   expect(extracted.pageCount).toBeLessThanOrEqual(kind === "masked" ? 4 : 5);
   expect(extracted.pageTexts.every((pageText) => pageText.replace(/SYNCASH|מידע סודי|הופק|עמוד|מתוך|\s/g, "").length > 10)).toBe(true);
   for (const heading of kind === "masked"
-    ? ["תיק מימון מוסווה לבחינה", "תקציר העסקה", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]
+    ? ["תיק מימון לבחינה ראשונית", "תקציר העסקה", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]
     : ["תיק מימון מלא", "תקציר העסקה", "פרטים אישיים", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]
   ) expect(extracted.text).toContain(heading);
   expect(extracted.text).not.toMatch(/[�□■]/u);
@@ -148,9 +148,8 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     await page.goto(`/advisor/clients/${clientId}`);
     await expect(page.getByRole("heading", {name: "בדיקת מסירה ועוד 1"})).toBeVisible();
     await page.getByRole("button", {name: /שליחה לחברות מימון/}).click();
-    await page.getByLabel(`בחירת ${companyName}`).check();
     const previewResponsePromise = page.waitForResponse((response) => response.url().endsWith(`/api/clients/${clientId}/delivery/preview`) && response.request().method() === "POST");
-    await page.getByRole("button", {name: "המשך לתצוגה מוסווית"}).click();
+    await page.getByRole("button", {name: "המשך"}).click();
     const previewResponse = await previewResponsePromise; expect(previewResponse.ok()).toBe(true);
     const preview = await previewResponse.json() as {maskedPdfBase64: string; pdfRendererVersion: number; pdfFontFingerprint: string; pdfGeneratedAt: string; pdfContentHash: string};
     const previewBody = JSON.stringify(preview);
@@ -162,16 +161,15 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     expect(previewPdf.toString("latin1")).toContain("NotoSansHebrew");
     const previewExtracted = await extractPdf(previewPdf); expectHealthyHebrewPdf(previewExtracted, "masked");
     for (const pii of ["בדיקת", "מסירה", "123456782", "0501234567", "delivery-client@syncash.local", "מעסיק סודי"]) expect(previewExtracted.text).not.toContain(pii);
-    await expect(page.getByRole("heading", {name: "תצוגה מקדימה מוסווית"})).toBeVisible();
+    await expect(page.getByRole("heading", {name: "תצוגה מקדימה"})).toBeVisible();
     await expect(page.getByText("2", {exact: true}).first()).toBeVisible();
     const previewPopupPromise = page.waitForEvent("popup");
-    await page.getByRole("button", {name: "צפייה ב־PDF המוסווה"}).click();
+    await page.getByRole("button", {name: "צפייה ב-PDF"}).click();
     const previewPopup = await previewPopupPromise;
     await expect.poll(() => previewPopup.url()).toMatch(/^(?:blob:|:)$/);
     expect(previewPopup.isClosed()).toBe(false);
     await previewPopup.close();
     await page.getByRole("button", {name: "המשך לאישור"}).click();
-    await page.getByLabel("אני מאשר/ת שהמידע המוסווה נבדק ושהתיק מוכן לשליחה.").check();
     const sendResponsePromise = page.waitForResponse((response) => response.url().endsWith(`/api/clients/${clientId}/delivery/send`) && response.request().method() === "POST");
     await page.getByRole("button", {name: "אישור ושליחת התיק"}).click();
     expect((await sendResponsePromise).status()).toBe(201);
@@ -179,7 +177,7 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     const maskedObject = listedObjects.Contents?.filter((item) => item.Key?.endsWith("/masked.pdf") && (item.LastModified?.getTime() ?? 0) >= testStartedAt - 5_000).sort((left, right) => (right.LastModified?.getTime() ?? 0) - (left.LastModified?.getTime() ?? 0))[0];
     expect(maskedObject?.Key).toBeTruthy();
     await s3.send(new PutObjectCommand({Bucket: process.env.S3_BUCKET, Key: maskedObject!.Key, Body: Buffer.from("%PDF-1.7\nbroken stale renderer"), ContentType: "application/pdf", Metadata: {"renderer-version": "2", "font-fingerprint": "stale", "content-hash": "stale"}}));
-    await expect(page.getByRole("heading", {name: "התיק הועבר לתור השליחה"})).toBeVisible();
+    await expect(page.getByRole("heading", {name: /התיק הוגש בהצלחה/})).toBeVisible();
     await page.getByRole("dialog", {name: "שליחה לחברות מימון"}).getByRole("button", {name: "סגירה"}).click();
     await expect(page.locator(".advisor-topbar .notification-badge")).toBeVisible();
     await page.locator(".advisor-topbar").getByRole("button", {name: /התראות/}).click();
@@ -196,7 +194,7 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     const reviewA = linkFrom(initialA, "review"); const reviewB = linkFrom(initialB, "review"); expect(reviewA).not.toBe(reviewB);
 
     const reviewContext = await browser.newContext(); contexts.push(reviewContext); const reviewPage = await reviewContext.newPage();
-    await reviewPage.goto(reviewA); await expect(reviewPage.getByRole("heading", {name: "תיק מימון מוסווה לבחינה"})).toBeVisible();
+    await reviewPage.goto(reviewA); await expect(reviewPage.getByRole("heading", {name: "תיק מימון לבחינה ראשונית"})).toBeVisible();
     await expect(reviewPage.getByTestId("external-borrowers-masked")).toBeVisible();
     await expect(reviewPage.locator(".external-borrower-card")).toHaveCount(2);
     await expect(reviewPage.locator(".external-household-liabilities")).toHaveCount(1);

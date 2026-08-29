@@ -9,8 +9,8 @@ import { IDENTITY_FIELDS, type IdentityField } from "../domain/types.js";
 import { advisorProfileSchema, advisorRegistrationApiSchema, normalizeEmail } from "../domain/advisorRegistration.js";
 import {
   clientDealDetailsInputSchema, clientIncomeInputSchema, clientInputSchema, clientLiabilitiesInputSchema,
-  clientPersonalInputSchema, clientPropertyInputSchema, newClientInputSchema,
-  type ClientIncomeInput, type ClientInput, type ClientLiabilitiesInput, type ClientPersonalInput, type ClientPropertyInput
+  clientPersonalInputSchema, clientPropertyInputSchema, creditIndicationInputSchema, newClientInputSchema,
+  type ClientIncomeInput, type ClientInput, type ClientLiabilitiesInput, type ClientPersonalInput, type ClientPropertyInput, type CreditIndicationInput
 } from "../domain/clientValidation.js";
 import { DOCUMENT_TYPES, REQUIRED_BORROWER_DOCUMENT_TYPES } from "../domain/clientFields.js";
 import { createAuthMiddleware, type TokenVerifier } from "../middleware/auth.js";
@@ -58,7 +58,6 @@ function routeParam(request: Request, name: string): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
 
-const strictNumber = () => z.preprocess((value) => typeof value === "string" && !/^\d+(?:\.\d+)?$/.test(value) ? Number.NaN : value, z.coerce.number().finite());
 const strictInteger = () => z.preprocess((value) => typeof value === "string" && !/^\d+$/.test(value) ? Number.NaN : value, z.coerce.number().int());
 
 const smtpSettingsSchema = z.object({
@@ -150,6 +149,20 @@ function publicAdvisorAccount(account: Awaited<ReturnType<AppStore["getAdvisorAc
   };
 }
 
+function selfEmployedMutationFields(selfEmployed: {businessType: string; businessStartYear: number; lastAssessedIncome: number; assessmentYear: number; accountantIncomePreviousYear: number; accountantIncomeCurrentYear: number; accountantMonthsCount: number} | null | undefined, encrypt: (value: string) => string) {
+  if (!selfEmployed) return {
+    selfEmployedBusinessTypeEncrypted: null, selfEmployedBusinessStartYear: null, selfEmployedLastAssessedIncome: null,
+    selfEmployedAssessmentYear: null, selfEmployedAccountantIncomePreviousYear: null, selfEmployedAccountantIncomeCurrentYear: null,
+    selfEmployedAccountantMonthsCount: null
+  };
+  return {
+    selfEmployedBusinessTypeEncrypted: encrypt(selfEmployed.businessType), selfEmployedBusinessStartYear: selfEmployed.businessStartYear,
+    selfEmployedLastAssessedIncome: selfEmployed.lastAssessedIncome, selfEmployedAssessmentYear: selfEmployed.assessmentYear,
+    selfEmployedAccountantIncomePreviousYear: selfEmployed.accountantIncomePreviousYear, selfEmployedAccountantIncomeCurrentYear: selfEmployed.accountantIncomeCurrentYear,
+    selfEmployedAccountantMonthsCount: selfEmployed.accountantMonthsCount
+  };
+}
+
 function clientMutationRecord(input: ClientInput, encryption: EncryptionService, updatedByUserId: number): ClientMutationRecord {
   const encrypt = (value: string) => encryption.encrypt(value);
   const liabilityRecord = (liability: ClientInput["householdLiabilities"][number]) => ({
@@ -182,7 +195,9 @@ function clientMutationRecord(input: ClientInput, encryption: EncryptionService,
         birthDateEncrypted: encrypt(borrower.dateOfBirth),
         phoneEncrypted: encrypt(borrower.phone),
         emailEncrypted: encrypt(borrower.email),
-        addressEncrypted: encrypt(borrower.address),
+        addressEncrypted: encrypt(`${borrower.streetAddress}, ${borrower.city}`),
+        cityEncrypted: encrypt(borrower.city),
+        streetAddressEncrypted: encrypt(borrower.streetAddress),
         maritalStatus: borrower.maritalStatus,
         numberOfChildren: borrower.children.numberOfChildren,
         childrenAges: borrower.children.childrenAges,
@@ -190,6 +205,7 @@ function clientMutationRecord(input: ClientInput, encryption: EncryptionService,
         employerNameEncrypted: encrypt(borrower.employment.employerName),
         jobTitle: borrower.employment.jobTitle,
         employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
+        ...selfEmployedMutationFields(borrower.employment.selfEmployed, encrypt),
         monthlyNetIncome: borrower.income.monthlyNetIncome,
         hasAdditionalIncome: borrower.income.additionalIncomes.length > 0,
         additionalIncomeType: firstAdditionalIncome?.type ?? null,
@@ -226,7 +242,8 @@ function personalMutationRecord(input: ClientPersonalInput, encryption: Encrypti
       identityNumberEncrypted: encrypt(borrower.identityNumber),
       identityNumberHash: createHash("sha256").update(borrower.identityNumber.replace(/\D/g, "")).digest("hex"),
       birthDateEncrypted: encrypt(borrower.dateOfBirth), phoneEncrypted: encrypt(borrower.phone),
-      emailEncrypted: encrypt(borrower.email), addressEncrypted: encrypt(borrower.address),
+      emailEncrypted: encrypt(borrower.email), addressEncrypted: encrypt(`${borrower.streetAddress}, ${borrower.city}`),
+      cityEncrypted: encrypt(borrower.city), streetAddressEncrypted: encrypt(borrower.streetAddress),
       maritalStatus: borrower.maritalStatus, numberOfChildren: borrower.children.numberOfChildren,
       childrenAges: borrower.children.childrenAges
     }))
@@ -240,6 +257,7 @@ function incomeMutationRecord(input: ClientIncomeInput, encryption: EncryptionSe
       id: borrower.id, employmentType: borrower.employment.employmentType,
       employerNameEncrypted: encryption.encrypt(borrower.employment.employerName), jobTitle: borrower.employment.jobTitle,
       employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
+      ...selfEmployedMutationFields(borrower.employment.selfEmployed, (value) => encryption.encrypt(value)),
       monthlyNetIncome: borrower.income.monthlyNetIncome, hasAdditionalIncome: borrower.income.additionalIncomes.length > 0,
       additionalIncomeType: firstAdditionalIncome?.type ?? null, additionalIncomeAmount: firstAdditionalIncome?.monthlyAmount ?? 0,
       additionalIncomeDescriptionEncrypted: firstAdditionalIncome?.description ? encryption.encrypt(firstAdditionalIncome.description) : null,
@@ -299,13 +317,24 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
       phone: borrower.phoneEncrypted ? encryption.decrypt(borrower.phoneEncrypted) : "",
       email: borrower.emailEncrypted ? encryption.decrypt(borrower.emailEncrypted) : "",
       address: borrower.addressEncrypted ? encryption.decrypt(borrower.addressEncrypted) : "",
+      city: borrower.cityEncrypted ? encryption.decrypt(borrower.cityEncrypted) : null,
+      streetAddress: borrower.streetAddressEncrypted ? encryption.decrypt(borrower.streetAddressEncrypted) : null,
       maritalStatus: borrower.maritalStatus ?? "SINGLE",
       children: {numberOfChildren: borrower.numberOfChildren, childrenAges: borrower.childrenAges},
       employment: {
         employmentType: borrower.employmentType,
         employerName: borrower.employerNameEncrypted ? encryption.decrypt(borrower.employerNameEncrypted) : "",
         jobTitle: borrower.jobTitle,
-        employmentSeniorityYears: borrower.employmentSeniorityYears
+        employmentSeniorityYears: borrower.employmentSeniorityYears,
+        selfEmployed: borrower.employmentType === "SELF_EMPLOYED" ? {
+          businessType: borrower.selfEmployedBusinessTypeEncrypted ? encryption.decrypt(borrower.selfEmployedBusinessTypeEncrypted) : null,
+          businessStartYear: borrower.selfEmployedBusinessStartYear ?? null,
+          lastAssessedIncome: borrower.selfEmployedLastAssessedIncome ?? null,
+          assessmentYear: borrower.selfEmployedAssessmentYear ?? null,
+          accountantIncomePreviousYear: borrower.selfEmployedAccountantIncomePreviousYear ?? null,
+          accountantIncomeCurrentYear: borrower.selfEmployedAccountantIncomeCurrentYear ?? null,
+          accountantMonthsCount: borrower.selfEmployedAccountantMonthsCount ?? null
+        } : null
       },
       income: {
         monthlyNetIncome: borrower.monthlyNetIncome,
@@ -329,6 +358,7 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
     };
   });
   const primary = publicBorrowers[0];
+  const creditIndication = await store.getCreditIndication(client.id);
   const missingRequiredDocuments = await store.listMissingRequiredDocuments(client.id);
   const dealDetailsUpdatedBy = client.dealDetailsUpdatedByUserId ? await store.getUserDisplayName(client.dealDetailsUpdatedByUserId) : null;
   const totalMonthlyIncome = publicBorrowers.reduce((sum, borrower) => sum + borrower.income.monthlyNetIncome + borrower.income.additionalIncomes.reduce((incomeSum, income) => incomeSum + income.monthlyAmount, 0), 0);
@@ -363,6 +393,7 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
     household: {numberOfChildren: client.householdChildrenCount, childrenAges: client.householdChildrenAges},
     borrowers: publicBorrowers,
     householdLiabilities,
+    creditIndication,
     maritalStatus: primary?.maritalStatus ?? client.maritalStatus,
     numberOfChildren: primary?.children.numberOfChildren ?? client.numberOfChildren,
     childrenAges: primary?.children.childrenAges ?? client.childrenAges,
@@ -386,7 +417,6 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
     requestedAmount: details?.requestedAmount ?? 0,
     financingPercentage: details?.financingPercentage ?? 0,
     latestSubmissionStatus: details?.latestSubmissionStatus ?? null,
-    offerCount: details?.offerCount ?? 0,
     totalMonthlyIncome,
     totalMonthlyPayments,
     totalLiabilityBalance,
@@ -681,6 +711,15 @@ export function createApp(services: AppServices) {
     response.json(await publicClient(client, services.store, services.encryption));
   }));
 
+  app.patch("/api/clients/:id/credit-indication", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input: CreditIndicationInput = creditIndicationInputSchema.parse(request.body);
+    await services.store.upsertCreditIndication(request.authorizedClientId!, input);
+    await services.store.addAudit(request.user!.id, "CLIENT_CREDIT_INDICATION_UPDATED", "client", request.authorizedClientId!, {section: "credit-indication"}, request.requestId);
+    const client = await services.store.getClient(request.authorizedClientId!);
+    if (!client) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
   app.patch("/api/clients/:id/property", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientPropertyInputSchema.parse(request.body);
     const client = await services.store.updateClientProperty(request.authorizedClientId!, propertyMutationRecord(input, services.encryption));
@@ -939,37 +978,10 @@ export function createApp(services: AppServices) {
     response.type(object.contentType).send(object.body);
   }));
 
-  app.post("/api/lender/submissions/:id/offers", ...authenticated, auth.requireLenderSubmissionAccess, rateLimit(services.limiter, "offer", 20, 60), asyncRoute(async (request, response) => {
-    const input = z.object({amount: strictNumber().pipe(z.number().nonnegative()), interestRate: strictNumber().pipe(z.number().nonnegative().max(100)), termMonths: strictInteger().pipe(z.number().min(12).max(600)), monthlyPayment: strictNumber().pipe(z.number().nonnegative()).optional(), conditions: z.string().max(4000).optional(), expiresAt: z.coerce.date().optional()}).parse(request.body);
-    const offer = await services.store.createOffer({submissionId: request.authorizedSubmission!.id, userId: request.user!.id, ...input});
-    await services.store.notifyAdvisor(request.authorizedSubmission!.clientId, "OFFER", "הצעת מימון חדשה", `הצעה ${offer.id} התקבלה`);
-    await services.store.addAudit(request.user!.id, "OFFER_CREATED", "offer", offer.id, {submissionId: request.authorizedSubmission!.id}, request.requestId);
-    response.status(201).json(offer);
-  }));
-
-  const authorizeOffer = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
-    const submissionId = await services.store.getOfferSubmissionId(Number(request.params.id));
-    if (!submissionId) { response.status(404).json({error: "OFFER_NOT_FOUND"}); return; }
-    request.params.submissionId = String(submissionId);
-    await auth.requireLenderSubmissionAccess(request, response, next);
-  };
-  app.patch("/api/lender/offers/:id", ...authenticated, authorizeOffer, asyncRoute(async (request, response) => {
-    const input = z.object({amount: strictNumber().pipe(z.number().nonnegative()).optional(), interestRate: strictNumber().pipe(z.number().nonnegative().max(100)).optional(), termMonths: strictInteger().pipe(z.number().min(12).max(600)).optional(), conditions: z.string().max(4000).optional()}).parse(request.body);
-    const updated = await services.store.updateOffer(Number(request.params.id), request.authorizedSubmission!.id, input);
-    if (!updated) { response.status(404).json({error: "OFFER_NOT_FOUND"}); return; }
-    await services.store.addAudit(request.user!.id, "OFFER_UPDATED", "offer", Number(request.params.id), null, request.requestId);
-    response.json({status: "UPDATED"});
-  }));
-  app.post("/api/lender/offers/:id/withdraw", ...authenticated, authorizeOffer, asyncRoute(async (request, response) => {
-    const withdrawn = await services.store.withdrawOffer(Number(request.params.id), request.authorizedSubmission!.id);
-    if (!withdrawn) { response.status(404).json({error: "OFFER_NOT_FOUND"}); return; }
-    await services.store.addAudit(request.user!.id, "OFFER_WITHDRAWN", "offer", Number(request.params.id), null, request.requestId);
-    response.json({status: "WITHDRAWN"});
-  }));
-
-  app.get("/api/clients/:clientId/offers", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
-    response.json(await services.store.listClientOffers(request.authorizedClientId!));
-  }));
+  // Lender financing-offer creation was removed end-to-end (product decision:
+  // SynCash is not a system for submitting loan offers; a company and
+  // advisor coordinate directly once the company is Interested). See
+  // docs/DECISIONS.md.
 
   app.get("/api/admin/settings/email", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
     const configurations = await services.store.listEmailConfigurations();
@@ -1223,10 +1235,10 @@ export function createApp(services: AppServices) {
       response.json(await delivery.preflight(request.authorizedClientId!, advisorActor(request)));
     }));
     app.post("/api/clients/:clientId/delivery/preview", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
-      const input = z.object({companyIds: z.array(z.number().int().positive()).min(1).max(30)}).strict().parse(request.body); response.json(await delivery.preview(request.authorizedClientId!, input.companyIds, advisorActor(request)));
+      z.object({}).strict().parse(request.body ?? {}); response.json(await delivery.preview(request.authorizedClientId!, advisorActor(request)));
     }));
     app.post("/api/clients/:clientId/delivery/send", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, requireEmailDelivery, rateLimit(services.limiter, "lender-delivery-send", 10, 60), asyncRoute(async (request, response) => {
-      const input = z.object({companyIds: z.array(z.number().int().positive()).min(1).max(30), idempotencyKey: z.string().uuid(), previewConfirmation: z.string().min(40).max(4000)}).strict().parse(request.body); response.status(201).json(await delivery.send(request.authorizedClientId!, input, advisorActor(request), context(request)));
+      const input = z.object({idempotencyKey: z.string().uuid(), previewConfirmation: z.string().min(40).max(4000)}).strict().parse(request.body); response.status(201).json(await delivery.send(request.authorizedClientId!, input, advisorActor(request), context(request)));
     }));
     app.get("/api/clients/:clientId/company-responses", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.listClientResponses(request.authorizedClientId!, advisorActor(request))); }));
     app.get("/api/clients/:clientId/company-responses/:submissionId", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.getClientResponse(request.authorizedClientId!, routeParam(request, "submissionId"), advisorActor(request))); }));
@@ -1278,10 +1290,6 @@ export function createApp(services: AppServices) {
     app.get("/api/external/portal/documents", rateLimit(services.limiter, "external-portal", 120, 60), asyncRoute(async (request, response) => { response.json(await delivery.listPortalDocuments(session(request), context(request))); }));
     for (const mode of ["view", "download"]) app.get(`/api/external/portal/documents/:documentId/${mode}`, rateLimit(services.limiter, "external-portal-download", 30, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalDocument(session(request), routeParam(request, "documentId"), mode === "download", context(request)); response.type(file.contentType).setHeader("Content-Disposition", `${mode === "download" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
     app.get("/api/external/portal/download-all", rateLimit(services.limiter, "external-portal-zip", 5, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalZip(session(request), context(request)); response.type("application/zip").setHeader("Cache-Control", "no-store, max-age=0").setHeader("Pragma", "no-cache").setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
-    app.post("/api/external/portal/offers", requireExternalCsrf, rateLimit(services.limiter, "external-portal-offer", 10, 60), asyncRoute(async (request, response) => {
-      const input = z.object({idempotencyKey: z.string().uuid(), amount: strictNumber().pipe(z.number().positive()), interestRate: strictNumber().pipe(z.number().nonnegative().max(100)), termMonths: strictInteger().pipe(z.number().min(12).max(600)), monthlyPayment: strictNumber().pipe(z.number().nonnegative()).optional(), conditions: z.string().trim().max(4000).optional(), expiresAt: z.coerce.date().optional()}).strict().parse(request.body);
-      response.status(201).json(await delivery.createPortalOffer(session(request), input, context(request)));
-    }));
     app.post("/api/external/portal/logout", requireExternalCsrf, asyncRoute(async (request, response) => { await delivery.logoutPortal(session(request)); response.clearCookie(portalCookie, {path: "/api/external/portal"}); response.status(204).end(); }));
   }
 

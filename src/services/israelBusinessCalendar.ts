@@ -69,8 +69,9 @@ export class IsraelBusinessCalendarService {
     return key;
   }
 
-  calculateResponseDeadline(sentAt: Date): Date {
-    return atLocalTime(this.addIsraeliBusinessDays(sentAt, 2), 18, 0);
+  calculateResponseDeadline(sentAt: Date, businessDays = 2): Date {
+    if (!Number.isInteger(businessDays) || businessDays < 1) throw new Error("businessDays must be a positive integer");
+    return atLocalTime(this.addIsraeliBusinessDays(sentAt, businessDays), 18, 0);
   }
 
   calculateReminderSchedule(_sentAt: Date, deadline: Date): [Date, Date] {

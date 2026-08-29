@@ -6,6 +6,7 @@ import {
   auditLogs,
   borrowers,
   clients,
+  creditIndications,
   documents,
   emailConfigurations,
   emailLogs,
@@ -19,7 +20,6 @@ import {
   lenderUsers,
   lenders,
   liabilities,
-  loanOffers,
   loanRequests,
   notifications,
   properties,
@@ -41,6 +41,8 @@ export interface BorrowerMutationRecord {
   phoneEncrypted: string;
   emailEncrypted: string;
   addressEncrypted: string;
+  cityEncrypted: string;
+  streetAddressEncrypted: string;
   maritalStatus: string;
   numberOfChildren: number;
   childrenAges: number[];
@@ -49,6 +51,13 @@ export interface BorrowerMutationRecord {
   employerNameEncrypted: string;
   jobTitle: string;
   employmentSeniorityYears: number;
+  selfEmployedBusinessTypeEncrypted: string | null;
+  selfEmployedBusinessStartYear: number | null;
+  selfEmployedLastAssessedIncome: number | null;
+  selfEmployedAssessmentYear: number | null;
+  selfEmployedAccountantIncomePreviousYear: number | null;
+  selfEmployedAccountantIncomeCurrentYear: number | null;
+  selfEmployedAccountantMonthsCount: number | null;
   monthlyNetIncome: number;
   hasAdditionalIncome: boolean;
   additionalIncomeType: string | null;
@@ -76,6 +85,8 @@ export interface PersonalBorrowerMutationRecord {
   phoneEncrypted: string;
   emailEncrypted: string;
   addressEncrypted: string;
+  cityEncrypted: string;
+  streetAddressEncrypted: string;
   maritalStatus: string;
   numberOfChildren: number;
   childrenAges: number[];
@@ -98,6 +109,13 @@ export interface ClientIncomeMutationRecord {
     employerNameEncrypted: string;
     jobTitle: string;
     employmentSeniorityYears: number;
+    selfEmployedBusinessTypeEncrypted: string | null;
+    selfEmployedBusinessStartYear: number | null;
+    selfEmployedLastAssessedIncome: number | null;
+    selfEmployedAssessmentYear: number | null;
+    selfEmployedAccountantIncomePreviousYear: number | null;
+    selfEmployedAccountantIncomeCurrentYear: number | null;
+    selfEmployedAccountantMonthsCount: number | null;
     monthlyNetIncome: number;
     hasAdditionalIncome: boolean;
     additionalIncomeType: string | null;
@@ -198,6 +216,8 @@ export interface BorrowerFinancialDetails {
   phoneEncrypted: string | null;
   emailEncrypted: string | null;
   addressEncrypted: string | null;
+  cityEncrypted: string | null;
+  streetAddressEncrypted: string | null;
   maritalStatus: string | null;
   numberOfChildren: number;
   childrenAges: number[];
@@ -206,6 +226,13 @@ export interface BorrowerFinancialDetails {
   jobTitle: string;
   employmentStartDate: Date | null;
   employmentSeniorityYears: number;
+  selfEmployedBusinessTypeEncrypted: string | null;
+  selfEmployedBusinessStartYear: number | null;
+  selfEmployedLastAssessedIncome: number | null;
+  selfEmployedAssessmentYear: number | null;
+  selfEmployedAccountantIncomePreviousYear: number | null;
+  selfEmployedAccountantIncomeCurrentYear: number | null;
+  selfEmployedAccountantMonthsCount: number | null;
   monthlyNetIncome: number;
   hasAdditionalIncome: boolean;
   additionalIncomeType: string | null;
@@ -251,7 +278,17 @@ export interface ClientFinancialDetails {
   requestedAmount: number;
   financingPercentage: number;
   latestSubmissionStatus: string | null;
-  offerCount: number;
+}
+
+export interface CreditIndicationRecord {
+  bouncedChecks: boolean | null;
+  bouncedChecksCount: number | null;
+  bouncedDirectDebits: boolean | null;
+  bouncedDirectDebitsCount: number | null;
+  collectionProceedings: boolean | null;
+  bankruptcy: boolean | null;
+  liens: boolean | null;
+  mortgageArrears: boolean | null;
 }
 
 export interface DocumentRecord {
@@ -376,11 +413,8 @@ export interface AppStore extends AuthorizationDirectory {
   decideIdentityRequest(requestId: number, advisorId: number, userId: number, approvedFields: IdentityField[], approvedDocumentIds: number[], approve: boolean): Promise<boolean>;
   getRevealedData(submissionId: number): Promise<{clientId: number; approvedFields: IdentityField[]; approvedDocumentIds: number[]} | null>;
   getIdentityData(clientId: number): Promise<{firstNameEncrypted: string; lastNameEncrypted: string; phoneEncrypted: string; emailEncrypted: string; identityNumberEncrypted: string; propertyAddressEncrypted: string | null; employerNameEncrypted: string | null} | null>;
-  createOffer(values: {submissionId: number; userId: number; amount: number; interestRate: number; termMonths: number; monthlyPayment?: number; conditions?: string; expiresAt?: Date}): Promise<{id: number}>;
-  getOfferSubmissionId(id: number): Promise<number | null>;
-  updateOffer(id: number, submissionId: number, values: {amount?: number; interestRate?: number; termMonths?: number; conditions?: string}): Promise<boolean>;
-  withdrawOffer(id: number, submissionId: number): Promise<boolean>;
-  listClientOffers(clientId: number): Promise<unknown[]>;
+  getCreditIndication(clientId: number): Promise<CreditIndicationRecord | null>;
+  upsertCreditIndication(clientId: number, values: CreditIndicationRecord): Promise<CreditIndicationRecord>;
   getSettings(category: string): Promise<Array<{key: string; value: string | null; isSecret: boolean}>>;
   setSettings(category: string, values: Record<string, string>, userId: number): Promise<void>;
   listEmailConfigurations(): Promise<EmailConfigurationRecord[]>;
@@ -567,6 +601,8 @@ export class PostgresStore implements AppStore {
           phoneEncrypted: borrowerRecord.phoneEncrypted,
           emailEncrypted: borrowerRecord.emailEncrypted,
           addressEncrypted: borrowerRecord.addressEncrypted,
+          cityEncrypted: borrowerRecord.cityEncrypted,
+          streetAddressEncrypted: borrowerRecord.streetAddressEncrypted,
           maritalStatus: borrowerRecord.maritalStatus,
           numberOfChildren: borrowerRecord.numberOfChildren,
           childrenAges: borrowerRecord.childrenAges
@@ -575,6 +611,13 @@ export class PostgresStore implements AppStore {
           borrowerId: borrower.id, employmentType: borrowerRecord.employmentType,
           employerNameEncrypted: borrowerRecord.employerNameEncrypted, jobTitle: borrowerRecord.jobTitle,
           employmentSeniorityYears: borrowerRecord.employmentSeniorityYears,
+          selfEmployedBusinessTypeEncrypted: borrowerRecord.selfEmployedBusinessTypeEncrypted,
+          selfEmployedBusinessStartYear: borrowerRecord.selfEmployedBusinessStartYear,
+          selfEmployedLastAssessedIncome: borrowerRecord.selfEmployedLastAssessedIncome === null ? null : String(borrowerRecord.selfEmployedLastAssessedIncome),
+          selfEmployedAssessmentYear: borrowerRecord.selfEmployedAssessmentYear,
+          selfEmployedAccountantIncomePreviousYear: borrowerRecord.selfEmployedAccountantIncomePreviousYear === null ? null : String(borrowerRecord.selfEmployedAccountantIncomePreviousYear),
+          selfEmployedAccountantIncomeCurrentYear: borrowerRecord.selfEmployedAccountantIncomeCurrentYear === null ? null : String(borrowerRecord.selfEmployedAccountantIncomeCurrentYear),
+          selfEmployedAccountantMonthsCount: borrowerRecord.selfEmployedAccountantMonthsCount,
           monthlyNetIncome: String(borrowerRecord.monthlyNetIncome),
           hasAdditionalIncome: borrowerRecord.hasAdditionalIncome, additionalIncomeType: borrowerRecord.additionalIncomeType,
           additionalIncomeAmount: String(borrowerRecord.additionalIncomeAmount),
@@ -632,6 +675,8 @@ export class PostgresStore implements AppStore {
       phoneEncrypted: borrowers.phoneEncrypted,
       emailEncrypted: borrowers.emailEncrypted,
       addressEncrypted: borrowers.addressEncrypted,
+      cityEncrypted: borrowers.cityEncrypted,
+      streetAddressEncrypted: borrowers.streetAddressEncrypted,
       maritalStatus: borrowers.maritalStatus,
       numberOfChildren: borrowers.numberOfChildren,
       childrenAges: borrowers.childrenAges,
@@ -644,7 +689,14 @@ export class PostgresStore implements AppStore {
       additionalIncomeType: employmentRecords.additionalIncomeType,
       additionalIncomeAmount: employmentRecords.additionalIncomeAmount,
       additionalIncomeDescriptionEncrypted: employmentRecords.additionalIncomeDescriptionEncrypted,
-      employmentSeniorityYears: employmentRecords.employmentSeniorityYears
+      employmentSeniorityYears: employmentRecords.employmentSeniorityYears,
+      selfEmployedBusinessTypeEncrypted: employmentRecords.selfEmployedBusinessTypeEncrypted,
+      selfEmployedBusinessStartYear: employmentRecords.selfEmployedBusinessStartYear,
+      selfEmployedLastAssessedIncome: employmentRecords.selfEmployedLastAssessedIncome,
+      selfEmployedAssessmentYear: employmentRecords.selfEmployedAssessmentYear,
+      selfEmployedAccountantIncomePreviousYear: employmentRecords.selfEmployedAccountantIncomePreviousYear,
+      selfEmployedAccountantIncomeCurrentYear: employmentRecords.selfEmployedAccountantIncomeCurrentYear,
+      selfEmployedAccountantMonthsCount: employmentRecords.selfEmployedAccountantMonthsCount
     }).from(borrowers).innerJoin(employmentRecords, eq(borrowers.id, employmentRecords.borrowerId))
       .where(eq(borrowers.clientId, id)).orderBy(asc(borrowers.borrowerOrder));
     const [property] = await db.select().from(properties).where(eq(properties.clientId, id)).limit(1);
@@ -663,9 +715,6 @@ export class PostgresStore implements AppStore {
     }).from(incomeSources).where(inArray(incomeSources.borrowerId, borrowerRows.map((row) => row.id))).orderBy(asc(incomeSources.borrowerId), asc(incomeSources.sortOrder)) : [];
     const [latestSubmission] = await db.select({status: lenderSubmissions.status}).from(lenderSubmissions)
       .where(eq(lenderSubmissions.clientId, id)).orderBy(desc(lenderSubmissions.updatedAt)).limit(1);
-    const [offersCount] = await db.select({value: sql<number>`count(*)::int`}).from(loanOffers)
-      .innerJoin(lenderSubmissions, eq(lenderSubmissions.id, loanOffers.submissionId))
-      .where(eq(lenderSubmissions.clientId, id));
     const borrowerDetails = borrowerRows.map((borrower) => {
       const ownLiabilities = liabilityRows.filter((row) => row.scope === "BORROWER" && row.borrowerId === borrower.id);
       return {
@@ -673,6 +722,9 @@ export class PostgresStore implements AppStore {
         jobTitle: borrower.jobTitle ?? "",
         monthlyNetIncome: Number(borrower.monthlyNetIncome),
         additionalIncomeAmount: Number(borrower.additionalIncomeAmount),
+        selfEmployedLastAssessedIncome: borrower.selfEmployedLastAssessedIncome === null ? null : Number(borrower.selfEmployedLastAssessedIncome),
+        selfEmployedAccountantIncomePreviousYear: borrower.selfEmployedAccountantIncomePreviousYear === null ? null : Number(borrower.selfEmployedAccountantIncomePreviousYear),
+        selfEmployedAccountantIncomeCurrentYear: borrower.selfEmployedAccountantIncomeCurrentYear === null ? null : Number(borrower.selfEmployedAccountantIncomeCurrentYear),
         additionalIncomes: (() => {
           const normalized = incomeRows.filter((row) => row.borrowerId === borrower.id).map((row) => ({
             id: row.id, sortOrder: row.sortOrder, sourceType: row.sourceType,
@@ -721,8 +773,7 @@ export class PostgresStore implements AppStore {
       propertyValue: Number(property.estimatedValue),
       requestedAmount: Number(loan.requestedAmount),
       financingPercentage: Number(loan.loanToValue),
-      latestSubmissionStatus: latestSubmission?.status ?? null,
-      offerCount: offersCount?.value ?? 0
+      latestSubmissionStatus: latestSubmission?.status ?? null
     };
   }
 
@@ -779,6 +830,8 @@ export class PostgresStore implements AppStore {
           phoneEncrypted: borrowerRecord.phoneEncrypted,
           emailEncrypted: borrowerRecord.emailEncrypted,
           addressEncrypted: borrowerRecord.addressEncrypted,
+          cityEncrypted: borrowerRecord.cityEncrypted,
+          streetAddressEncrypted: borrowerRecord.streetAddressEncrypted,
           maritalStatus: borrowerRecord.maritalStatus,
           numberOfChildren: borrowerRecord.numberOfChildren,
           childrenAges: borrowerRecord.childrenAges,
@@ -798,6 +851,13 @@ export class PostgresStore implements AppStore {
           employerNameEncrypted: borrowerRecord.employerNameEncrypted,
           jobTitle: borrowerRecord.jobTitle,
           employmentSeniorityYears: borrowerRecord.employmentSeniorityYears,
+          selfEmployedBusinessTypeEncrypted: borrowerRecord.selfEmployedBusinessTypeEncrypted,
+          selfEmployedBusinessStartYear: borrowerRecord.selfEmployedBusinessStartYear,
+          selfEmployedLastAssessedIncome: borrowerRecord.selfEmployedLastAssessedIncome === null ? null : String(borrowerRecord.selfEmployedLastAssessedIncome),
+          selfEmployedAssessmentYear: borrowerRecord.selfEmployedAssessmentYear,
+          selfEmployedAccountantIncomePreviousYear: borrowerRecord.selfEmployedAccountantIncomePreviousYear === null ? null : String(borrowerRecord.selfEmployedAccountantIncomePreviousYear),
+          selfEmployedAccountantIncomeCurrentYear: borrowerRecord.selfEmployedAccountantIncomeCurrentYear === null ? null : String(borrowerRecord.selfEmployedAccountantIncomeCurrentYear),
+          selfEmployedAccountantMonthsCount: borrowerRecord.selfEmployedAccountantMonthsCount,
           startDate: null,
           monthlyNetIncome: String(borrowerRecord.monthlyNetIncome),
           hasAdditionalIncome: borrowerRecord.hasAdditionalIncome,
@@ -894,7 +954,7 @@ export class PostgresStore implements AppStore {
           lastNameEncrypted: borrower.lastNameEncrypted, identityNumberEncrypted: borrower.identityNumberEncrypted,
           identityNumberHash: borrower.identityNumberHash, birthDateEncrypted: borrower.birthDateEncrypted,
           birthDate: null, phoneEncrypted: borrower.phoneEncrypted, emailEncrypted: borrower.emailEncrypted,
-          addressEncrypted: borrower.addressEncrypted, maritalStatus: borrower.maritalStatus,
+          addressEncrypted: borrower.addressEncrypted, cityEncrypted: borrower.cityEncrypted, streetAddressEncrypted: borrower.streetAddressEncrypted, maritalStatus: borrower.maritalStatus,
           numberOfChildren: borrower.numberOfChildren, childrenAges: borrower.childrenAges, updatedAt: new Date()
         }).where(and(eq(borrowers.id, borrower.id), eq(borrowers.clientId, id)));
       }
@@ -913,6 +973,13 @@ export class PostgresStore implements AppStore {
         const values = {
           employmentType: borrower.employmentType, employerNameEncrypted: borrower.employerNameEncrypted,
           jobTitle: borrower.jobTitle, employmentSeniorityYears: borrower.employmentSeniorityYears,
+          selfEmployedBusinessTypeEncrypted: borrower.selfEmployedBusinessTypeEncrypted,
+          selfEmployedBusinessStartYear: borrower.selfEmployedBusinessStartYear,
+          selfEmployedLastAssessedIncome: borrower.selfEmployedLastAssessedIncome === null ? null : String(borrower.selfEmployedLastAssessedIncome),
+          selfEmployedAssessmentYear: borrower.selfEmployedAssessmentYear,
+          selfEmployedAccountantIncomePreviousYear: borrower.selfEmployedAccountantIncomePreviousYear === null ? null : String(borrower.selfEmployedAccountantIncomePreviousYear),
+          selfEmployedAccountantIncomeCurrentYear: borrower.selfEmployedAccountantIncomeCurrentYear === null ? null : String(borrower.selfEmployedAccountantIncomeCurrentYear),
+          selfEmployedAccountantMonthsCount: borrower.selfEmployedAccountantMonthsCount,
           monthlyNetIncome: String(borrower.monthlyNetIncome), hasAdditionalIncome: borrower.hasAdditionalIncome,
           additionalIncomeType: borrower.additionalIncomeType,
           additionalIncomeAmount: String(borrower.additionalIncomeAmount),
@@ -1218,44 +1285,21 @@ export class PostgresStore implements AppStore {
     };
   }
 
-  async createOffer(values: {submissionId: number; userId: number; amount: number; interestRate: number; termMonths: number; monthlyPayment?: number; conditions?: string; expiresAt?: Date}) {
-    const [row] = await db.insert(loanOffers).values({
-      submissionId: values.submissionId, lenderUserId: values.userId, amount: String(values.amount),
-      interestRate: String(values.interestRate), termMonths: values.termMonths,
-      monthlyPayment: values.monthlyPayment === undefined ? undefined : String(values.monthlyPayment),
-      conditions: values.conditions, expiresAt: values.expiresAt, status: "SUBMITTED"
-    }).returning({id: loanOffers.id});
-    await db.update(lenderSubmissions).set({status: "OFFER_RECEIVED", updatedAt: new Date()}).where(eq(lenderSubmissions.id, values.submissionId));
-    return row;
+  async getCreditIndication(clientId: number): Promise<CreditIndicationRecord | null> {
+    const [row] = await db.select().from(creditIndications).where(eq(creditIndications.clientId, clientId)).limit(1);
+    if (!row) return null;
+    return {
+      bouncedChecks: row.bouncedChecks, bouncedChecksCount: row.bouncedChecksCount,
+      bouncedDirectDebits: row.bouncedDirectDebits, bouncedDirectDebitsCount: row.bouncedDirectDebitsCount,
+      collectionProceedings: row.collectionProceedings, bankruptcy: row.bankruptcy,
+      liens: row.liens, mortgageArrears: row.mortgageArrears
+    };
   }
 
-  async getOfferSubmissionId(id: number): Promise<number | null> {
-    const [row] = await db.select({submissionId: loanOffers.submissionId}).from(loanOffers).where(eq(loanOffers.id, id)).limit(1);
-    return row?.submissionId ?? null;
-  }
-
-  async updateOffer(id: number, submissionId: number, values: {amount?: number; interestRate?: number; termMonths?: number; conditions?: string}): Promise<boolean> {
-    const [row] = await db.update(loanOffers).set({
-      amount: values.amount === undefined ? undefined : String(values.amount),
-      interestRate: values.interestRate === undefined ? undefined : String(values.interestRate),
-      termMonths: values.termMonths, conditions: values.conditions, status: "UPDATED", updatedAt: new Date()
-    }).where(and(eq(loanOffers.id, id), eq(loanOffers.submissionId, submissionId))).returning({id: loanOffers.id});
-    return Boolean(row);
-  }
-
-  async withdrawOffer(id: number, submissionId: number): Promise<boolean> {
-    const [row] = await db.update(loanOffers).set({status: "WITHDRAWN", updatedAt: new Date()})
-      .where(and(eq(loanOffers.id, id), eq(loanOffers.submissionId, submissionId))).returning({id: loanOffers.id});
-    return Boolean(row);
-  }
-
-  async listClientOffers(clientId: number): Promise<unknown[]> {
-    return db.select({
-      id: loanOffers.id, submissionId: loanOffers.submissionId, lenderName: lenders.name, amount: loanOffers.amount,
-      interestRate: loanOffers.interestRate, termMonths: loanOffers.termMonths, monthlyPayment: loanOffers.monthlyPayment,
-      conditions: loanOffers.conditions, status: loanOffers.status, expiresAt: loanOffers.expiresAt, updatedAt: loanOffers.updatedAt
-    }).from(loanOffers).innerJoin(lenderSubmissions, eq(lenderSubmissions.id, loanOffers.submissionId))
-      .innerJoin(lenders, eq(lenders.id, lenderSubmissions.lenderId)).where(eq(lenderSubmissions.clientId, clientId));
+  async upsertCreditIndication(clientId: number, values: CreditIndicationRecord): Promise<CreditIndicationRecord> {
+    await db.insert(creditIndications).values({clientId, ...values})
+      .onConflictDoUpdate({target: creditIndications.clientId, set: {...values, updatedAt: new Date()}});
+    return values;
   }
 
   async getSettings(category: string) {

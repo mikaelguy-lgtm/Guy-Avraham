@@ -15,7 +15,7 @@ export function snapshotDisplayEntries(snapshot: AnonymousSubmissionSnapshot): A
     ["סוגי תעסוקה", snapshot.employmentTypes.map(formatEmploymentType).join(", ")],
     ["סך הכנסה חודשית", formatCurrency(snapshot.totalMonthlyIncome)],
     ["מספר התחייבויות", String(snapshot.liabilityCount)],
-    ["סך יתרות התחייבויות", formatCurrency(snapshot.totalLiabilityBalance)],
+    ["סך התחייבויות", formatCurrency(snapshot.totalLiabilityBalance)],
     ["סך החזרים חודשיים", formatCurrency(snapshot.totalMonthlyPayments)],
     ["חלוקת התחייבויות", Object.entries(snapshot.liabilityTypeBreakdown).map(([type, count]) => `${formatLiabilityType(type)}: ${count}`).join(", ") || "אין התחייבויות"]
   ];

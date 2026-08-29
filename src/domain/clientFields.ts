@@ -26,7 +26,7 @@ export type DealType = typeof DEAL_TYPES[number];
 export const LIABILITY_TYPES = ["LOAN", "MORTGAGE", "ALIMONY", "RENT", "OTHER_FINANCIAL_ENTITY"] as const;
 export type LiabilityType = typeof LIABILITY_TYPES[number];
 
-export const REQUIRED_BORROWER_DOCUMENT_TYPES = ["ID_FRONT", "ID_BACK", "ID_APPENDIX"] as const;
+export const REQUIRED_BORROWER_DOCUMENT_TYPES = ["ID_FRONT", "ID_BACK", "ID_APPENDIX", "CREDIT_DATA_REPORT"] as const;
 export const REQUIRED_CLIENT_DOCUMENT_TYPES = ["PROPERTY_RIGHTS", "POWER_OF_ATTORNEY"] as const;
 export const DOCUMENT_TYPES = [...REQUIRED_BORROWER_DOCUMENT_TYPES, ...REQUIRED_CLIENT_DOCUMENT_TYPES, "OTHER"] as const;
 export type DocumentType = typeof DOCUMENT_TYPES[number];
@@ -44,3 +44,6 @@ export const BORROWER_RELATIONSHIPS = ["MARRIED", "COMMON_LAW", "FAMILY", "PARTN
 export type BorrowerRelationship = typeof BORROWER_RELATIONSHIPS[number];
 
 export const MAX_BORROWERS = 5;
+
+export const currentIsraelYear = (): number =>
+  Number(new Intl.DateTimeFormat("en-CA", {timeZone: "Asia/Jerusalem", year: "numeric"}).format(new Date()));

@@ -5,11 +5,11 @@ export const clientTabs = [
   {id: "personal", label: "פרטים אישיים"},
   {id: "income", label: "הכנסות"},
   {id: "liabilities", label: "התחייבויות"},
+  {id: "credit-indication", label: "חיווי אשראי"},
   {id: "property", label: "נכס"},
   {id: "deal-details", label: "פירוט עסקה"},
   {id: "documents", label: "מסמכים"},
-  {id: "company-responses", label: "תגובות חברות"},
-  {id: "offers", label: "הצעות"}
+  {id: "company-responses", label: "תגובות חברות"}
 ] as const;
 
 export type ClientTab = typeof clientTabs[number]["id"];
@@ -24,7 +24,7 @@ export function clientTabFromSearch(search: string): ClientTab {
 export const clientTabPath = (clientId: number | string, tab: ClientTab): string => `/advisor/clients/${clientId}?tab=${tab}`;
 
 export const editSectionForTab = (tab: ClientTab): ClientEditSection | null => {
-  if (tab === "personal" || tab === "income" || tab === "liabilities" || tab === "property" || tab === "deal-details") return tab;
+  if (tab === "personal" || tab === "income" || tab === "liabilities" || tab === "credit-indication" || tab === "property" || tab === "deal-details") return tab;
   return null;
 };
 
@@ -34,6 +34,7 @@ export const editSectionLabels: Record<ClientEditSection, string> = {
   personal: "פרטים אישיים",
   income: "הכנסות",
   liabilities: "התחייבויות",
+  "credit-indication": "חיווי אשראי",
   property: "פרטי הנכס",
   "deal-details": "פירוט עסקה"
 };

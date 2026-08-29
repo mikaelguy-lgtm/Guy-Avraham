@@ -1,7 +1,7 @@
 import { createUserWithEmailAndPassword, deleteUser, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import {requireFrontendConfig} from "../config/frontend";
-import type { AdminEmailLogRecord, AdvisorAdminRecord, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LoanOffer, MissingRequiredDocument, NotificationRecord } from "../types";
+import type { AdminEmailLogRecord, AdvisorAdminRecord, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, MissingRequiredDocument, NotificationRecord } from "../types";
 import type { AdvisorRegistrationInput } from "../domain/advisorRegistration";
 
 const API_URL = requireFrontendConfig().apiBaseUrl;
@@ -160,6 +160,7 @@ export const api = {
   updateClientPersonal: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/personal`, {method: "PATCH", body: JSON.stringify(data)}),
   updateClientIncome: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/income`, {method: "PATCH", body: JSON.stringify(data)}),
   updateClientLiabilities: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/liabilities`, {method: "PATCH", body: JSON.stringify(data)}),
+  updateClientCreditIndication: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/credit-indication`, {method: "PATCH", body: JSON.stringify(data)}),
   updateClientProperty: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/property`, {method: "PATCH", body: JSON.stringify(data)}),
   updateClientDealDetails: (id: number, data: Record<string, unknown>) => authFetch<Client>(`/api/clients/${id}/deal-details`, {method: "PATCH", body: JSON.stringify(data)}),
   deleteClient: (id: number) => authFetch<void>(`/api/clients/${id}`, {method: "DELETE"}),
@@ -177,7 +178,6 @@ export const api = {
   lenders: () => authFetch<Lender[]>("/api/lenders"),
   submissions: (clientId: number) => authFetch<ClientSubmission[]>(`/api/clients/${clientId}/submissions`),
   submit: (clientId: number, lenderIds: number[]) => authFetch<{results: Array<{lenderId: number; status: string}>}>(`/api/clients/${clientId}/submissions`, {method: "POST", body: JSON.stringify({lenderIds})}),
-  offers: (clientId: number) => authFetch<LoanOffer[]>(`/api/clients/${clientId}/offers`),
   identityRequests: () => authFetch<IdentityRequest[]>("/api/advisor/identity-requests"),
   decideIdentity: (id: number, approve: boolean, approvedFields: string[], approvedDocumentIds: number[]) => authFetch(`/api/advisor/identity-requests/${id}/${approve ? "approve" : "reject"}`, {method: "POST", body: JSON.stringify({approvedFields, approvedDocumentIds})}),
   validateInvite: (token: string) => publicFetch<{lenderName: string; requiresAuthentication: boolean}>("/api/lender/invites/validate", {method: "POST", body: JSON.stringify({token})}),
@@ -187,7 +187,6 @@ export const api = {
   lenderReply: (id: number, responseType: string, message: string) => authFetch(`/api/lender/submissions/${id}/reply`, {method: "POST", body: JSON.stringify({responseType, message})}),
   identityRequest: (id: number, reason: string, requestedFields: string[]) => authFetch(`/api/lender/submissions/${id}/identity-request`, {method: "POST", body: JSON.stringify({reason, requestedFields})}),
   revealedData: (id: number) => authFetch<{approvedFields: string[]; approvedDocumentIds: number[]; data: Record<string, string>}>(`/api/lender/submissions/${id}/revealed-data`),
-  createOffer: (id: number, offer: Record<string, unknown>) => authFetch(`/api/lender/submissions/${id}/offers`, {method: "POST", body: JSON.stringify(offer)}),
   analyze: (clientId: number, question: string) => authFetch<{answer: string}>(`/api/clients/${clientId}/analysis`, {method: "POST", body: JSON.stringify({question})}),
   smtpSettings: () => authFetch<EmailSettingsResponse>("/api/admin/settings/email"),
   emailDeliveryStatus: () => authFetch<{active: boolean}>("/api/email/status"),
@@ -206,8 +205,8 @@ export const api = {
   adminResendAdvisorVerification: (id: number) => authFetch<{success: true; verificationEmailSent: true}>(`/api/admin/advisors/${id}/resend-verification`, {method: "POST"}),
   deliveryCompanies: (clientId: number) => authFetch<DeliveryCompany[]>(`/api/advisor/financing-companies?clientId=${clientId}`),
   deliveryPreflight: (clientId: number) => authFetch<DeliveryPreflight>(`/api/clients/${clientId}/delivery/preflight`),
-  deliveryPreview: (clientId: number, companyIds: number[]) => authFetch<DeliveryPreview>(`/api/clients/${clientId}/delivery/preview`, {method: "POST", body: JSON.stringify({companyIds})}),
-  deliverySend: (clientId: number, values: {companyIds: number[]; idempotencyKey: string; previewConfirmation: string}) => authFetch<Record<string, unknown>>(`/api/clients/${clientId}/delivery/send`, {method: "POST", body: JSON.stringify(values)}),
+  deliveryPreview: (clientId: number) => authFetch<DeliveryPreview>(`/api/clients/${clientId}/delivery/preview`, {method: "POST", body: JSON.stringify({})}),
+  deliverySend: (clientId: number, values: {idempotencyKey: string; previewConfirmation: string}) => authFetch<Record<string, unknown>>(`/api/clients/${clientId}/delivery/send`, {method: "POST", body: JSON.stringify(values)}),
   companyResponses: (clientId: number) => authFetch<CompanyResponse[]>(`/api/clients/${clientId}/company-responses`),
   companyResponse: (clientId: number, publicId: string) => authFetch<CompanyResponse>(`/api/clients/${clientId}/company-responses/${encodeURIComponent(publicId)}`),
   adminFinancingCompanies: () => authFetch<FinancingCompanyAdmin[]>("/api/admin/financing-companies"),
@@ -240,7 +239,6 @@ export const api = {
   externalPortalPdf: () => externalBlob("/api/external/portal/full-pdf"),
   externalPortalDocument: (publicId: string, download = false) => externalBlob(`/api/external/portal/documents/${encodeURIComponent(publicId)}/${download ? "download" : "view"}`),
   externalPortalZip: () => externalBlob("/api/external/portal/download-all"),
-  externalPortalOffer: (values: {idempotencyKey: string; amount: number; interestRate: number; termMonths: number; monthlyPayment?: number; conditions?: string; expiresAt?: string}, csrfToken: string) => externalFetch<{id: number; status: string; createdAt: string; idempotent: boolean}>("/api/external/portal/offers", {method: "POST", body: JSON.stringify(values)}, csrfToken),
   externalPortalLogout: (csrfToken: string) => externalFetch<void>("/api/external/portal/logout", {method: "POST", body: "{}"}, csrfToken),
   testEmailLogs: (recipient: string) => authFetch<Array<{recipient: string; template: string | null; messageId: string | null; status: string; sentAt: string | null; failedAt: string | null; requestId: string | null}>>(`/api/test/email-logs?recipient=${encodeURIComponent(recipient)}`)
 };

@@ -158,3 +158,59 @@ in the database. Already implemented at two independent layers
 builder), so the requirement is satisfied for the standard UI flow. Whether
 the API layer independently enforces this against a raw/partial `PATCH` is
 still open — see `docs/TODO.md`.
+
+## Lender targeting becomes fully server-determined; the offer feature is removed (2026-08-29)
+
+**Decision**: the advisor no longer picks which lender companies receive a
+case. `send`/`preview` no longer accept a `companyIds` list at all — the
+server always targets every currently-active lender with ≥1 active contact,
+computed fresh at send time and frozen into that case version
+(`PostgresLenderDeliveryService.eligibleCompanies()`). Separately, the
+entire offer-submission feature (both the legacy `loan_offers` pipeline and
+the newer `company_portal_offers` pipeline) was removed end-to-end — UI,
+API routes, store methods, types, and the underlying tables/enum
+(migration `0015_woozy_exiles.sql`).
+
+**Why**: explicit, final product-owner decision (not a proposal) delivered
+as part of a 97-section rebuild spec. The stated intent for lender
+targeting is to stop advisors from being able to hand-pick or exclude
+specific lenders (a fairness/process-integrity concern), and to remove the
+UI/mental burden of a selection step that no longer reflects how the
+business wants submissions distributed. The offer feature was explicitly
+called out as out of scope for the current product ("offers are a separate
+authenticated endpoint" language in the old `BUSINESS_RULES.md` no longer
+applies) — existing offer rows were pilot data, and their deletion was an
+explicit, one-time exception granted by the product owner to the general
+"don't touch other production data" rule.
+
+**How to apply**: never reintroduce a company-selection UI or a
+`companyIds`/`lenderIds` request field on the delivery endpoints without a
+new explicit product decision — the current contract (server picks, count
+only, frozen at send) is intentional, not a placeholder. Do not resurrect
+an offer-creation endpoint (lender-side or external-portal-side) without
+the same kind of explicit sign-off; the portal is view/decision-only by
+design now.
+
+## "מוסווה" family wording is banned from all user-facing surfaces; the redaction mechanism is not (2026-08-29)
+
+**Decision**: every occurrence of מוסווה/מוסווית/מוסווים/מוסוות/הסוואה/להסוות
+was removed from UI, PDFs (titles, section headers, footers), emails, and
+notifications — replaced with neutral terms ("ראשוני"/"לבחינה ראשונית") or,
+for masked placeholder values, a literal `********`. The underlying
+two-tier disclosure mechanism (masked initial review → OTP → full portal)
+and its `CaseRedactionService` are unchanged; only the word was banned, not
+the privacy protection it described.
+
+**Why**: explicit product-owner instruction, framed as zero-tolerance —
+"the wording caused confusion/discomfort for lender-side reviewers" was the
+stated business reason. A dedicated regression test
+(`tests/unit/forbiddenWording.test.ts`, scanning `src/`) and a
+build-time bundle scan (`scripts/verify-production-bundle.mjs`, scanning
+the built `dist/` output) both fail on any reintroduction of these
+fragments, so this should never silently regress.
+
+**How to apply**: when adding any new masked/redacted-view copy, use
+"ראשוני" (preliminary) or describe the two-tier flow directly ("שלב
+ראשוני"/"תצוגה מלאה") — never any word from the banned family, even as an
+internal-sounding variant. Internal-only identifiers (variable/column
+names never rendered to a user) are exempt.

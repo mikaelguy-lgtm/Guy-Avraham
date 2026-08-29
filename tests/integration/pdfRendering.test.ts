@@ -8,7 +8,7 @@ const snapshot: MaskedCaseSnapshot = {
   household: {numberOfChildren: 0, childrenAges: []},
   borrowers: [{
     label: "לווה 1", age: 41, residenceCity: "תל אביב", maritalStatus: "MARRIED", numberOfChildren: 0, childrenAges: [],
-    employment: {employmentType: "SALARIED", jobTitle: "מנהלת", employmentSeniorityYears: 6, monthlyNetIncome: 20_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null},
+    employment: {employmentType: "SALARIED", jobTitle: "מנהלת", employmentSeniorityYears: 6, monthlyNetIncome: 20_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null, selfEmployed: null},
     liabilities: []
   }],
   householdLiabilities: [{scope: "HOUSEHOLD", borrowerOrder: null, type: "MORTGAGE", otherTypeDescription: null, financialInstitution: "בנק למשכנתאות", currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "התחייבות פעילה"}],
@@ -33,7 +33,7 @@ describe("Hebrew PDF rendering integration", () => {
       pages.push(content.items.map((item) => "str" in item ? item.str : "").join(" ").split("\u0000").join("").replace(/\s+/gu, " ").trim());
     }
     const text = pages.join(" ");
-    for (const expected of ["תיק מימון מוסווה לבחינה", "תקציר העסקה", "פרטים אישיים", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(text).toContain(expected);
+    for (const expected of ["תיק מימון לבחינה ראשונית", "תקציר העסקה", "פרטים אישיים", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(text).toContain(expected);
     expect(text).not.toMatch(/[�□■]/u);
     expect(text).not.toMatch(/SECOND_HAND_PURCHASE|SALARIED|MORTGAGE|APARTMENT/u);
     expect(pages.every((pageText) => pageText.replace(/SYNCASH|מידע סודי|הופק|עמוד|מתוך|\s/gu, "").length > 10)).toBe(true);

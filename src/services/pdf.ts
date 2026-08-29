@@ -3,6 +3,7 @@ import {createRequire} from "node:module";
 import type {FullCaseBorrowerSnapshot, FullCaseLiabilitySnapshot, FullCaseSnapshot, MaskedCaseSnapshot, VersionDocumentSnapshot} from "../domain/lenderDelivery.js";
 import type {AnonymousSubmissionSnapshot} from "../domain/types.js";
 import {requiredDocumentLabel} from "../domain/requiredDocuments.js";
+import {REQUIRED_BORROWER_DOCUMENT_TYPES, REQUIRED_CLIENT_DOCUMENT_TYPES} from "../domain/clientFields.js";
 import {
   formatAdditionalIncomeType, formatBorrowerRelationship, formatClientStatus, formatCurrency, formatDate, formatDealType,
   formatDocumentType, formatEmploymentType, formatLiabilityType, formatMaritalStatus, formatPropertyType
@@ -234,7 +235,7 @@ function borrowerIncomeFields(borrower: FullCaseBorrowerSnapshot | MaskedCaseSna
   const additionalIncomes = borrower.employment.additionalIncomes ?? (borrower.employment.hasAdditionalIncome && borrower.employment.additionalIncomeType ? [{type: borrower.employment.additionalIncomeType, monthlyAmount: borrower.employment.additionalIncomeAmount, description: borrower.employment.additionalIncomeDescription}] : []);
   return [
     {label: "סוג תעסוקה", value: formatEmploymentType(borrower.employment.employmentType)},
-    {label: "מקום עבודה", value: masked ? "פרט מוסווה" : (borrower as FullCaseBorrowerSnapshot).employment.employerName},
+    {label: "מקום עבודה", value: masked ? "********" : (borrower as FullCaseBorrowerSnapshot).employment.employerName},
     {label: "תפקיד", value: borrower.employment.jobTitle},
     {label: "ותק", value: `${borrower.employment.employmentSeniorityYears} שנים`},
     {label: "הכנסה חודשית נטו", value: formatCurrency(borrower.employment.monthlyNetIncome)},
@@ -250,11 +251,11 @@ function borrowerIncomeFields(borrower: FullCaseBorrowerSnapshot | MaskedCaseSna
 function documentStatusFields(documents: VersionDocumentSnapshot[], borrowers: Array<{order: number}>): PdfField[] {
   const fields: PdfField[] = [];
   for (const borrower of borrowers) {
-    for (const type of ["ID_FRONT", "ID_BACK", "ID_APPENDIX"]) {
+    for (const type of REQUIRED_BORROWER_DOCUMENT_TYPES) {
       fields.push({label: requiredDocumentLabel(type, borrower.order), value: documents.some((item) => item.borrowerOrder === borrower.order && item.documentType === type) ? "קיים בתיק" : "חסר"});
     }
   }
-  for (const type of ["PROPERTY_RIGHTS", "POWER_OF_ATTORNEY"]) fields.push({label: requiredDocumentLabel(type), value: documents.some((item) => item.borrowerId === null && item.documentType === type) ? "קיים בתיק" : "חסר"});
+  for (const type of REQUIRED_CLIENT_DOCUMENT_TYPES) fields.push({label: requiredDocumentLabel(type), value: documents.some((item) => item.borrowerId === null && item.documentType === type) ? "קיים בתיק" : "חסר"});
   return fields;
 }
 
@@ -294,7 +295,7 @@ function caseSubtitle(publicCaseNumber: string, versionNumber: number, createdAt
 }
 
 export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata: {versionNumber: number; createdAt: Date}): Promise<Buffer> {
-  const title = "תיק מימון מוסווה לבחינה";
+  const title = "תיק מימון לבחינה ראשונית";
   const subtitle = caseSubtitle(snapshot.publicCaseNumber, metadata.versionNumber, metadata.createdAt);
   const document = createDocument(`SynCash masked case ${snapshot.publicCaseNumber}`, metadata.createdAt);
   return toBuffer(document, () => {
@@ -306,10 +307,10 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
       {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)},
       {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מטרת ההלוואה", value: formatDealType(snapshot.loanRequest.purpose)}
     ], title, subtitle);
-    sectionTitle(document, "פרטים אישיים מוסווים", title, subtitle);
+    sectionTitle(document, "פרטים אישיים", title, subtitle);
     for (const borrower of snapshot.borrowers) {
       fieldRows(document, [
-        {label: "לווה", value: borrower.label}, {label: "שם", value: "פרט מוסווה"},
+        {label: "לווה", value: borrower.label}, {label: "שם", value: "********"},
         {label: "גיל", value: borrower.age}, {label: "עיר מגורים", value: borrower.residenceCity},
         {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)}, {label: "מספר ילדים", value: borrower.numberOfChildren}
       ], title, subtitle);
@@ -332,10 +333,10 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
     paragraph(document, snapshot.documentStatus, title, subtitle);
     sectionTitle(document, "סיכום פיננסי", title, subtitle);
     fieldRows(document, [
-      {label: "סך הכנסה חודשית", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך יתרות התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
+      {label: "סך הכנסה חודשית", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
       {label: "סך החזרים חודשיים", value: formatCurrency(snapshot.totals.monthlyPayments)}, {label: "מספר לווים", value: snapshot.numberOfBorrowers}
     ], title, subtitle);
-    paragraph(document, "מסמך זה מוסווה ומיועד לבחינה ראשונית בלבד. שמות הלווים, פרטי הזיהוי, מקום העבודה ופרטי היועץ אינם נכללים בו.", title, subtitle, "notice");
+    paragraph(document, "מסמך זה מיועד לבחינה ראשונית בלבד. פרטים מזהים מסוימים אינם מוצגים בשלב זה.", title, subtitle, "notice");
     finish(document, metadata.createdAt);
   });
 }

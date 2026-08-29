@@ -9,7 +9,7 @@ export class CaseRedactionService {
     const exactValues = new Set<string>();
     const categories = new Set<string>();
     for (const borrower of source.borrowers) {
-      [borrower.firstName, borrower.lastName, `${borrower.firstName} ${borrower.lastName}`, borrower.identityNumber, borrower.phone, borrower.email, borrower.address, borrower.employment.employerName]
+      [borrower.firstName, borrower.lastName, `${borrower.firstName} ${borrower.lastName}`, borrower.identityNumber, borrower.phone, borrower.email, borrower.address, borrower.city, borrower.streetAddress, borrower.employment.employerName]
         .map((value) => value.trim()).filter((value) => value.length >= 2).forEach((value) => exactValues.add(value));
     }
     if (source.property.address) exactValues.add(source.property.address.trim());
@@ -20,7 +20,7 @@ export class CaseRedactionService {
       let value = input;
       for (const exact of [...exactValues].sort((left, right) => right.length - left.length)) {
         const pattern = new RegExp(escapePattern(exact), "giu");
-        value = value.replace(pattern, () => { replacementCount += 1; categories.add("KNOWN_PII"); return "[פרט מוסווה]"; });
+        value = value.replace(pattern, () => { replacementCount += 1; categories.add("KNOWN_PII"); return "********"; });
       }
       const patterns: Array<[RegExp, string]> = [
         [/\b\d{9}\b/gu, "IDENTITY_NUMBER"],
@@ -28,7 +28,7 @@ export class CaseRedactionService {
         [/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, "EMAIL"],
         [/https?:\/\/[^\s]+/giu, "URL"]
       ];
-      for (const [pattern, category] of patterns) value = value.replace(pattern, () => { replacementCount += 1; categories.add(category); return "[פרט מוסווה]"; });
+      for (const [pattern, category] of patterns) value = value.replace(pattern, () => { replacementCount += 1; categories.add(category); return "********"; });
       return value;
     };
 
@@ -56,7 +56,8 @@ export class CaseRedactionService {
           additionalIncomeType: borrower.employment.additionalIncomeType,
           additionalIncomeAmount: borrower.employment.additionalIncomeAmount,
           additionalIncomeDescription: sanitize(borrower.employment.additionalIncomeDescription),
-          additionalIncomes: (borrower.employment.additionalIncomes ?? []).map((income) => ({...income, description: sanitize(income.description)}))
+          additionalIncomes: (borrower.employment.additionalIncomes ?? []).map((income) => ({...income, description: sanitize(income.description)})),
+          selfEmployed: borrower.employment.selfEmployed ? {...borrower.employment.selfEmployed, businessType: sanitize(borrower.employment.selfEmployed.businessType)} : null
         },
         liabilities: borrower.liabilities.map(redactLiability)
       })),

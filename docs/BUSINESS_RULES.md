@@ -15,7 +15,7 @@ is ahead of both GitHub and the last known Production release — see
 - `ADMIN`: general business administration; no SMTP secret, DB, encryption,
   or sensitive audit access.
 - `ADVISOR`: only their own assigned clients, documents, submissions,
-  disclosure decisions, offers. Enforced server-side via
+  disclosure decisions. Enforced server-side via
   `requireAdvisorClientAccess` (`src/middleware/auth.ts:94-108`).
 - `LENDER_ADMIN` / `LENDER_UNDERWRITER`: only submissions belonging to their
   lender company, via `requireLenderSubmissionAccess`
@@ -28,8 +28,9 @@ server-side before data is loaded or mutated.
 
 1. Manager creates an inactive lender company, adds active contacts, then
    activates it.
-2. Advisor selects companies; server verifies advisor ownership, deal
-   details, loan purpose, and every required document.
+2. Advisor never selects companies (see 2026-08-29 update below). Server
+   verifies advisor ownership, deal details, loan purpose, and every
+   required document.
 3. Server builds a masked preview and a short-lived signed preview.
 4. On approval, one transaction creates a delivery batch and an immutable
    case version; PDFs/documents are copied to a private, immutable path.
@@ -89,9 +90,8 @@ session already exists for that grant.
   by ownership checks, not just URL structure).
 - Extension or cancellation is admin-only; cancellation also kills existing
   sessions.
-- No offer form or gradual identity-disclosure mechanism exists in the
-  portal itself in this pass — offers are a separate authenticated endpoint
-  (`POST /api/external/portal/offers`).
+- No offer form or offer-submission endpoint exists anywhere in the product
+  as of 2026-08-29 (see update below) — the portal is view/decision-only.
 
 ## Worker
 
@@ -146,10 +146,11 @@ Enforced independently at two layers so a crafted API request cannot bypass
 it:
 
 - **Server (canonical)**: `canonicalizeMarriedBorrowers`
-  (`src/domain/clientValidation.ts:26-40`), run as a Zod `preprocess` before
+  (`src/domain/clientValidation.ts`), run as a Zod `preprocess` before
   both the create and personal-update schemas. Forces every borrower's
-  marital status to `MARRIED` and every non-primary borrower's address to
-  the primary borrower's address.
+  marital status to `MARRIED` and every non-primary borrower's `city` and
+  `streetAddress` to the primary borrower's values (address is a split
+  city/street pair as of 2026-08-29, see update below).
 - **Client**: `applyBorrowerRelationship` (`src/utils/clientForm.ts:92-123`)
   mirrors this in the form state, and stashes the previous per-borrower
   values so they can be restored if the relationship changes away from
@@ -187,3 +188,64 @@ on GitHub or in Production yet. The 2026-08-29 live production audit
 (`docs/PRODUCTION_HANDOFF.md` section 4) checked infrastructure state only
 and surfaced no new business-rule findings beyond the liabilities
 correction above.
+
+## 2026-08-29 Product rebuild (branch `codex-syncash-production-rebuild`)
+
+Uncommitted-at-time-of-writing, then committed on this branch. Not deployed
+to Production. Key rule changes:
+
+- **Lender targeting**: the advisor no longer selects companies. `send`/
+  `preview` accept no `companyIds` body — the server computes
+  `eligibleCompanies()` fresh at send time (every active lender with ≥1
+  active contact) and freezes that list into the case version. The advisor
+  only ever sees a count (`eligibleCompanyCount`), never names, before a
+  company responds.
+- **Configurable response deadline**: `system_settings` key
+  `response_deadline_business_days` (default 2, integer ≥1) replaces the
+  hardcoded 2-business-day constant. `company_submissions.response_business_days`
+  snapshots the value used at send time — changing the setting later never
+  retroactively changes an existing submission's deadline.
+- **Credit indication**: new `credit_indications` table (one row per
+  client), covering bounced checks/direct debits (with counts),
+  collections, bankruptcy, liens, and mortgage arrears for the last 3 years.
+  Included in the full lender portal and full PDF only after a company is
+  Interested — never in the masked/initial view.
+- **Required document**: `CREDIT_DATA_REPORT` ("דוח ריכוז נתוני אשראי") is
+  now a required per-borrower document, wired through the same
+  `REQUIRED_BORROWER_DOCUMENT_TYPES` constant used everywhere else
+  (`src/domain/clientFields.ts`) — completeness checks, the upload UI, the
+  delivery preflight blockers, and the PDF document-status section all
+  derive from that one array.
+- **Borrower address**: split into `city` * and `streetAddress` * (both
+  required for new records). Legacy records with only the old combined
+  `address` field remain valid; the advisor completes city/street on next
+  edit. The full lender portal and PDF show both fields separately.
+- **Self-employed income model**: `employmentType === "SELF_EMPLOYED"`
+  replaces `employerName`/`jobTitle`/`employmentSeniorityYears` with
+  business type, business start year, last assessed income, assessment
+  year, and two accountant-confirmed income figures (previous/current year,
+  labels computed from the real Asia/Jerusalem current year, never
+  hardcoded) plus a months-count. Canonically enforced server-side
+  (`clientValidation.ts`'s `employmentSchema` transform nulls the
+  irrelevant fields regardless of what the client sends).
+- **Offer feature removed entirely**: both the legacy pipeline
+  (`loan_offers` + the `LenderPortal.tsx` offer button) and the newer
+  `company_portal_offers` + `PortalOfferForm` pipeline. No offer UI, API
+  route, store method, or type remains; the corresponding tables and enum
+  were dropped in migration `0015_woozy_exiles.sql`. Existing offer rows
+  were pilot data and were dropped with them (explicit product-owner
+  exception to the "don't touch other production data" rule — **not yet
+  applied to Production**, pending separate deploy approval).
+- **"מוסווה" wording removed everywhere user-facing.** The two-tier
+  masked/full disclosure *mechanism* is unchanged — only the word itself
+  was replaced (typically with "ראשוני"/"לבחינה ראשונית", and "********"
+  for masked placeholder values). A regression test
+  (`tests/unit/forbiddenWording.test.ts`) scans all of `src/` for the
+  banned fragments, and `scripts/verify-production-bundle.mjs` scans the
+  built frontend bundle for the same fragments — both fail the run if any
+  survive.
+- **Password policy**: `passwordSchema` (`src/domain/advisorRegistration.ts`)
+  reduced to a minimum-8-characters check only; the uppercase/lowercase/
+  digit/special-character/no-space rules were removed. This is our own
+  application-layer Zod schema — no Firebase Console password policy
+  configuration was found in this repo, and none was touched.

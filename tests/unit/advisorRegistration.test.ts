@@ -20,11 +20,12 @@ describe("advisor self-registration validation", () => {
     expect(advisorRegistrationFormSchema.safeParse({...valid, phone: "123", businessName: "א"}).success).toBe(false);
   });
 
-  it("requires a strong matching password", () => {
+  it("requires only a minimum length and matching confirmation, with no forced complexity", () => {
+    expect(advisorRegistrationFormSchema.safeParse({...valid, password: "short1", confirmPassword: "short1"}).success).toBe(false);
     expect(advisorRegistrationFormSchema.safeParse({...valid, password: "weak", confirmPassword: "different"}).success).toBe(false);
-    expect(advisorRegistrationFormSchema.safeParse({...valid, password: "Strong Pass1!", confirmPassword: "Strong Pass1!"}).success).toBe(false);
+    expect(advisorRegistrationFormSchema.safeParse({...valid, password: "abcd1234", confirmPassword: "abcd1234"}).success).toBe(true);
     expect(passwordRequirements(valid.password, valid.confirmPassword).every((requirement) => requirement.met)).toBe(true);
-    expect(passwordStrength(valid.password, valid.confirmPassword)).toEqual({score: 7, label: "חזקה מאוד"});
+    expect(passwordStrength(valid.password, valid.confirmPassword)).toEqual({score: 2, label: "חזקה"});
   });
 
   it("does not accept role or status from the browser", () => {

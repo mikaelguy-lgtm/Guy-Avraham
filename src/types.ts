@@ -61,9 +61,18 @@ export interface ClientBorrower {
   phone: string;
   email: string;
   address: string;
+  city: string | null;
+  streetAddress: string | null;
   maritalStatus: string;
   children: {numberOfChildren: number; childrenAges: number[]};
-  employment: {employmentType: string; employerName: string; jobTitle: string; employmentSeniorityYears: number};
+  employment: {
+    employmentType: string; employerName: string; jobTitle: string; employmentSeniorityYears: number;
+    selfEmployed: {
+      businessType: string | null; businessStartYear: number | null; lastAssessedIncome: number | null;
+      assessmentYear: number | null; accountantIncomePreviousYear: number | null; accountantIncomeCurrentYear: number | null;
+      accountantMonthsCount: number | null;
+    } | null;
+  };
   income: {monthlyNetIncome: number; hasAdditionalIncome: boolean; additionalIncomeType: string | null; additionalIncomeAmount: number; additionalIncomeDescription: string | null; additionalIncomes: ClientAdditionalIncome[]};
   liabilities: ClientLiability[];
 }
@@ -95,6 +104,19 @@ export interface MissingRequiredDocument {
   label: string;
 }
 
+export interface CreditIndication {
+  bouncedChecks: boolean | null;
+  bouncedChecksCount: number | null;
+  bouncedDirectDebits: boolean | null;
+  bouncedDirectDebitsCount: number | null;
+  collectionProceedings: boolean | null;
+  bankruptcy: boolean | null;
+  liens: boolean | null;
+  mortgageArrears: boolean | null;
+}
+
+export type ExternalCreditIndication = CreditIndication;
+
 export interface Client {
   id: number;
   publicCaseNumber: string;
@@ -120,6 +142,7 @@ export interface Client {
   household: {numberOfChildren: number; childrenAges: number[]};
   borrowers: ClientBorrower[];
   householdLiabilities: ClientLiability[];
+  creditIndication: CreditIndication | null;
   employmentType: string;
   employerName: string;
   jobTitle: string;
@@ -138,7 +161,6 @@ export interface Client {
   requestedAmount: number;
   financingPercentage: number;
   latestSubmissionStatus: string | null;
-  offerCount: number;
   totalMonthlyIncome: number;
   totalMonthlyPayments: number;
   totalLiabilityBalance: number;
@@ -182,20 +204,6 @@ export interface ClientSubmission {
   updatedAt: string;
 }
 
-export interface LoanOffer {
-  id: number;
-  submissionId: number;
-  lenderName: string;
-  amount: string;
-  interestRate: string;
-  termMonths: number;
-  monthlyPayment: string | null;
-  conditions: string | null;
-  status: string;
-  expiresAt: string | null;
-  updatedAt: string;
-}
-
 export interface IdentityRequest {
   id: number;
   clientId?: number;
@@ -219,12 +227,7 @@ export interface NotificationRecord {
 
 export interface DeliveryCompany {
   id: number;
-  name: string;
-  logoUrl: string | null;
-  activityAreas: string[];
   activeContactCount: number;
-  lastSentAt: string | null;
-  alreadySentCurrentVersion: boolean;
 }
 
 export interface DeliveryPreview {
@@ -234,9 +237,7 @@ export interface DeliveryPreview {
   pdfFontFingerprint: string;
   pdfGeneratedAt: string;
   pdfContentHash: string;
-  companies: DeliveryCompany[];
-  selectedCompanyCount: number;
-  selectedContactCount: number;
+  eligibleCompanyCount: number;
   responseDeadlineAt: string;
   previewConfirmation: string;
 }

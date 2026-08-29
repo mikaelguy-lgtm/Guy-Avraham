@@ -7,6 +7,16 @@ export interface BusinessCalendarException {
   source: string;
 }
 
+export interface FullCaseSelfEmployedSnapshot {
+  businessType: string | null;
+  businessStartYear: number | null;
+  lastAssessedIncome: number | null;
+  assessmentYear: number | null;
+  accountantIncomePreviousYear: number | null;
+  accountantIncomeCurrentYear: number | null;
+  accountantMonthsCount: number | null;
+}
+
 export interface FullCaseBorrowerSnapshot {
   order: number;
   firstName: string;
@@ -17,6 +27,8 @@ export interface FullCaseBorrowerSnapshot {
   phone: string;
   email: string;
   address: string;
+  city: string;
+  streetAddress: string;
   residenceCity: string;
   maritalStatus: string;
   numberOfChildren: number;
@@ -32,8 +44,20 @@ export interface FullCaseBorrowerSnapshot {
     additionalIncomeAmount: number;
     additionalIncomeDescription: string | null;
     additionalIncomes?: Array<{type: string; monthlyAmount: number; description: string | null}>;
+    selfEmployed: FullCaseSelfEmployedSnapshot | null;
   };
   liabilities: FullCaseLiabilitySnapshot[];
+}
+
+export interface CreditIndicationSnapshot {
+  bouncedChecks: boolean | null;
+  bouncedChecksCount: number | null;
+  bouncedDirectDebits: boolean | null;
+  bouncedDirectDebitsCount: number | null;
+  collectionProceedings: boolean | null;
+  bankruptcy: boolean | null;
+  liens: boolean | null;
+  mortgageArrears: boolean | null;
 }
 
 export interface FullCaseLiabilitySnapshot {
@@ -78,6 +102,7 @@ export interface FullCaseSnapshot {
   totals: {monthlyIncome: number; liabilityBalance: number; monthlyPayments: number};
   advisor: {fullName: string; businessName: string; phone: string; email: string; website: string | null};
   documents: VersionDocumentSnapshot[];
+  creditIndication: CreditIndicationSnapshot | null;
 }
 
 export interface MaskedCaseSnapshot {
@@ -113,12 +138,7 @@ export interface RedactionReport {
 
 export interface DeliveryCompanySummary {
   id: number;
-  name: string;
-  logoUrl: string | null;
-  activityAreas: string[];
   activeContactCount: number;
-  lastSentAt: string | null;
-  alreadySentCurrentVersion: boolean;
 }
 
 export interface DeliveryPreview {
@@ -128,9 +148,7 @@ export interface DeliveryPreview {
   pdfFontFingerprint: string;
   pdfGeneratedAt: string;
   pdfContentHash: string;
-  companies: DeliveryCompanySummary[];
-  selectedCompanyCount: number;
-  selectedContactCount: number;
+  eligibleCompanyCount: number;
   responseDeadlineAt: string;
   previewConfirmation: string;
 }

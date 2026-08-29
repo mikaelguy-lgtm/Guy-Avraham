@@ -80,8 +80,8 @@ export default function NewClientWizard({onCreated}: {onCreated?: (client: Clien
         borrower.additionalIncomeDescription = "";
       } else borrower[key] = value;
       borrowers[index] = borrower;
-      if (current.borrowerRelationship === "MARRIED" && index === 0 && key === "address") {
-        for (let borrowerIndex = 1; borrowerIndex < borrowers.length; borrowerIndex += 1) borrowers[borrowerIndex] = {...borrowers[borrowerIndex], address: String(value)};
+      if (current.borrowerRelationship === "MARRIED" && index === 0 && (key === "city" || key === "streetAddress")) {
+        for (let borrowerIndex = 1; borrowerIndex < borrowers.length; borrowerIndex += 1) borrowers[borrowerIndex] = {...borrowers[borrowerIndex], [key]: String(value)};
       }
       return {...current, borrowers};
     });

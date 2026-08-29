@@ -111,6 +111,7 @@ const labels: Record<string, string> = {
   ID_FRONT: "תעודת זהות — צד קדמי",
   ID_BACK: "תעודת זהות — צד אחורי",
   ID_APPENDIX: "ספח תעודת זהות",
+  CREDIT_DATA_REPORT: "דוח ריכוז נתוני אשראי",
   PROPERTY_RIGHTS: "נסח טאבו או אישור זכויות",
   POWER_OF_ATTORNEY: "כתב הסמכה",
   SUBMITTED_OFFER: "הוגשה",
@@ -121,7 +122,7 @@ const labels: Record<string, string> = {
 
 const deliveryEventLabels: Record<string, string> = {
   SUBMISSION_CREATED: "נוצרה שליחה", EMAIL_QUEUED: "הודעה הוכנסה לתור", EMAIL_SENT: "הודעה נשלחה לשרת הדואר", EMAIL_FAILED: "שליחת הודעה נכשלה",
-  REVIEW_LINK_OPENED: "קישור הבדיקה נפתח", MASKED_PDF_VIEWED: "נצפה PDF מוסווה", MASKED_PDF_DOWNLOADED: "הורד PDF מוסווה", REMINDER_SENT: "נשלחה תזכורת",
+  REVIEW_LINK_OPENED: "קישור הבדיקה נפתח", MASKED_PDF_VIEWED: "נצפה PDF ראשוני", MASKED_PDF_DOWNLOADED: "הורד PDF ראשוני", REMINDER_SENT: "נשלחה תזכורת",
   INTEREST_DECISION_STARTED: "החל תהליך בחירת מעוניינים", OTP_SENT: "נשלח קוד חד־פעמי", OTP_FAILED: "אימות הקוד נכשל", OTP_VERIFIED: "הקוד אומת",
   COMPANY_INTERESTED: "החברה מעוניינת", COMPANY_NOT_INTERESTED: "החברה אינה מעוניינת", COMPANY_RESPONSE_EXPIRED: "מועד התגובה פג", FULL_ACCESS_GRANTED: "נפתחה גישה מלאה",
   FULL_ACCESS_OPENED: "הפורטל המלא נפתח", FULL_PDF_VIEWED: "נצפה PDF מלא", FULL_PDF_DOWNLOADED: "הורד PDF מלא", DOCUMENT_VIEWED: "נצפה מסמך", DOCUMENT_DOWNLOADED: "הורד מסמך",
@@ -152,7 +153,6 @@ export const formatAdditionalIncomeType = (value: string | null) => value ? labe
 export const formatDocumentStatus = (value: string) => labels[value] ?? "בטיפול";
 export const formatDocumentType = (value: string) => labels[value] ?? "מסמך לקוח";
 export const formatSubmissionStatus = (value: string | null) => value ? labels[value] ?? "בטיפול" : "טרם נשלח";
-export const formatOfferStatus = (value: string) => value === "SUBMITTED" ? "הוגשה" : labels[value] ?? "בטיפול";
 export const formatIdentityStatus = (value: string) => labels[value] ?? "בטיפול";
 export const formatIdentityField = (value: string) => labels[value] ?? "פרט נוסף";
 

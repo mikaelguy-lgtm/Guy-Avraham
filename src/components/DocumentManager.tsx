@@ -4,9 +4,10 @@ import type { ClientBorrower, DocumentRecord } from "../types";
 import { api } from "../utils/apiClient";
 import {getDocumentDisplayName, getDocumentDownloadName} from "../utils/documentDisplay";
 import { formatDate, formatDocumentStatus, formatDocumentType, formatFileSize } from "../utils/formatters";
+import { REQUIRED_BORROWER_DOCUMENT_TYPES, REQUIRED_CLIENT_DOCUMENT_TYPES } from "../domain/clientFields";
 
-const borrowerRequirements = ["ID_FRONT", "ID_BACK", "ID_APPENDIX"] as const;
-const clientRequirements = ["PROPERTY_RIGHTS", "POWER_OF_ATTORNEY"] as const;
+const borrowerRequirements = REQUIRED_BORROWER_DOCUMENT_TYPES;
+const clientRequirements = REQUIRED_CLIENT_DOCUMENT_TYPES;
 
 export default function DocumentManager({clientId, borrowers, onUpdated}: {clientId: number; borrowers: ClientBorrower[]; onUpdated?: () => void}) {
   const [documents, setDocuments] = useState<DocumentRecord[]>([]); const [message, setMessage] = useState(""); const [busy, setBusy] = useState(false); const [preview, setPreview] = useState<{name: string; url: string} | null>(null); const [otherOpen, setOtherOpen] = useState(false); const [otherFile, setOtherFile] = useState<File | null>(null); const [customTitle, setCustomTitle] = useState(""); const [description, setDescription] = useState(""); const [otherBorrowerId, setOtherBorrowerId] = useState("");
