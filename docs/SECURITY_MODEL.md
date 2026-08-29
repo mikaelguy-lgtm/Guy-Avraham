@@ -117,6 +117,18 @@ local, ACL-restricted file outside any repository
 script at connection time — no Claude session should ever read, log, or
 print it.
 
+## Release-artifact integrity (added 2026-08-29)
+
+`deploy-production.sh` refuses to proceed if any shell script or SQL
+migration in the release directory contains a CRLF byte
+(`assert_no_crlf_in_release` in `production-common.sh`) — this is not a
+security boundary in the traditional sense, but it is a production-safety
+gate: it exists because a Windows machine's `core.autocrlf=true` setting
+once silently produced a byte-different release artifact than what was
+tested, and the fix ensures that class of drift can never reach Production
+undetected again. See `docs/PRODUCTION_HANDOFF.md` section 8 and
+`docs/DECISIONS.md` for the incident and full fix.
+
 ## Never do (applies to any future SynCash work, not just this handoff)
 
 - Never hardcode a secret or commit `.env*` (already `.gitignore`-covered;

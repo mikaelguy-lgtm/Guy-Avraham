@@ -67,6 +67,19 @@ full case. Production: `https://app.syncash.co.il`.
   Rollback) through `email_configurations` in Postgres plus a Secret Manager
   reference — never through env vars/redeploy for a provider swap.
 
+## Building a release artifact for deploy
+
+Never build a Production release with a bare `git archive` from a Windows
+machine — a local `core.autocrlf=true` setting once silently corrupted a
+migration file to CRLF before it reached the server (see
+`docs/DECISIONS.md`, 2026-08-29). Always use
+`scripts/build-release-artifact.sh <git-sha> <output.tar.gz>`, which builds
+directly from Git's object database and verifies every file against its
+Git blob hash before producing the artifact. `deploy-production.sh` also
+independently refuses to deploy a release containing a CRLF-corrupted
+`.sh`/`.sql` file, regardless of how it was built — but don't rely on that
+as your only check; build it right in the first place.
+
 ## Connecting to the production server
 
 `ssh syncash-prod` (key-based, config at `C:\Users\guyav\.ssh\config`) is

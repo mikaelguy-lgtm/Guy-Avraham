@@ -3,6 +3,38 @@
 Compiled 2026-08-28 from repo history/reports. New entries should be appended
 with a date and a short "why", not just a "what".
 
+## Release artifacts must be byte-stable regardless of local autocrlf (2026-08-29)
+
+**Decision**: `.gitattributes` explicitly forces `eol=lf` for every source/
+config/migration file type (`*.sh`, `*.sql`, `*.ts`, `*.tsx`, `*.js`, `*.mjs`,
+`*.cjs`, `*.json`, `*.yml`, `*.yaml`, `*.md`, `*.conf`, `Dockerfile*`), plus a
+`* text=auto eol=lf` fallback. `scripts/build-release-artifact.sh` builds
+every Production release directly from Git's object database and verifies
+each file's content against its Git blob hash before ever producing the
+artifact. `deploy-production.sh` independently asserts no `.sh`/`.sql` file
+in the release contains a CRLF byte, before any other deploy work.
+
+**Why**: building the `3f5685e` release on a Windows machine with global
+`core.autocrlf=true` silently converted the (previously LF-only-covered)
+migration SQL and most other tracked files to CRLF during `git archive` —
+producing an artifact that was byte-different from what had just passed the
+full test suite. It was caught only by a manual `sha256sum` comparison
+against `git show HEAD:...` before upload, not by any automated gate. Since
+`.gitattributes` only had an `eol=lf` rule for `*.sh`, nothing protected
+`.sql`/`.ts`/etc. This is now fixed at the root (Git itself normalizes on
+checkout/archive, independent of any machine's config) with two additional,
+independent layers of defense so a similar mistake can never again reach
+Production without failing loudly first. No application/business logic
+changed as part of this fix — see `docs/PRODUCTION_HANDOFF.md` section 8 for
+full detail, `docs/SECURITY_MODEL.md` for the production-safety framing, and
+`tests/unit/releaseArtifactIntegrity.test.ts` for the regression tests.
+
+One implementation note worth remembering: `git hash-object` **re-applies**
+Git's clean filter (CRLF → LF) by default, which would silently mask exactly
+the corruption this check exists to catch. The verification script must pass
+`--no-filters` to get the true on-disk byte content. Caught by testing
+against a deliberately corrupted file before trusting the check.
+
 ## PostgreSQL as sole business-data authority
 
 **Decision**: No JSON store, no localStorage-as-authority, no automatic demo

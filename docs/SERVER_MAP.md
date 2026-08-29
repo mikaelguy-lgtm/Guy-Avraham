@@ -92,6 +92,9 @@ re-scanned this pass beyond the DB/cache/storage port check above.
 
 - `syncash-backup.timer`: last ran 2026-08-29 02:26 IDT, next run
   2026-08-30 02:29 IDT.
+- `/opt/syncash/backups/pre-deploy/`: a separate backup taken automatically
+  by `deploy-production.sh` (via `backup-production.sh --pre-deploy`) at the
+  start of every deploy, in addition to the daily/weekly timer-driven ones.
 - `syncash-health.timer`: runs roughly every 5 minutes.
 - `certbot.timer`: next run 2026-08-29 16:55 IDT.
 - Restore-test resources are always prefixed `syncash-restore-test-` and are

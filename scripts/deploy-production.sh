@@ -6,6 +6,13 @@ SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=production-common.sh
 source "$SCRIPT_DIRECTORY/production-common.sh"
 RELEASE_DIRECTORY="$(release_directory)"
+
+# Refuse to deploy a release artifact whose shell scripts or SQL migrations
+# were corrupted by line-ending conversion (see docs/DECISIONS.md, 2026-08-29
+# CRLF incident). This runs before any other work regardless of how the
+# release directory was produced.
+assert_no_crlf_in_release "$RELEASE_DIRECTORY"
+
 load_production_environment
 
 RELEASE_SHA="${1:-${RELEASE_SHA:-}}"

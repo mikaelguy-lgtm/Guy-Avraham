@@ -1,10 +1,9 @@
 # SynCash — Production Handoff
 
-Compiled: 2026-08-28, from a read-only audit of the local repository and
-existing root-level reports. **Server-side items marked BLOCKED could not be
-independently verified** — SSH access from this machine to the production
-host was not working at audit time (see "Access blocker" below). Everything
-else was verified against the actual local source code, not just prior docs.
+Compiled 2026-08-28, updated through the 2026-08-29 Production deployment of
+`3f5685e` (migration `0013` applied) and the subsequent CRLF release-artifact
+hardening. Everything below reflects live-verified state as of that
+deployment unless marked otherwise.
 
 ## 1. Architecture
 
@@ -55,7 +54,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) |
+| Active release | `/opt/syncash/current` (symlink) → `3f5685e318f2d06ac2e247635e40602904d80e95` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -95,11 +94,16 @@ API and frontend are bound to `127.0.0.1` only and reached through Nginx.
   `send.syncash.co.il` subdomain, image/link redirect — all reported present
   as of the last verification (`PRODUCTION_DEPLOYMENT_REPORT.md`, 2026-08-01).
 
-## 3. Deploy / rollback / backup (process as documented; state below is live-verified)
+## 3. Deploy / rollback / backup
 
-Deploy: upload a tested commit's release to
-`/opt/syncash/releases/<git-sha>`, then run
-`./scripts/deploy-production.sh <git-sha>` as `syncash`. The script validates
+Deploy: build a release artifact for the exact tested commit with
+`scripts/build-release-artifact.sh <git-sha> <output.tar.gz>` (produces a
+byte-for-byte copy of the Git tree via `git archive` plus a `git hash-object`
+verification of every file against its Git blob — see section 8 for why this
+exists), upload it to `/opt/syncash/releases/<git-sha>`, then run
+`cd` into that directory and `./scripts/deploy-production.sh <git-sha>` as
+`syncash`. The script now also asserts no shell script or SQL migration in
+the release contains a CRLF byte before doing anything else, then validates
 config, rejects dev/emulator URLs, validates Compose, takes an encrypted
 pre-deploy backup, builds SHA-tagged images, starts infra, verifies Secret
 Manager, runs migrations exactly once, starts API/worker/frontend, health
@@ -108,112 +112,81 @@ checks, then atomically flips `current`.
 Rollback: `/opt/syncash/current/scripts/rollback-production.sh` — changes
 only the release/images, never touches PostgreSQL/Redis/MinIO/volumes.
 Migration incompatibility requires a reviewed forward fix, not an automatic
-down-migration.
+down-migration. Not required as of the `3f5685e` deploy.
 
-Backups (live-confirmed 2026-08-29): `syncash-backup.timer` — last ran
-2026-08-29 02:26 IDT, next run 2026-08-30 02:29 IDT. `/opt/syncash/backups/daily/`
-holds one GPG-encrypted archive + `.sha256` checksum per day for the last 4
-days (Aug 25–28, all tagged with the current release SHA
-`9e87b8922c109250e2bda12722a2a6efd142aa16`, ~5.7MB each, mode `600` owned by
-`syncash`). `/opt/syncash/backups/weekly/` holds 4 weekly generations
-(Aug 2, 9, 16, 23). Restore test script creates isolated
-`syncash-restore-test-*` resources and tears them down; production restore
-is intentionally manual — not exercised in this pass.
+Backups (live-confirmed 2026-08-29, before and after the `3f5685e` deploy):
+`syncash-backup.timer` runs daily; a manual `--pre-deploy` backup is also
+taken automatically by `deploy-production.sh` on every deploy.
+`/opt/syncash/backups/daily/` and `/opt/syncash/backups/pre-deploy/` hold
+GPG-encrypted archives with matching `.sha256` checksums, mode `600`, owned
+by `syncash`. Restore test script creates isolated `syncash-restore-test-*`
+resources and tears them down; production restore is intentionally manual —
+not exercised.
 
-Scripts present in the repo (`scripts/`): `deploy-production.sh`,
-`rollback-production.sh`, `backup-production.sh`, `restore-production.sh`,
-`migrate-production.sh`, `healthcheck-production.sh`,
-`install-production-timers.sh`, `production-common.sh`.
+Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
+2026-08-29), `deploy-production.sh`, `rollback-production.sh`,
+`backup-production.sh`, `restore-production.sh`, `migrate-production.sh`,
+`healthcheck-production.sh`, `install-production-timers.sh`,
+`production-common.sh`.
 
-## 4. Operational state — live-verified 2026-08-29, 11:4x IDT
-
-Confirmed directly over SSH (`syncash-prod`, key auth), all read-only:
+## 4. Operational state — live-verified 2026-08-29 (post `3f5685e` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/9e87b8922c109250e2bda12722a2a6efd142aa16` |
-| Containers (`docker ps`) | All 6 healthy, up ~15h: `frontend`, `worker`, `api` (image tag `9e87b8922c1...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/3f5685e318f2d06ac2e247635e40602904d80e95` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `3f5685e...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
 | API health (`curl 127.0.0.1:3181/api/health`) | `200 {"status":"ok"}` |
-| Published DB/cache/object-storage ports | None — `docker ps` filtered on 5432/6379/9000 returns empty, confirming Postgres/Redis/MinIO are not internet- or even host-reachable outside the Docker network |
-| Nginx | `nginx -t` → syntax OK, config test successful |
-| TLS (Certbot) | `app.syncash.co.il`, ECDSA, valid, **expires 2026-10-26 (58 days out)** |
-| Disk | `/` — 290G total, 13G used, 277G free (5%) |
-| Memory | 23Gi total, ~1.1Gi used, 22Gi free; swap 4Gi, 0 used |
-| Load average | 0.09, 0.12, 0.09 (idle) |
-| API/Worker error logs (last 24h) | Worker: zero error markers. API: **one burst of 3× `UNHANDLED_REQUEST_ERROR` at 2026-08-29 06:52:40 UTC (09:52:40 IDT)**, `requestId: undefined` on all three, all within 19ms of each other, nothing before or since in the 24h window — see `docs/TODO.md`, not investigated further in this pass |
-| `docker compose -p syncash-prod ls` | Reports config files from **two** release directories (current `9e87b89...` and an older `b1cb13b...`) rather than only the current one — likely benign compose-project bookkeeping, not confirmed as a problem, noted in `docs/TODO.md` |
+| Public site (`https://app.syncash.co.il`) | `200` externally |
+| Published DB/cache/object-storage ports | None — confirmed empty |
+| Nginx | `nginx -t` → syntax OK |
+| TLS (Certbot) | `app.syncash.co.il`, ECDSA, valid, expires 2026-10-26 |
+| Disk | ~6% used, ~275G free |
+| Memory | ~1.2Gi used of 23Gi |
+| Migration `0013` | Applied exactly once (migration id 14), hash matches the exact byte-correct Git blob |
+| API/Worker error logs (10 min post-deploy) | Zero error markers in either. The previously-flagged `UNHANDLED_REQUEST_ERROR` burst did not recur — closed, not investigated further per instruction |
+| Nginx errors (post-deploy) | Two expected SSE-disconnect log lines for a real advisor's live session, timed exactly to the API container restart during deploy — not an application error |
+| Backup | Pre-deploy backup completed, GPG-encrypted, checksum verified OK |
+| Rollback required | No |
 
-This matches the release the repo's own `PRODUCTION_DEPLOYMENT_REPORT.md`
-(2026-08-01, "Single-OTP Lender Portal Verification") describes as the last
-verified deployment — i.e. **nothing has been deployed since that report was
-written**, which is consistent with local HEAD (`d2af618`) being a
-docs-only commit with no corresponding release directory on the server.
+## 5. Git / release state — in sync as of 2026-08-29
 
-Not independently re-probed this pass (would require credentials or a
-write-risk action the user asked to avoid): SMTP send test, direct Secret
-Manager/Firebase Admin calls. Inferred healthy from: API/worker health
-checks passing (both depend on Secret Manager + Firebase Admin succeeding
-at startup) and zero secret/auth/encryption error markers in 24h of logs.
+Local HEAD, `origin/codex-syncash-production-rebuild`, and the Production
+active release are all `3f5685e318f2d06ac2e247635e40602904d80e95`. No drift.
 
-## 5. Git / release drift found during this audit
+History: this commit bundled 31 previously-uncommitted files plus migration
+`0013` (dynamic additional incomes, RENT liability type, legacy-safe
+marital-status/employment handling), was pushed in one commit to
+`origin/codex-syncash-production-rebuild` (fast-forward, no force), then
+deployed. See `docs/DECISIONS.md` for what changed and why.
 
-- Local `codex-syncash-production-rebuild` HEAD (`d2af618`) is **3 commits
-  ahead of `origin/codex-syncash-production-rebuild`** (`fa7607a`): `c3ad17f`,
-  `9e87b89`, `d2af618`.
-- The repo's own deployment report says releases `c3ad17f` and `9e87b89`
-  were **already deployed to Production** — meaning Production is currently
-  running code that does not exist on GitHub. GitHub is not a reliable
-  source of truth for "what's live" right now.
-- `d2af618` ("Document single-OTP lender portal verification") is
-  documentation-only and was **not** deployed — confirmed live 2026-08-29:
-  `/opt/syncash/releases/` has no directory for it, and the active release
-  is still `9e87b8922c109250e2bda12722a2a6efd142aa16` (i.e. `9e87b89`).
-- The working tree is **not clean**: 31 tracked files modified (schema,
-  validation, app.ts, store.ts, several components, most test suites) plus 2
-  untracked Drizzle migration files (`drizzle/0013_violet_goblin_queen.sql`,
-  `drizzle/meta/0013_snapshot.json`). This is live, in-progress work — see
-  `docs/TODO.md` for what it implements and what's still wrong in it. Do not
-  discard it.
-- A second local branch exists, `codex-local-production-rebuild` (`c01e0e3`,
-  "Fix advisor email verification and password guidance") — not investigated
-  further in this pass; flagged only so it isn't mistaken for stray junk.
+A second local branch, `codex-local-production-rebuild` (`c01e0e3`), still
+exists and has not been investigated — see `docs/TODO.md`.
 
-## 6. Production server SSH access — resolved 2026-08-29
+## 6. Production server SSH access
 
-A dedicated ED25519 key (`~/.ssh/syncash_prod`, `Host syncash-prod` in
-`~/.ssh/config`) was installed to `/home/syncash/.ssh/authorized_keys` and
-confirmed working: `ssh syncash-prod whoami` → `syncash`. This is now the
-primary access path and was used for every live check in section 4.
+Primary: a dedicated ED25519 key (`~/.ssh/syncash_prod`, `Host syncash-prod`
+in `~/.ssh/config`) installed to `/home/syncash/.ssh/authorized_keys`,
+confirmed working (`ssh syncash-prod whoami` → `syncash`).
 
-A password fallback also exists for the development period, per the user's
-explicit, standing instruction (see `docs/DECISIONS.md`): local secret file
-`C:\Users\guyav\.syncash\credentials.env` (outside any repo, Windows ACLs
-restricted to the current user) plus a wrapper script
+Fallback (dev-period only, user-approved — see `docs/DECISIONS.md`): a local
+secret file `C:\Users\guyav\.syncash\credentials.env` (outside any repo,
+Windows ACLs restricted to the current user) plus a wrapper script
 `C:\Users\guyav\.syncash\connect-syncash.ps1` that tries the key first and
 only reads the password internally (never via argv/history) if the key
 fails. **No Claude session should ever read or print the contents of
 `credentials.env`.**
 
-Live-confirmed effective SSH config (`sudo sshd -T` / `sudo sshd -T -C
-user=syncash,...`):
+Live-confirmed effective SSH config:
 
-- `PermitRootLogin no` — confirmed for both the global and the syncash-user
-  context.
-- `AllowUsers syncash` — root cannot even attempt to authenticate.
-- Global default `PasswordAuthentication no`, but a scoped
-  `Match User syncash` block in `/etc/ssh/sshd_config.d/99-syncash-password.conf`
-  overrides it to `yes` for `syncash` specifically — the only user allowed
-  to log in at all. Net effect: `syncash` has both key and password auth;
-  root has neither. This matches the user's requirement exactly and was
-  **not modified in this pass** — it was already in place.
-- Minor hygiene note (not touched, not urgent): `/etc/ssh/sshd_config.d/`
-  contains several overlapping/redundant `PasswordAuthentication` lines
-  across `00-syncash-hardening.conf` (no), `50-cloud-init.conf` (yes),
-  `60-cloudimg-settings.conf` (no), and a global (non-scoped)
-  `99-temp.conf` (yes) in addition to the correct scoped
-  `99-syncash-password.conf`. Today's *effective* result is correct and
-  verified live, but the redundancy is confusing for the next person who
-  reads these files — see `docs/TODO.md`.
+- `PermitRootLogin no`, `AllowUsers syncash` — root cannot authenticate at all.
+- Global default `PasswordAuthentication no`, overridden to `yes` specifically
+  for `syncash` via a `Match User syncash` block in
+  `/etc/ssh/sshd_config.d/99-syncash-password.conf`. Net effect: `syncash` has
+  both key and password auth; root has neither. Matches the user's
+  requirement exactly; not modified by any Claude session.
+- Minor hygiene note (not touched, not urgent): several overlapping/redundant
+  `PasswordAuthentication` lines exist across other files in
+  `/etc/ssh/sshd_config.d/` — see `docs/TODO.md`.
 
 Re-run periodically (all read-only, no state change):
 
@@ -227,15 +200,58 @@ df -h; free -h
 sudo sshd -T -C user=syncash | grep -iE 'passwordauthentication|permitrootlogin'
 ```
 
-## 7. Requirement audit (section 33 of the handoff brief)
+## 7. Requirement audit (section 33 of the original handoff brief)
 
-See `docs/BUSINESS_RULES.md` for the full pass/fail table and
-`docs/TODO.md` for what remains open. Summary: additional-income is now a
-proper dynamic array (implemented), rent was added as a liability type
-(implemented), "מוסד תורני" was added as an employment type (implemented),
-"בעל שליטה" now displays as "שכיר בעל שליטה" (implemented) — but the marital
-status "SEPARATED" and employment types "GOVERNMENT_EMPLOYEE"/
-"SECURITY_FORCES" were only demoted to legacy-only (not deleted), and the new
-"financial institution" liability field is currently wired to the wrong
-liability types (LOAN/MORTGAGE instead of the requested ALIMONY/RENT). None
-of this in-progress work has been committed, migrated, or deployed.
+See `docs/BUSINESS_RULES.md` for the full pass/fail table. Summary, all now
+live in Production: additional income is a dynamic array; RENT was added as a
+liability type; "מוסד תורני" was added as an employment type; "בעל שליטה" now
+displays as "שכיר בעל שליטה"; "גוף פיננסי" (financial institution) correctly
+shows only for LOAN/MORTGAGE and stays null for ALIMONY/RENT, confirmed
+correct after an earlier audit-record error was caught and fixed; a raw API
+`PATCH` cannot leave a stale institution/balance behind a liability-type
+change (tested). Marital status "SEPARATED" and employment types
+"GOVERNMENT_EMPLOYEE"/"SECURITY_FORCES" remain legacy-only rather than fully
+deleted — open question for the user, see `docs/TODO.md`.
+
+## 8. Release-artifact integrity (CRLF hardening, 2026-08-29)
+
+**Incident**: building the `3f5685e` release artifact on a Windows machine
+with global `core.autocrlf=true` silently converted every non-`.sh` tracked
+text file (including the `0013` SQL migration) to CRLF during `git archive`
+— a byte-different artifact from what was tested, caught only by manual
+checksum comparison before it reached Production.
+
+**Root-cause fix**: `.gitattributes` now explicitly declares `eol=lf` for
+`*.sh .sql .ts .tsx .js .mjs .cjs .json .yml .yaml .md .conf` and
+`Dockerfile*`, plus a `* text=auto eol=lf` fallback. This makes `git archive`
+/ `git checkout` always emit LF for these types regardless of the building
+machine's `core.autocrlf`/`core.eol` settings — verified with
+`git archive --worktree-attributes`, and confirmed to trigger zero file
+reformatting (blobs were already stored as LF; this only changes future
+checkout/archive behavior).
+
+**Defense in depth**:
+- `scripts/build-release-artifact.sh` (new) builds the archive with
+  `-c core.autocrlf=false -c core.eol=lf` as a second, independent layer,
+  then verifies **every** tracked file's extracted content against its exact
+  Git blob hash using `git hash-object --no-filters` (the `--no-filters` flag
+  is essential — without it, `git hash-object` silently re-applies the clean
+  filter and would mask exactly this class of corruption). Refuses to
+  produce the artifact on any mismatch.
+- `scripts/production-common.sh` gained `assert_no_crlf_in_release()`, a
+  git-independent invariant check (scans for literal CRLF in any `.sh`/`.sql`
+  file via `file`, not a fragile shell-escape-dependent grep pattern — an
+  earlier `grep -Il $'\r'` implementation was tried and found to behave
+  inconsistently depending on invocation context during testing).
+  `deploy-production.sh` now calls this **before any other work**, so any
+  future deploy — regardless of how the release directory was produced —
+  fails immediately rather than reaching build/migrate/Production.
+- Covered by `tests/unit/releaseArtifactIntegrity.test.ts` (5 tests): the
+  guard correctly passes clean releases, fails and names CRLF-corrupted
+  `.sh`/`.sql` files, ignores unrelated file types, and the build script
+  correctly verifies a real `HEAD` build.
+
+This fix is tooling/documentation only — no application code changed, no
+Production deploy was required to land it (it travels automatically with
+whatever release is built next, since `deploy-production.sh` is itself part
+of each release's own file tree).

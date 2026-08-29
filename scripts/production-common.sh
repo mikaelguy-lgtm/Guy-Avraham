@@ -58,6 +58,22 @@ compose() {
     "$@"
 }
 
+assert_no_crlf_in_release() {
+  local directory="$1"
+  local path
+  local violations=()
+  while IFS= read -r -d '' path; do
+    if file "$path" | grep -q 'CRLF'; then
+      violations+=("$path")
+    fi
+  done < <(find "$directory" -type f \( -name '*.sh' -o -name '*.sql' \) -print0)
+  if (( ${#violations[@]} > 0 )); then
+    printf 'Release artifact integrity check FAILED: CRLF line endings found in shell script(s) or SQL migration(s). Refusing to deploy.\n' >&2
+    printf '%s\n' "${violations[@]}" >&2
+    return 1
+  fi
+}
+
 wait_for_service_health() {
   local directory="$1"
   local service="$2"
