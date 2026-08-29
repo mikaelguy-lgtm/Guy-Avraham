@@ -3,10 +3,11 @@ import {createRequire} from "node:module";
 import type {CreditIndicationSnapshot, FullCaseBorrowerSnapshot, FullCaseLiabilitySnapshot, FullCaseSelfEmployedSnapshot, FullCaseSnapshot, MaskedCaseSnapshot, VersionDocumentSnapshot} from "../domain/lenderDelivery.js";
 import type {AnonymousSubmissionSnapshot} from "../domain/types.js";
 import {requiredDocumentLabel} from "../domain/requiredDocuments.js";
+import {getDocumentDisplayName} from "../utils/documentDisplay.js";
 import {REQUIRED_BORROWER_DOCUMENT_TYPES, REQUIRED_CLIENT_DOCUMENT_TYPES, currentIsraelYear} from "../domain/clientFields.js";
 import {
   formatAdditionalIncomeType, formatBorrowerRelationship, formatClientStatus, formatCurrency, formatDate, formatDealType,
-  formatDocumentType, formatEmploymentType, formatLiabilityType, formatMaritalStatus, formatPropertyType
+  formatEmploymentType, formatLiabilityType, formatMaritalStatus, formatPropertyType
 } from "../utils/formatters.js";
 import {snapshotDisplayEntries} from "../utils/snapshotDisplay.js";
 import {loadPdfHebrewFonts, PDF_BOLD_FONT_NAME, PDF_REGULAR_FONT_NAME, PDF_RENDERER_VERSION} from "./pdfFonts.js";
@@ -543,7 +544,7 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     if (snapshot.documents.length) {
       sectionTitle(document, "מסמכים בתיק", title, subtitle);
       fieldRows(document, snapshot.documents.flatMap((item, index) => [
-        {label: `מסמך ${index + 1}`, value: item.documentType === "OTHER" && item.customTitle ? `מסמך נוסף — ${item.customTitle}` : formatDocumentType(item.documentType)},
+        {label: `מסמך ${index + 1}`, value: getDocumentDisplayName(item, item.borrowerOrder)},
         {label: "תאריך העלאה", value: formatDate(item.createdAt)}
       ]), title, subtitle);
     }

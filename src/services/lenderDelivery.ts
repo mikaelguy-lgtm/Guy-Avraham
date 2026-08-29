@@ -915,14 +915,18 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   }
 
   async listPortalDocuments(sessionToken: string, context: DeliveryContext): Promise<unknown[]> {
-    const session = await this.portalSession(sessionToken, context); const documents = await this.versionDocuments(Number(session.case_version_id));
-    return documents.map((document) => ({publicId: this.documentPublicId(document), displayName: getDocumentDisplayName({documentType: document.document_type, customTitle: document.custom_title}), documentType: document.document_type, mimeType: document.mime_type, sizeBytes: Number(document.size_bytes), createdAt: document.created_at}));
+    const session = await this.portalSession(sessionToken, context); const snapshot = JSON.parse(this.encryption.decrypt(session.full_snapshot_encrypted)) as FullCaseSnapshot; const documents = await this.versionDocuments(Number(session.case_version_id));
+    return documents.map((document) => {
+      const borrowerOrder = snapshot.documents.find((item) => item.documentId === Number(document.document_id))?.borrowerOrder ?? null;
+      return {publicId: this.documentPublicId(document), displayName: getDocumentDisplayName({documentType: document.document_type, customTitle: document.custom_title}, borrowerOrder), documentType: document.document_type, mimeType: document.mime_type, sizeBytes: Number(document.size_bytes), createdAt: document.created_at};
+    });
   }
 
   async getPortalDocument(sessionToken: string, publicDocumentId: string, download: boolean, context: DeliveryContext): Promise<{body: Buffer; contentType: string; filename: string}> {
-    const session = await this.portalSession(sessionToken, context); const documents = await this.versionDocuments(Number(session.case_version_id)); const document = documents.find((candidate) => this.documentPublicId(candidate) === publicDocumentId);
+    const session = await this.portalSession(sessionToken, context); const snapshot = JSON.parse(this.encryption.decrypt(session.full_snapshot_encrypted)) as FullCaseSnapshot; const documents = await this.versionDocuments(Number(session.case_version_id)); const document = documents.find((candidate) => this.documentPublicId(candidate) === publicDocumentId);
     if (!document) throw new DeliveryError("DOCUMENT_NOT_FOUND", 404, "המסמך לא נמצא בגרסת התיק.");
-    const object = await this.storage.get(document.immutable_object_key); const displayName = getDocumentDisplayName({documentType: document.document_type, customTitle: document.custom_title}); const extension = document.mime_type === "application/pdf" ? ".pdf" : document.mime_type === "image/png" ? ".png" : ".jpg";
+    const borrowerOrder = snapshot.documents.find((item) => item.documentId === Number(document.document_id))?.borrowerOrder ?? null;
+    const object = await this.storage.get(document.immutable_object_key); const displayName = getDocumentDisplayName({documentType: document.document_type, customTitle: document.custom_title}, borrowerOrder); const extension = document.mime_type === "application/pdf" ? ".pdf" : document.mime_type === "image/png" ? ".png" : ".jpg";
     await this.event(this.pool, {submissionId: Number(session.submission_id), contactId: Number(session.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(session.contact_id), type: download ? "DOCUMENT_DOWNLOADED" : "DOCUMENT_VIEWED", metadata: {documentType: document.document_type}}, context);
     return {body: object.body, contentType: document.mime_type, filename: `${displayName}${extension}`};
   }
@@ -931,7 +935,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     const session = await this.portalSession(sessionToken, context); const snapshot = JSON.parse(this.encryption.decrypt(session.full_snapshot_encrypted)) as FullCaseSnapshot; const documents = await this.versionDocuments(Number(session.case_version_id)); const zip = new JSZip();
     const pdf = await this.getCurrentVersionPdf(Number(session.case_version_id), "full"); zip.file(`תיק-מלא/תיק-מימון-מלא-${snapshot.publicCaseNumber}.pdf`, pdf);
     for (const document of documents) {
-      const object = await this.storage.get(document.immutable_object_key); const name = getDocumentDisplayName({documentType: document.document_type, customTitle: document.custom_title}); const extension = document.mime_type === "application/pdf" ? ".pdf" : document.mime_type === "image/png" ? ".png" : ".jpg"; const borrower = snapshot.documents.find((item) => item.documentId === Number(document.document_id))?.borrowerOrder; const folder = borrower ? `מסמכי-לווה-${borrower}` : document.document_type === "OTHER" ? "מסמכים-נוספים" : "מסמכי-נכס"; zip.file(`${folder}/${name}-${document.id}${extension}`, object.body);
+      const object = await this.storage.get(document.immutable_object_key); const borrower = snapshot.documents.find((item) => item.documentId === Number(document.document_id))?.borrowerOrder ?? null; const name = getDocumentDisplayName({documentType: document.document_type, customTitle: document.custom_title}, borrower); const extension = document.mime_type === "application/pdf" ? ".pdf" : document.mime_type === "image/png" ? ".png" : ".jpg"; const folder = borrower ? `מסמכי-לווה-${borrower}` : document.document_type === "OTHER" ? "מסמכים-נוספים" : "מסמכי-נכס"; zip.file(`${folder}/${name}-${document.id}${extension}`, object.body);
     }
     const body = await zip.generateAsync({type: "nodebuffer", compression: "DEFLATE", compressionOptions: {level: 6}});
     await this.event(this.pool, {submissionId: Number(session.submission_id), contactId: Number(session.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(session.contact_id), type: "FULL_CASE_ZIP_DOWNLOADED"}, context);

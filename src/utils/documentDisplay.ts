@@ -10,13 +10,13 @@ const fileExtensions: Record<string, string> = {
   "image/png": ".png"
 };
 
-export function getDocumentDisplayName(document: DisplayableDocument): string {
-  if (document.documentType !== "OTHER") return formatDocumentType(document.documentType);
-
-  const customTitle = document.customTitle?.trim();
-  return customTitle ? `מסמך נוסף — ${customTitle}` : "מסמך נוסף";
+export function getDocumentDisplayName(document: DisplayableDocument, borrowerOrder?: number | null): string {
+  const base = document.documentType !== "OTHER"
+    ? formatDocumentType(document.documentType)
+    : (document.customTitle?.trim() ? `מסמך נוסף — ${document.customTitle.trim()}` : "מסמך נוסף");
+  return borrowerOrder ? `${base} — לווה ${borrowerOrder}` : base;
 }
 
-export function getDocumentDownloadName(document: DownloadableDocument): string {
-  return `${getDocumentDisplayName(document)}${fileExtensions[document.mimeType] ?? ""}`;
+export function getDocumentDownloadName(document: DownloadableDocument, borrowerOrder?: number | null): string {
+  return `${getDocumentDisplayName(document, borrowerOrder)}${fileExtensions[document.mimeType] ?? ""}`;
 }
