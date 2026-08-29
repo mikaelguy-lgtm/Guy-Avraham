@@ -60,7 +60,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e` |
+| Active release | `/opt/syncash/current` (symlink) → `8bf3d2020d7d2addbccbb91677e0c52ab3bce36f` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -135,37 +135,27 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-08-29 (post `0af63f4` deploy)
+## 4. Operational state — live-verified 2026-08-29 (post `8bf3d20` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e` |
-| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `0af63f4...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
-| API health (`curl 127.0.0.1:3181/api/health`) | `200 {"status":"ok"}` |
-| Public site (`https://app.syncash.co.il`) | `200` externally |
-| Nginx | `nginx -t` → syntax OK |
-| Disk | ~6% used, ~275G free |
-| Memory | ~1.4Gi used of 23Gi |
-| Migration `0014` (additive) | Applied exactly once (migration id 15), byte-verified against Git blob before upload |
-| Migration `0015` (destructive: drops `loan_offers`, `company_portal_offers`, `offer_status`) | Applied exactly once (migration id 16), byte-verified against Git blob before upload |
-| Offer tables/type post-migration | Confirmed absent (`to_regclass` returns null for both tables; `offer_status` not in `pg_type`) |
-| New schema present | `credit_indications` table; `borrowers.city_encrypted`/`street_address_encrypted`; 7 `employment_records.self_employed_*` columns; `company_submissions.response_business_days` (default 2) |
-| `response_deadline_business_days` system setting | No explicit row exists — code falls back to the hardcoded default of 2, same effective behavior as before. Not set during this deploy per instruction |
-| API/Worker error logs (~15 min post-deploy) | Zero error markers in either |
-| Nginx errors (post-deploy) | None |
-| Backup | Two encrypted pre-deploy backups this deploy: a manually-triggered one before any change, plus the one `deploy-production.sh` takes automatically — both GPG-encrypted, checksum verified OK. A restore-test of the manual one (`restore-production.sh --test`) also passed |
-| Data safety | `clients`/`borrowers`/`documents`/`company_submissions` counts were **not** captured before this migration (only the offer-table counts were, per instruction) — post-deploy counts are non-zero and plausible (4/5/23/5). Confidence that no other table was affected rests on migration 0015 only doing `DROP TABLE ... CASCADE` on the two offer tables (no other table's schema holds a foreign key into either), not on a literal before/after count match |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/8bf3d2020d7d2addbccbb91677e0c52ab3bce36f` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `8bf3d20...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
+| Public site (`https://app.syncash.co.il`) | `200` externally; served CSS/JS bundle hashes match this build (`index-CvxT9jA6.css`) |
+| Migrations | No new migration beyond `0015` — `migrate-production.sh` ran as a no-op (UI/content-only release) |
+| API/Worker error logs (post-deploy) | Zero error markers in either |
+| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release |
+| Scope of this release | UI/CSS/content only (credit indication redesign, company-response timestamps, borrower-labeled document names, removal of the "שליחת גרסה חדשה" button, larger `.eyebrow`/status-badge/meta type). No schema change, no data migration |
 | Rollback required | No |
 
 ## 5. Git / release state — in sync as of 2026-08-29
 
-Production active release: `0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e`.
-Local HEAD and `origin/codex-syncash-production-rebuild`:
-`0f56094cbd7fdf40a14b6ab85e1d5a7763fcebb5` (two commits ahead of Production as of this edit —
-`6e6f2f3` then `0f56094` — both **documentation-only**: updates to this
-file, `BUSINESS_RULES.md`, `DECISIONS.md`, `TODO.md`, and `CLAUDE.md`; no
-`src/`/`drizzle/`/Docker/Compose/script changes). This is not Config/Code
-Drift and does not require a deploy — see the "Before starting any task"
+Production active release: `8bf3d2020d7d2addbccbb91677e0c52ab3bce36f`.
+Local HEAD and `origin/codex-syncash-production-rebuild`: same SHA
+(`8bf3d2020d7d2addbccbb91677e0c52ab3bce36f`) — fully in sync as of this deploy.
+Prior release `0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e` remains on disk at
+`/opt/syncash/releases/0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e` for rollback
+if needed. See the "Before starting any task"
 checklist in `CLAUDE.md` for how to reason about a HEAD/Production gap in
 future sessions; always confirm the exact current HEAD with `git log`
 rather than trusting this SHA prefix if it's been a while. (The prior
