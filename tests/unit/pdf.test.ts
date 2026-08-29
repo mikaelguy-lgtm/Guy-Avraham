@@ -2,6 +2,7 @@ import { getDocument, OPS } from "pdfjs-dist/legacy/build/pdf.mjs";
 import {readFileSync} from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type {FullCaseSnapshot} from "../../src/domain/lenderDelivery";
+import {currentIsraelYear} from "../../src/domain/clientFields";
 import {CaseRedactionService} from "../../src/services/caseRedaction";
 import { createAnonymousPdf, createFullCasePdf, createMaskedCasePdf, formatPdfBidi, formatVisiblePdfText, PDF_RENDERER_VERSION } from "../../src/services/pdf";
 import {assertRequiredHebrewGlyphs, loadPdfHebrewFonts, PdfHebrewFontError, REQUIRED_PDF_HEBREW_CHARACTERS} from "../../src/services/pdfFonts";
@@ -83,13 +84,14 @@ describe("anonymous PDF", () => {
     expect(document.numPages).toBeGreaterThan(1);
     expect(document.numPages).toBeLessThanOrEqual(5);
     expect(pages.every((pageText) => pageText.replace(/SYNCASH|מידע סודי|הופק|עמוד|מתוך|\s/g, "").length > 10)).toBe(true);
-    for (const expected of ["תיק מימון מלא", "תקציר העסקה", "פרטים אישיים", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(normalizedText).toContain(expected);
-    for (const expected of ["הכנסה נוספת 1", "הכנסה נוספת 2", "הכנסה מעצמאות קטנה", "גוף פיננסי", "בנק לדוגמה", "שכירות"]) expect(normalizedText).toContain(expected);
+    for (const expected of ["תיק מימון מלא", "תקציר בקשת המימון", "סיכום פיננסי ומשפחתי", "פרטי לווה 1", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(normalizedText).toContain(expected);
+    for (const expected of ["1. שכר דירה", "2. הכנסה מעצמאות קטנה", "גוף פיננסי", "בנק לדוגמה", "שכירות"]) expect(normalizedText).toContain(expected);
     expect(text.replace(/\s/g, "")).toContain("SYNCASH");
     expect(text).not.toMatch(/[�□■]/u);
     expect(pathCount).toBeGreaterThan(20);
     expect(pdf.toString("latin1")).toContain("/FontFile2");
     expect(pdf.toString("latin1")).toContain("NotoSansHebrew");
+    expect(normalizedText).not.toContain("גרסה");
   });
 
   it("keeps masked fields hidden while preserving readable Hebrew business data", async () => {
@@ -99,8 +101,41 @@ describe("anonymous PDF", () => {
     expect(await createMaskedCasePdf(masked, metadata)).toEqual(pdf);
     const {text, normalizedText} = await pdfContent(pdf);
     for (const expected of ["תיק מימון לבחינה ראשונית", "תקציר העסקה", "רכישה יד שנייה", "דירה", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(normalizedText).toContain(expected);
-    for (const expected of ["הכנסה נוספת 1", "הכנסה נוספת 2", "הכנסה מעצמאות קטנה", "גוף פיננסי", "בנק לדוגמה", "שכירות"]) expect(normalizedText).toContain(expected);
+    for (const expected of ["1. שכר דירה", "2. הכנסה מעצמאות קטנה", "גוף פיננסי", "בנק לדוגמה", "שכירות"]) expect(normalizedText).toContain(expected);
     expect(text).not.toMatch(/[�□■]/u);
     for (const prohibited of ["דנה", "לוי", "123456789", "0501234567", "dana@example.com", "מעסיק סודי", "יועץ פרטי"]) expect(text).not.toContain(prohibited);
+    expect(normalizedText).not.toContain("גרסה");
+  });
+
+  it("renders self-employed fields with dynamic year labels and a credit indication section only in the full PDF", async () => {
+    const selfEmployedSnapshot: FullCaseSnapshot = {
+      ...fullSnapshot,
+      borrowers: [{
+        ...fullSnapshot.borrowers[0],
+        employment: {
+          ...fullSnapshot.borrowers[0].employment, employmentType: "SELF_EMPLOYED", employerName: "", jobTitle: "",
+          selfEmployed: {businessType: "ייעוץ עסקי", businessStartYear: currentIsraelYear() - 5, lastAssessedIncome: 180_000, assessmentYear: currentIsraelYear() - 1, accountantIncomePreviousYear: 170_000, accountantIncomeCurrentYear: 190_000, accountantMonthsCount: 12}
+        }
+      }],
+      creditIndication: {bouncedChecks: true, bouncedChecksCount: 3, bouncedDirectDebits: false, bouncedDirectDebitsCount: null, collectionProceedings: false, bankruptcy: false, liens: true, mortgageArrears: false}
+    };
+    const fullPdf = await createFullCasePdf(selfEmployedSnapshot, {versionNumber: 1, createdAt: new Date("2026-07-27T09:00:00Z")});
+    const {normalizedText: fullText} = await pdfContent(fullPdf);
+    expect(fullText).toContain("סוג העיסוק");
+    expect(fullText).toContain("ייעוץ עסקי");
+    expect(fullText).toContain("וותק העסק");
+    expect(fullText).toContain("5 שנים");
+    expect(fullText).toContain(`אישור הכנסות רו״ח ${currentIsraelYear() - 1}`);
+    expect(fullText).toContain(`הכנסות רו״ח ${currentIsraelYear()}`);
+    expect(fullText).toContain("חיווי אשראי");
+    expect(fullText).toContain("החזרי צ'קים");
+    expect(fullText).toContain("עיקולים");
+    expect(fullText).not.toMatch(/2025\/2026|2024\/2025/u);
+
+    const redacted = new CaseRedactionService().redact(selfEmployedSnapshot).maskedSnapshot;
+    const maskedPdf = await createMaskedCasePdf(redacted, {versionNumber: 1, createdAt: new Date("2026-07-27T09:00:00Z")});
+    const {normalizedText: maskedText} = await pdfContent(maskedPdf);
+    expect(maskedText).toContain("ייעוץ עסקי");
+    expect(maskedText).not.toContain("חיווי אשראי");
   });
 });

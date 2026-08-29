@@ -1,9 +1,9 @@
 import PDFDocument from "pdfkit";
 import {createRequire} from "node:module";
-import type {FullCaseBorrowerSnapshot, FullCaseLiabilitySnapshot, FullCaseSnapshot, MaskedCaseSnapshot, VersionDocumentSnapshot} from "../domain/lenderDelivery.js";
+import type {CreditIndicationSnapshot, FullCaseBorrowerSnapshot, FullCaseLiabilitySnapshot, FullCaseSelfEmployedSnapshot, FullCaseSnapshot, MaskedCaseSnapshot, VersionDocumentSnapshot} from "../domain/lenderDelivery.js";
 import type {AnonymousSubmissionSnapshot} from "../domain/types.js";
 import {requiredDocumentLabel} from "../domain/requiredDocuments.js";
-import {REQUIRED_BORROWER_DOCUMENT_TYPES, REQUIRED_CLIENT_DOCUMENT_TYPES} from "../domain/clientFields.js";
+import {REQUIRED_BORROWER_DOCUMENT_TYPES, REQUIRED_CLIENT_DOCUMENT_TYPES, currentIsraelYear} from "../domain/clientFields.js";
 import {
   formatAdditionalIncomeType, formatBorrowerRelationship, formatClientStatus, formatCurrency, formatDate, formatDealType,
   formatDocumentType, formatEmploymentType, formatLiabilityType, formatMaritalStatus, formatPropertyType
@@ -87,8 +87,14 @@ function pdfText(
   y: number,
   options: PDFKit.Mixins.TextOptions & {direction?: "rtl" | "ltr"}
 ): void {
-  const logicalText = value === null || value === undefined || value === "" ? "לא צוין" : String(value);
-  const {direction = "rtl", ...textOptions} = options;
+  const isMissing = value === null || value === undefined || value === "";
+  const logicalText = isMissing ? "לא צוין" : String(value);
+  const {direction: requestedDirection = "rtl", ...textOptions} = options;
+  // The "לא צוין" fallback is always Hebrew — never render it through the
+  // LTR path even when the field itself (e.g. a URL or phone number) is
+  // normally LTR-flagged, or it draws backwards (PDFKit does not shape
+  // Hebrew on the plain document.text() path used for LTR fields).
+  const direction = isMissing ? "rtl" : requestedDirection;
   document.markContent("Span", {actual: logicalText, lang: direction === "rtl" ? "he-IL" : "en"});
   if (direction === "ltr") document.text(formatPdfBidi(logicalText, direction), x, y, textOptions);
   else drawVisualRtlText(document, formatPdfBidi(logicalText, direction), x, y, textOptions);
@@ -187,6 +193,30 @@ function sectionTitle(document: PDFKit.PDFDocument, label: string, title: string
 
 interface PdfField {label: string; value: string | number | null | undefined; ltr?: boolean}
 
+function fieldRowsHeight(fields: PdfField[]): number {
+  return Math.ceil(fields.length / 2) * 53;
+}
+
+// A lighter-weight heading than sectionTitle(), for a card/block nested
+// inside a section (e.g. one borrower, one liability). Does not reserve
+// its own page-break space — callers pair it with keepTogether() so the
+// heading and its fields never get separated across a page boundary.
+function subHeading(document: PDFKit.PDFDocument, label: string): void {
+  const y = document.y;
+  document.font(PDF_BOLD_FONT_NAME).fontSize(11.5).fillColor(colors.blue);
+  pdfText(document, label, page.left, y, {width: page.width, align: "right"});
+  document.moveTo(page.left, y + 19).lineTo(page.right, y + 19).lineWidth(0.75).strokeColor(colors.line).stroke();
+  document.y = y + 27;
+}
+
+// Reserves `height` in one page-break check, then runs `render` — used so
+// a heading and the fields/paragraph that belong with it are never split
+// across a page break.
+function keepTogether(document: PDFKit.PDFDocument, height: number, title: string, subtitle: string, render: () => void): void {
+  ensureSpace(document, height, title, subtitle);
+  render();
+}
+
 function fieldRows(document: PDFKit.PDFDocument, fields: PdfField[], title: string, subtitle: string): void {
   for (let index = 0; index < fields.length; index += 2) {
     ensureSpace(document, 55, title, subtitle);
@@ -206,11 +236,16 @@ function fieldRows(document: PDFKit.PDFDocument, fields: PdfField[], title: stri
   }
 }
 
-function paragraph(document: PDFKit.PDFDocument, value: string, title: string, subtitle: string, tone: "default" | "notice" = "default"): void {
+function measureParagraph(document: PDFKit.PDFDocument, value: string): {text: string; height: number} {
   document.font(PDF_REGULAR_FONT_NAME).fontSize(9.5);
   const text = wrapLogicalRtlText(document, formatPdfBidi(value), page.width - 24);
   const lineCount = text.split("\n").length;
   const height = Math.max(48, lineCount * (document.currentLineHeight(true) + 3) + 22);
+  return {text, height};
+}
+
+function paragraph(document: PDFKit.PDFDocument, value: string, title: string, subtitle: string, tone: "default" | "notice" = "default"): void {
+  const {text, height} = measureParagraph(document, value);
   ensureSpace(document, height + 8, title, subtitle);
   const y = document.y;
   document.roundedRect(page.left, y, page.width, height, 8).fillAndStroke(tone === "notice" ? colors.goldSoft : colors.paper, tone === "notice" ? colors.gold : colors.line);
@@ -219,32 +254,89 @@ function paragraph(document: PDFKit.PDFDocument, value: string, title: string, s
   document.y = y + height + 8;
 }
 
-function liabilityFields(liability: FullCaseLiabilitySnapshot, prefix = ""): PdfField[] {
+function liabilityHeading(liability: FullCaseLiabilitySnapshot, index: number): string {
+  const formattedType = formatLiabilityType(liability.type);
+  const title = liability.otherTypeDescription ? `${formattedType} — ${liability.otherTypeDescription}` : formattedType;
+  return `התחייבות ${index + 1} — ${title}`;
+}
+
+function liabilityFields(liability: FullCaseLiabilitySnapshot): PdfField[] {
   const fields: PdfField[] = [
-    {label: `${prefix}סוג התחייבות`, value: formatLiabilityType(liability.type)},
     {label: "החזר חודשי", value: formatCurrency(liability.monthlyPayment)},
     {label: "תאריך סיום", value: liability.endDate ? formatDate(liability.endDate) : "לא צוין"},
     {label: "הערות", value: liability.notes || "לא צוין"}
   ];
-  if (liability.type !== "ALIMONY" && liability.type !== "RENT") fields.splice(1, 0, {label: "יתרה נוכחית", value: formatCurrency(liability.currentBalance)});
-  if ((liability.type === "LOAN" || liability.type === "MORTGAGE") && liability.financialInstitution) fields.splice(1, 0, {label: "גוף פיננסי", value: liability.financialInstitution});
+  if (liability.type !== "ALIMONY" && liability.type !== "RENT") fields.unshift({label: "יתרה נוכחית", value: formatCurrency(liability.currentBalance)});
+  if ((liability.type === "LOAN" || liability.type === "MORTGAGE") && liability.financialInstitution) fields.unshift({label: "גוף פיננסי", value: liability.financialInstitution});
   return fields;
 }
 
-function borrowerIncomeFields(borrower: FullCaseBorrowerSnapshot | MaskedCaseSnapshot["borrowers"][number], masked: boolean): PdfField[] {
-  const additionalIncomes = borrower.employment.additionalIncomes ?? (borrower.employment.hasAdditionalIncome && borrower.employment.additionalIncomeType ? [{type: borrower.employment.additionalIncomeType, monthlyAmount: borrower.employment.additionalIncomeAmount, description: borrower.employment.additionalIncomeDescription}] : []);
+// Renders one liability as a single page-break-protected block: heading
+// and every field for that liability stay together on one page.
+function drawLiabilityCard(document: PDFKit.PDFDocument, liability: FullCaseLiabilitySnapshot, index: number, title: string, subtitle: string): void {
+  const fields = liabilityFields(liability);
+  keepTogether(document, 27 + fieldRowsHeight(fields), title, subtitle, () => {
+    subHeading(document, liabilityHeading(liability, index));
+    fieldRows(document, fields, title, subtitle);
+  });
+}
+
+function borrowerHeading(borrower: {order?: number; firstName?: string; lastName?: string; label?: string; age: number | null}): string {
+  const name = borrower.firstName ? `${borrower.firstName} ${borrower.lastName}` : borrower.label ?? `לווה ${borrower.order}`;
+  return `${name} · גיל ${borrower.age ?? "לא צוין"}`;
+}
+
+const selfEmployedYearLabels = () => ({previousYear: currentIsraelYear() - 1, currentYear: currentIsraelYear()});
+
+function selfEmployedFields(selfEmployed: FullCaseSelfEmployedSnapshot): PdfField[] {
+  const {previousYear, currentYear} = selfEmployedYearLabels();
+  return [
+    {label: "סוג העיסוק", value: selfEmployed.businessType},
+    {label: "שנת פתיחת העסק", value: selfEmployed.businessStartYear},
+    {label: "וותק העסק", value: Number.isInteger(selfEmployed.businessStartYear) ? `${Math.max(0, currentYear - Number(selfEmployed.businessStartYear))} שנים` : "לא צוין"},
+    {label: "הכנסה משומה אחרונה", value: formatCurrency(selfEmployed.lastAssessedIncome ?? 0)},
+    {label: "שנת השומה", value: selfEmployed.assessmentYear},
+    {label: `אישור הכנסות רו״ח ${previousYear}`, value: formatCurrency(selfEmployed.accountantIncomePreviousYear ?? 0)},
+    {label: `הכנסות רו״ח ${currentYear}`, value: formatCurrency(selfEmployed.accountantIncomeCurrentYear ?? 0)},
+    {label: "מספר חודשים", value: selfEmployed.accountantMonthsCount}
+  ];
+}
+
+// Primary-income fields only (salaried or self-employed) — additional
+// incomes are rendered as their own numbered-list section, never mixed in.
+function primaryIncomeFields(borrower: FullCaseBorrowerSnapshot | MaskedCaseSnapshot["borrowers"][number], masked: boolean): PdfField[] {
+  const isSelfEmployed = borrower.employment.employmentType === "SELF_EMPLOYED";
+  const selfEmployed = "selfEmployed" in borrower.employment ? borrower.employment.selfEmployed : null;
+  if (isSelfEmployed && selfEmployed) {
+    return [{label: "סוג תעסוקה", value: formatEmploymentType(borrower.employment.employmentType)}, ...selfEmployedFields(selfEmployed), {label: "הכנסה חודשית נטו", value: formatCurrency(borrower.employment.monthlyNetIncome)}];
+  }
   return [
     {label: "סוג תעסוקה", value: formatEmploymentType(borrower.employment.employmentType)},
     {label: "מקום עבודה", value: masked ? "********" : (borrower as FullCaseBorrowerSnapshot).employment.employerName},
     {label: "תפקיד", value: borrower.employment.jobTitle},
     {label: "ותק", value: `${borrower.employment.employmentSeniorityYears} שנים`},
-    {label: "הכנסה חודשית נטו", value: formatCurrency(borrower.employment.monthlyNetIncome)},
-    {label: "הכנסה נוספת", value: additionalIncomes.length ? "כן" : "לא"},
-    ...additionalIncomes.flatMap((income, index) => [
-      {label: `הכנסה נוספת ${index + 1} — סוג`, value: formatAdditionalIncomeType(income.type)},
-      {label: `הכנסה נוספת ${index + 1} — סכום`, value: formatCurrency(income.monthlyAmount)},
-      ...(income.description ? [{label: `הכנסה נוספת ${index + 1} — תיאור`, value: income.description}] : [])
-    ])
+    {label: "הכנסה חודשית נטו", value: formatCurrency(borrower.employment.monthlyNetIncome)}
+  ];
+}
+
+function additionalIncomesOf(borrower: FullCaseBorrowerSnapshot | MaskedCaseSnapshot["borrowers"][number]): Array<{type: string; monthlyAmount: number; description: string | null}> {
+  return borrower.employment.additionalIncomes ?? (borrower.employment.hasAdditionalIncome && borrower.employment.additionalIncomeType ? [{type: borrower.employment.additionalIncomeType, monthlyAmount: borrower.employment.additionalIncomeAmount, description: borrower.employment.additionalIncomeDescription}] : []);
+}
+
+function additionalIncomesText(additionalIncomes: Array<{type: string; monthlyAmount: number; description: string | null}>): string {
+  if (!additionalIncomes.length) return "אין הכנסות נוספות ללווה זה.";
+  return additionalIncomes.map((income, index) => `${index + 1}. ${formatAdditionalIncomeType(income.type)} — ${formatCurrency(income.monthlyAmount)}${income.description ? ` · ${income.description}` : ""}`).join("\n");
+}
+
+function creditIndicationFields(indication: CreditIndicationSnapshot): PdfField[] {
+  const yesNo = (value: boolean | null) => value === true ? "כן" : value === false ? "לא" : "לא צוין";
+  return [
+    {label: "החזרי צ'קים", value: indication.bouncedChecks ? `כן (${indication.bouncedChecksCount ?? "-"})` : yesNo(indication.bouncedChecks)},
+    {label: "החזרי הוראות קבע", value: indication.bouncedDirectDebits ? `כן (${indication.bouncedDirectDebitsCount ?? "-"})` : yesNo(indication.bouncedDirectDebits)},
+    {label: "הוצאה לפועל", value: yesNo(indication.collectionProceedings)},
+    {label: "פשיטת רגל", value: yesNo(indication.bankruptcy)},
+    {label: "עיקולים", value: yesNo(indication.liens)},
+    {label: "פיגורים במשכנתא", value: yesNo(indication.mortgageArrears)}
   ];
 }
 
@@ -290,16 +382,20 @@ function toBuffer(document: PDFKit.PDFDocument, render: () => void): Promise<Buf
   });
 }
 
-function caseSubtitle(publicCaseNumber: string, versionNumber: number, createdAt: Date): string {
-  return `תיק ${publicCaseNumber} · גרסה ${versionNumber} · הופק ${formatDate(createdAt)}`;
+// No version number in the subtitle: the internal case-version mechanism
+// must never surface as "גרסה N" on a user-facing PDF page.
+function caseSubtitle(publicCaseNumber: string, createdAt: Date): string {
+  return `תיק ${publicCaseNumber} · הופק ${formatDate(createdAt)}`;
 }
 
 export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata: {versionNumber: number; createdAt: Date}): Promise<Buffer> {
   const title = "תיק מימון לבחינה ראשונית";
-  const subtitle = caseSubtitle(snapshot.publicCaseNumber, metadata.versionNumber, metadata.createdAt);
+  const subtitle = caseSubtitle(snapshot.publicCaseNumber, metadata.createdAt);
   const document = createDocument(`SynCash masked case ${snapshot.publicCaseNumber}`, metadata.createdAt);
   return toBuffer(document, () => {
     drawPageHeader(document, title, subtitle);
+
+    // 1. תקציר העסקה
     sectionTitle(document, "תקציר העסקה", title, subtitle);
     fieldRows(document, [
       {label: "מספר תיק", value: snapshot.publicCaseNumber, ltr: true}, {label: "סטטוס", value: formatClientStatus(snapshot.status ?? "ACTIVE")},
@@ -307,35 +403,64 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
       {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)},
       {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מטרת ההלוואה", value: formatDealType(snapshot.loanRequest.purpose)}
     ], title, subtitle);
-    sectionTitle(document, "פרטים אישיים", title, subtitle);
+
+    // 2. סיכום פיננסי ומשפחתי
+    sectionTitle(document, "סיכום פיננסי ומשפחתי", title, subtitle);
+    fieldRows(document, [
+      {label: "סך הכנסה חודשית", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
+      {label: "סך החזרים חודשיים", value: formatCurrency(snapshot.totals.monthlyPayments)}, {label: "מספר לווים", value: snapshot.numberOfBorrowers},
+      {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)},
+      {label: "גילאי הילדים", value: snapshot.household.childrenAges.length ? snapshot.household.childrenAges.join(", ") : "אין ילדים"}
+    ], title, subtitle);
+
+    // 3. פרטי לווים מוגבלים
+    sectionTitle(document, "פרטי לווים מוגבלים", title, subtitle);
     for (const borrower of snapshot.borrowers) {
-      fieldRows(document, [
-        {label: "לווה", value: borrower.label}, {label: "שם", value: "********"},
-        {label: "גיל", value: borrower.age}, {label: "עיר מגורים", value: borrower.residenceCity},
-        {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)}, {label: "מספר ילדים", value: borrower.numberOfChildren}
-      ], title, subtitle);
+      const fields: PdfField[] = [
+        {label: "עיר מגורים", value: borrower.residenceCity}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
+        {label: "מספר ילדים", value: borrower.numberOfChildren}, {label: "גילאי ילדים", value: borrower.childrenAges.length ? borrower.childrenAges.join(", ") : "אין"}
+      ];
+      keepTogether(document, 27 + fieldRowsHeight(fields), title, subtitle, () => {
+        subHeading(document, borrowerHeading(borrower));
+        fieldRows(document, fields, title, subtitle);
+      });
     }
-    sectionTitle(document, "הכנסות", title, subtitle);
-    snapshot.borrowers.forEach((borrower) => fieldRows(document, [{label: "לווה", value: borrower.label}, ...borrowerIncomeFields(borrower, true)], title, subtitle));
+
+    // 4. הכנסות רלוונטיות לבחינה ראשונית
+    sectionTitle(document, "הכנסות רלוונטיות לבחינה ראשונית", title, subtitle);
+    for (const borrower of snapshot.borrowers) {
+      const fields = primaryIncomeFields(borrower, true);
+      const additionalText = additionalIncomesText(additionalIncomesOf(borrower));
+      const {height: additionalHeight} = measureParagraph(document, additionalText);
+      keepTogether(document, 27 + fieldRowsHeight(fields), title, subtitle, () => {
+        subHeading(document, borrowerHeading(borrower));
+        fieldRows(document, fields, title, subtitle);
+      });
+      keepTogether(document, additionalHeight + 8, title, subtitle, () => paragraph(document, additionalText, title, subtitle));
+    }
+
+    // 5. התחייבויות
     sectionTitle(document, "התחייבויות", title, subtitle);
     const liabilities = [...snapshot.borrowers.flatMap((borrower) => borrower.liabilities), ...snapshot.householdLiabilities];
-    if (liabilities.length) liabilities.forEach((liability, index) => fieldRows(document, liabilityFields(liability, `התחייבות ${index + 1} — `), title, subtitle));
+    if (liabilities.length) liabilities.forEach((liability, index) => drawLiabilityCard(document, liability, index, title, subtitle));
     else paragraph(document, "לא דווחו התחייבויות פעילות.", title, subtitle);
+
+    // 6. נכס ובקשת מימון
     sectionTitle(document, "נכס ובקשת מימון", title, subtitle);
     fieldRows(document, [
       {label: "סוג נכס", value: formatPropertyType(snapshot.property.propertyType)}, {label: "עיר הנכס", value: snapshot.property.city},
       {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)}, {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)},
       {label: "תקופה מבוקשת", value: `${snapshot.loanRequest.requestedTermMonths} חודשים`}, {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}
     ], title, subtitle);
+
+    // 7. פירוט העסקה
     sectionTitle(document, "פירוט העסקה", title, subtitle);
     paragraph(document, snapshot.dealDetails, title, subtitle);
+
+    // 8. סטטוס מסמכי חובה
     sectionTitle(document, "סטטוס מסמכי חובה", title, subtitle);
     paragraph(document, snapshot.documentStatus, title, subtitle);
-    sectionTitle(document, "סיכום פיננסי", title, subtitle);
-    fieldRows(document, [
-      {label: "סך הכנסה חודשית", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
-      {label: "סך החזרים חודשיים", value: formatCurrency(snapshot.totals.monthlyPayments)}, {label: "מספר לווים", value: snapshot.numberOfBorrowers}
-    ], title, subtitle);
+
     paragraph(document, "מסמך זה מיועד לבחינה ראשונית בלבד. פרטים מזהים מסוימים אינם מוצגים בשלב זה.", title, subtitle, "notice");
     finish(document, metadata.createdAt);
   });
@@ -343,33 +468,61 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
 
 export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {versionNumber: number; createdAt: Date}): Promise<Buffer> {
   const title = "תיק מימון מלא";
-  const subtitle = caseSubtitle(snapshot.publicCaseNumber, metadata.versionNumber, metadata.createdAt);
+  const subtitle = caseSubtitle(snapshot.publicCaseNumber, metadata.createdAt);
   const document = createDocument(`SynCash full case ${snapshot.publicCaseNumber}`, metadata.createdAt);
   return toBuffer(document, () => {
     drawPageHeader(document, title, subtitle);
-    sectionTitle(document, "תקציר העסקה", title, subtitle);
+
+    // 1. תקציר בקשת המימון
+    sectionTitle(document, "תקציר בקשת המימון", title, subtitle);
     fieldRows(document, [
       {label: "מספר תיק", value: snapshot.publicCaseNumber, ltr: true}, {label: "סטטוס", value: formatClientStatus(snapshot.status ?? "ACTIVE")},
       {label: "מספר לווים", value: snapshot.numberOfBorrowers},
       {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)}, {label: "מטרת ההלוואה", value: formatDealType(snapshot.loanRequest.purpose)},
       {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)}
     ], title, subtitle);
-    sectionTitle(document, "פרטים אישיים", title, subtitle);
+
+    // 2. סיכום פיננסי ומשפחתי
+    sectionTitle(document, "סיכום פיננסי ומשפחתי", title, subtitle);
+    fieldRows(document, [
+      {label: "סך הכנסה", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
+      {label: "סך החזרים", value: formatCurrency(snapshot.totals.monthlyPayments)}, {label: "מספר לווים", value: snapshot.numberOfBorrowers},
+      {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)},
+      {label: "גילאי הילדים", value: snapshot.household.childrenAges.length ? snapshot.household.childrenAges.join(", ") : "אין ילדים"}
+    ], title, subtitle);
+
+    // 3. חיווי אשראי (full PDF only)
+    if (snapshot.creditIndication) {
+      sectionTitle(document, "חיווי אשראי", title, subtitle);
+      paragraph(document, "האם היו ב-3 השנים האחרונות:", title, subtitle);
+      fieldRows(document, creditIndicationFields(snapshot.creditIndication), title, subtitle);
+    }
+
+    // 4/7. פרטי לווה N, 5/8. הכנסות לווה N, 6. הכנסות נוספות לווה N
     for (const borrower of snapshot.borrowers) {
+      sectionTitle(document, `פרטי לווה ${borrower.order} — ${borrowerHeading(borrower)}`, title, subtitle);
       fieldRows(document, [
-        {label: `לווה ${borrower.order} — שם מלא`, value: `${borrower.firstName} ${borrower.lastName}`}, {label: "מספר תעודת זהות", value: borrower.identityNumber, ltr: true},
-        {label: "תאריך לידה", value: formatDate(borrower.dateOfBirth)}, {label: "גיל", value: borrower.age},
-        {label: "טלפון", value: borrower.phone, ltr: true}, {label: "דוא״ל", value: borrower.email, ltr: true},
-        {label: "כתובת מגורים", value: borrower.address}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
+        {label: "שם מלא", value: `${borrower.firstName} ${borrower.lastName}`}, {label: "מספר תעודת זהות", value: borrower.identityNumber, ltr: true},
+        {label: "תאריך לידה", value: formatDate(borrower.dateOfBirth)}, {label: "טלפון", value: borrower.phone, ltr: true},
+        {label: "דוא״ל", value: borrower.email, ltr: true}, {label: "עיר מגורים", value: borrower.city},
+        {label: "רחוב ומספר בית", value: borrower.streetAddress}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
         {label: "מספר ילדים", value: borrower.numberOfChildren}, {label: "גילאי ילדים", value: borrower.childrenAges.length ? borrower.childrenAges.join(", ") : "אין"}
       ], title, subtitle);
+
+      sectionTitle(document, `הכנסות — לווה ${borrower.order}`, title, subtitle);
+      fieldRows(document, primaryIncomeFields(borrower, false), title, subtitle);
+
+      sectionTitle(document, `הכנסות נוספות — לווה ${borrower.order}`, title, subtitle);
+      paragraph(document, additionalIncomesText(additionalIncomesOf(borrower)), title, subtitle);
     }
-    sectionTitle(document, "הכנסות", title, subtitle);
-    snapshot.borrowers.forEach((borrower) => fieldRows(document, [{label: "לווה", value: `${borrower.firstName} ${borrower.lastName}`}, ...borrowerIncomeFields(borrower, false)], title, subtitle));
+
+    // 9. התחייבויות
     sectionTitle(document, "התחייבויות", title, subtitle);
     const liabilities = [...snapshot.borrowers.flatMap((borrower) => borrower.liabilities), ...snapshot.householdLiabilities];
-    if (liabilities.length) liabilities.forEach((liability, index) => fieldRows(document, liabilityFields(liability, `התחייבות ${index + 1} — `), title, subtitle));
+    if (liabilities.length) liabilities.forEach((liability, index) => drawLiabilityCard(document, liability, index, title, subtitle));
     else paragraph(document, "לא דווחו התחייבויות פעילות.", title, subtitle);
+
+    // 10. נכס
     sectionTitle(document, "נכס ובקשת מימון", title, subtitle);
     fieldRows(document, [
       {label: "סוג נכס", value: formatPropertyType(snapshot.property.propertyType)}, {label: "עיר", value: snapshot.property.city},
@@ -377,8 +530,12 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
       {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "תקופה מבוקשת", value: `${snapshot.loanRequest.requestedTermMonths} חודשים`},
       {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מטרת ההלוואה", value: formatDealType(snapshot.loanRequest.purpose)}
     ], title, subtitle);
+
+    // 11. פירוט העסקה
     sectionTitle(document, "פירוט העסקה", title, subtitle);
     paragraph(document, snapshot.dealDetails, title, subtitle);
+
+    // 12. מסמכי התיק
     sectionTitle(document, "סטטוס מסמכי חובה", title, subtitle);
     const requiredDocuments = documentStatusFields(snapshot.documents, snapshot.borrowers);
     paragraph(document, requiredDocuments.every((field) => field.value === "קיים בתיק") ? "כל מסמכי החובה קיימים בתיק." : "חסרים מסמכי חובה בתיק.", title, subtitle);
@@ -390,6 +547,7 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
         {label: "תאריך העלאה", value: formatDate(item.createdAt)}
       ]), title, subtitle);
     }
+
     sectionTitle(document, "פרטי היועץ", title, subtitle);
     fieldRows(document, [
       {label: "שם", value: snapshot.advisor.fullName}, {label: "שם העסק", value: snapshot.advisor.businessName},

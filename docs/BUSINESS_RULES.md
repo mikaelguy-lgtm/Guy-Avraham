@@ -249,3 +249,16 @@ to Production. Key rule changes:
   digit/special-character/no-space rules were removed. This is our own
   application-layer Zod schema — no Firebase Console password policy
   configuration was found in this repo, and none was touched.
+
+### Completion pass, same day
+
+The initial rebuild pass above left the full lender portal's section order,
+the full PDF's hierarchy, and the typography audit as PARTIAL/SKIPPED, and
+E2E as not-run. A same-day follow-up closed all of these — see
+`docs/DECISIONS.md` ("Full lender portal rebuilt into distinct sections;
+PDF hierarchy rebuilt; typography baseline added" and "Server-determined
+lender targeting makes the old two-wave delivery test obsolete") for what
+changed, and the `FINAL PRODUCT COMPLETION REPORT` for verification
+evidence (a real Playwright run against the local Docker stack, live
+portal screenshots at desktop/mobile, generated-PDF visual review, and
+migration dry-runs on both a fresh database and the existing local one).

@@ -63,6 +63,23 @@ a { color: inherit; }
 h1, h2, h3, h4, p { margin-block-start: 0; }
 p { line-height: 1.65; }
 
+/* Typography hierarchy baseline. Tailwind's preflight resets h1–h4 to
+   inherit size/weight from their parent, so without this every heading
+   renders as plain body text unless a more specific rule (many already
+   exist below) overrides it — that specific override still wins here via
+   normal CSS specificity, this only fills in the gaps. Ranges follow the
+   product typography audit: page title 22–28px, section heading 18–22px,
+   important person/company names 17–20px, body 15–16px. */
+h1 { font-size: clamp(1.5rem, 1.2rem + 1.2vw, 1.75rem); font-weight: 800; }
+h2 { font-size: 1.25rem; font-weight: 800; }
+h3 { font-size: 1.125rem; font-weight: 800; }
+h4 { font-size: 1rem; font-weight: 700; }
+/* Genuinely prominent names — lender company, advisor, client, borrower —
+   that render outside a semantic heading tag (e.g. a company name shown
+   beside a case title) or need more weight than the h1–h4 baseline gives
+   a nested h2/h3 in a small card. */
+.prominent-name { font-size: 1.15rem; font-weight: 850; color: var(--text); line-height: 1.3; }
+
 .panel, .content-card { background: linear-gradient(145deg, rgba(15, 23, 43, .94), rgba(8, 17, 33, .94)); border: 1px solid var(--border-soft); border-radius: 22px; box-shadow: 0 20px 60px rgba(0, 0, 0, .22); }
 .content-card { padding: clamp(1.1rem, 2vw, 1.7rem); }
 .primary-action, .secondary-action, .ghost-action, .danger-action, .icon-text-button, .card-link { display: inline-flex; align-items: center; justify-content: center; gap: .48rem; min-block-size: 42px; border-radius: 12px; padding-block: .65rem; padding-inline: 1rem; font-weight: 800; transition: transform .16s ease, border-color .16s ease, background .16s ease; }
@@ -124,7 +141,7 @@ p { line-height: 1.65; }
 .advisor-hero { padding-block: .4rem; }
 .advisor-hero h1, .page-title h1 { margin-block-end: .35rem; font-size: clamp(1.8rem, 3vw, 2.75rem); letter-spacing: -.035em; }
 .advisor-hero p, .page-title p, .section-heading p { margin: 0; color: var(--muted); }
-.eyebrow { display: inline-block; margin-block-end: .45rem; color: #22d3ee; font-size: .76rem; font-weight: 900; letter-spacing: .08em; }
+.eyebrow { display: inline-block; margin-block-end: .45rem; color: #22d3ee; font-size: .8rem; font-weight: 900; letter-spacing: .08em; }
 .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
 .stat-card { display: flex; align-items: center; gap: 1rem; min-block-size: 112px; padding: 1.15rem; background: linear-gradient(145deg, rgba(15, 23, 43, .92), rgba(7, 15, 30, .92)); border: 1px solid var(--border-soft); border-radius: 18px; box-shadow: 0 13px 38px rgba(0, 0, 0, .18); }
 .stat-card > span:last-child { display: grid; gap: .22rem; }

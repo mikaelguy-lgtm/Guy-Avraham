@@ -214,3 +214,66 @@ fragments, so this should never silently regress.
 ראשוני"/"תצוגה מלאה") — never any word from the banned family, even as an
 internal-sounding variant. Internal-only identifiers (variable/column
 names never rendered to a user) are exempt.
+
+## Full lender portal rebuilt into distinct sections; PDF hierarchy rebuilt; typography baseline added (2026-08-29)
+
+**Decision**: the full lender portal (`ExternalDeliveryPortal.tsx`,
+`ExternalBorrowerDetails.tsx`) was split from one consolidated
+per-borrower card into four separate top-level sections — personal
+details, income, additional incomes, liabilities — in that literal order,
+each showing every borrower before moving to the next section. The full
+PDF (`pdf.ts`) was rebuilt the other way: **per-borrower interleaved**
+(each borrower's personal/income/additional-income sections appear
+together before moving to the next borrower), followed by one combined
+liabilities section, property, deal details, and documents — matching two
+different, separately-specified literal orders for the same underlying
+data. Both surfaces now show self-employed fields (with year labels
+computed from the real Asia/Jerusalem current year), a credit-indication
+section (full portal/PDF only, never masked), city+street address, and the
+borrower's age directly beside their name everywhere a name appears
+(portal, PDF, and the advisor's own `ClientDetailView.tsx`). A global
+typography baseline was added in `src/index.css` (`h1`–`h4` explicit
+size/weight, since Tailwind's preflight otherwise makes unstyled headings
+inherit their parent's plain body text style) plus a `.prominent-name`
+class for names that were previously rendered through the small `.eyebrow`
+kicker style (most notably the lender company name in the portal/review
+header, which is why it looked "too small" before this).
+
+**Why**: explicit, separately-specified product-owner requirement for each
+surface (a company reviewing 2+ borrowers needs the field-type-grouped
+portal view; a printed/downloaded PDF reads better organized borrower by
+borrower). The typography bug (unstyled headings collapsing to body text)
+was found and root-caused during this pass, not assumed — confirmed by
+reading the Tailwind preflight behavior and cross-checked visually against
+a live-rendered portal screenshot before and after the fix.
+
+**How to apply**: keep these two orders distinct on purpose — do not
+"simplify" the PDF to match the portal's field-type grouping or vice
+versa. When adding a new heading-bearing element, prefer a real `h1`–`h4`
+tag (it now gets sane sizing for free) over a styled `<span>`; only use
+`.prominent-name` for a name-like value that must render inside a `span`
+or a card that isn't itself a heading.
+
+## Server-determined lender targeting makes the old two-wave delivery test obsolete (2026-08-29)
+
+**Decision**: `tests/e2e/full-flow.spec.ts`'s "second company added later"
+scenario was restructured so both companies exist and are active *before*
+the single `delivery/send` call, rather than sending to them in two
+separate waves. The same-company conflicting-decision test (one contact
+says interested, the other not-interested) was kept — it's still a valid,
+independent scenario — just re-plumbed onto the one-shot send.
+
+**Why**: with server-determined targeting (every active lender with a
+contact, computed once at send time), "send to company A, then later send
+to company B" is no longer a real code path — a second `delivery/send`
+call for the same case just re-targets every eligible company again,
+including company A. The old test's premise (simulate an advisor adding a
+company after the fact) is architecturally impossible now, by design (see
+the lender-targeting decision above), so keeping it would have required
+either fighting the new architecture or silently testing the wrong thing.
+
+**How to apply**: don't reintroduce a "send again to add one more company"
+flow anywhere (tests or product) without first revisiting the
+lender-targeting decision itself — it would be a regression of the
+explicit "server always targets every eligible company, frozen at send
+time" rule.

@@ -9,7 +9,10 @@ export class CaseRedactionService {
     const exactValues = new Set<string>();
     const categories = new Set<string>();
     for (const borrower of source.borrowers) {
-      [borrower.firstName, borrower.lastName, `${borrower.firstName} ${borrower.lastName}`, borrower.identityNumber, borrower.phone, borrower.email, borrower.address, borrower.city, borrower.streetAddress, borrower.employment.employerName]
+      // City is deliberately NOT included here: it is the one address
+      // granularity the masked view intentionally discloses as
+      // residenceCity, so it must not self-redact wherever it appears.
+      [borrower.firstName, borrower.lastName, `${borrower.firstName} ${borrower.lastName}`, borrower.identityNumber, borrower.phone, borrower.email, borrower.address, borrower.streetAddress, borrower.employment.employerName]
         .map((value) => value.trim()).filter((value) => value.length >= 2).forEach((value) => exactValues.add(value));
     }
     if (source.property.address) exactValues.add(source.property.address.trim());

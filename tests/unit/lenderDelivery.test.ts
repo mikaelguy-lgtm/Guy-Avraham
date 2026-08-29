@@ -83,6 +83,14 @@ describe("CaseRedactionService", () => {
     expect(residenceCityFromAddress("רחוב הרצל 1, תל אביב")).toBe("תל אביב");
     expect(residenceCityFromAddress("רחוב הרצל 1, תל אביב 61000")).toBe("");
   });
+
+  it("never self-redacts the residence city it intentionally discloses, even though it equals the borrower's own city field", () => {
+    const withCity = structuredClone(fullSnapshot);
+    withCity.borrowers[0].city = "תל אביב"; withCity.borrowers[0].residenceCity = "תל אביב";
+    withCity.borrowers[1].city = "תל אביב"; withCity.borrowers[1].residenceCity = "תל אביב";
+    const masked = new CaseRedactionService().redact(withCity).maskedSnapshot;
+    expect(masked.borrowers.every((borrower) => borrower.residenceCity === "תל אביב")).toBe(true);
+  });
 });
 
 describe("delivery preflight", () => {

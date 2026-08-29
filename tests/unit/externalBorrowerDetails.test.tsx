@@ -13,6 +13,8 @@ const borrower: ExternalBorrowerDetailsModel = {
   phone: "0501234567",
   email: "very-long-borrower-email-address-for-responsive-verification@syncash.local",
   address: "רחוב סודי 1, תל אביב",
+  city: "תל אביב",
+  streetAddress: "רחוב סודי 1",
   residenceCity: "תל אביב",
   maritalStatus: "MARRIED",
   numberOfChildren: 2,

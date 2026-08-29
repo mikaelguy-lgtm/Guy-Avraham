@@ -33,7 +33,7 @@ describe("Hebrew PDF rendering integration", () => {
       pages.push(content.items.map((item) => "str" in item ? item.str : "").join(" ").split("\u0000").join("").replace(/\s+/gu, " ").trim());
     }
     const text = pages.join(" ");
-    for (const expected of ["תיק מימון לבחינה ראשונית", "תקציר העסקה", "פרטים אישיים", "הכנסות", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(text).toContain(expected);
+    for (const expected of ["תיק מימון לבחינה ראשונית", "תקציר העסקה", "סיכום פיננסי ומשפחתי", "פרטי לווים מוגבלים", "הכנסות רלוונטיות לבחינה ראשונית", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(text).toContain(expected);
     expect(text).not.toMatch(/[�□■]/u);
     expect(text).not.toMatch(/SECOND_HAND_PURCHASE|SALARIED|MORTGAGE|APARTMENT/u);
     expect(pages.every((pageText) => pageText.replace(/SYNCASH|מידע סודי|הופק|עמוד|מתוך|\s/gu, "").length > 10)).toBe(true);

@@ -54,50 +54,31 @@ of what was fixed and when.
 8. `codex-bridge/` directory (per `AUDIT.md`, described as unrelated
    workspace tooling, out of SynCash scope) — left untouched, not audited.
 
-## Open from the 2026-08-29 product rebuild (branch `codex-syncash-production-rebuild`)
+## Open from the 2026-08-29 product rebuild completion pass
 
-9. **Full lender portal is not yet reordered into the exact 11-part literal
-   sequence** from the rebuild spec. All 11 pieces of information are
-   present (advisor, financing/property summary, financial/family summary,
-   credit indication, borrower details, income, additional incomes,
-   liabilities, property, deal description, documents, full PDF/ZIP), but
-   borrower details/income/additional incomes/liabilities are still
-   rendered as one consolidated `ExternalBorrowersSection` rather than four
-   separate top-level sections in the specified order. Needs a follow-up
-   pass through `src/components/ExternalDeliveryPortal.tsx` and
-   `ExternalBorrowerDetails.tsx`.
-10. **`src/services/pdf.ts`'s full-case PDF was not rebuilt for hierarchy** —
-    the forbidden-wording fixes, self-employed/credit-indication field
-    additions, and per-borrower document-type wiring landed, but the
-    broader visual reorganization (borrower sections with age directly
-    beside the name throughout, income grouped per-borrower with numbered
-    additional incomes, liability blocks kept together across page breaks)
-    was not attempted. Needs dedicated PDF layout work plus visual
-    inspection of the rendered output (RTL, page breaks, no orphan
-    headings) — not just text-content assertions.
-11. **Typography hierarchy audit not done.** Company name and advisor name
-    are still visually small in a few surfaces (noted directly in the
-    rebuild spec); a full pass through `src/index.css` establishing a
-    consistent scale was not attempted in this session.
-12. **Playwright E2E was updated for known text/flow changes but not
-    executed.** `tests/e2e/full-flow.spec.ts` was patched to match the new
-    wizard (no company checkboxes, no confirmation checkbox, new success
-    heading) based on reading `LoanArena.tsx`, but this session had no
-    running Postgres/Redis/MinIO/SMTP stack to actually run
-    `npm run test:e2e` against. Needs a real run before this is trusted —
-    other parts of the spec that touch client creation (address split,
-    self-employed fields, credit indication) were not audited line-by-line
-    and may still reference the old single `address` field or omit
-    `selfEmployed`.
-13. **Visual/screenshot verification not performed** for any of the 11
-    views called out in the rebuild spec (wizard steps, confirmation,
-    success, credit indication tab, self-employed form, company responses,
-    initial lender view, full lender portal, limited PDF, full PDF) at
-    desktop or mobile — no browser was driven against a live instance in
-    this session.
-14. **Notification scoping to "the owning advisor + authorized managers"**
-    was confirmed for the advisor half (`insert into notifications` targets
-    exactly one `user_id`, the owning advisor — not a broadcast) but this
-    session found no separate manager-notification path to verify the
-    "authorized managers" half against; confirm whether that concept exists
-    in this product at all before treating it as a gap.
+Items 9–14 from the first rebuild pass (portal section order, PDF hierarchy,
+typography, E2E execution, visual verification, notification scoping) were
+all closed out in a follow-up completion pass the same day — see
+`docs/DECISIONS.md` ("Full lender portal rebuilt into distinct sections; PDF
+hierarchy rebuilt; typography baseline added" and "Server-determined lender
+targeting makes the old two-wave delivery test obsolete") for what changed
+and why, and the corresponding `SYNCASH PRODUCT REBUILD REPORT` / `FINAL
+PRODUCT COMPLETION REPORT` for the verification evidence (real E2E run
+against the local Docker stack, live screenshots, generated-PDF visual
+review, migration dry-runs). Two residual, genuinely minor items remain:
+
+9. **Typography: only a global h1–h4 baseline plus a few explicitly
+   named elements were fixed** (company name, advisor name — via a new
+   `.prominent-name` class — and the `.eyebrow` kicker size). Metadata
+   labels throughout the app that were already below the 14px floor before
+   this pass (timestamps, small hints, badges outside the five audited
+   surfaces) were not individually raised — the rebuild spec only required
+   this "as much as possible" and explicitly forbade a blind global
+   font-size increase, so a narrower, hierarchy-driven fix was made instead
+   of touching every small label in the app.
+10. **"Authorized managers" notification scoping** still has no concept to
+    verify against in this codebase (only single-advisor targeting exists).
+    The product owner has since clarified (2026-08-29) that this is not a
+    blocker for the current task — no manager notification system needs to
+    be built. Revisit only if a manager role/notification concept is
+    introduced later.
