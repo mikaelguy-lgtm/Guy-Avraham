@@ -84,7 +84,7 @@ function expectHealthyHebrewPdf(extracted: {pageCount: number; pageTexts: string
   expect(extracted.pageCount).toBeLessThanOrEqual(kind === "masked" ? 6 : 10);
   expect(extracted.pageTexts.every((pageText) => pageText.replace(/SYNCASH|מידע סודי|הופק|עמוד|מתוך|\s/g, "").length > 10)).toBe(true);
   for (const heading of kind === "masked"
-    ? ["תיק מימון לבחינה ראשונית", "תקציר העסקה", "סיכום פיננסי ומשפחתי", "פרטי לווים מוגבלים", "הכנסות רלוונטיות לבחינה ראשונית", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]
+    ? ["תיק מימון לבחינה ראשונית", "תקציר העסקה", "סיכום פיננסי ומשפחתי", "חיווי אשראי", "פרטי לווים מוגבלים", "הכנסות רלוונטיות לבחינה ראשונית", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]
     : ["תיק מימון מלא", "תקציר בקשת המימון", "סיכום פיננסי ומשפחתי", "חיווי אשראי", "פרטי לווה 1", "פרטי לווה 2", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]
   ) expect(extracted.text).toContain(heading);
   expect(extracted.text).not.toMatch(/[�□■]/u);
@@ -179,7 +179,7 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     const preview = await previewResponse.json() as {maskedPdfBase64: string; pdfRendererVersion: number; pdfFontFingerprint: string; pdfGeneratedAt: string; pdfContentHash: string};
     const previewBody = JSON.stringify(preview);
     for (const pii of ["בדיקת", "מסירה", "123456782", "0501234567", "delivery-client@syncash.local", "רחוב סודי", "מעסיק סודי"]) expect(previewBody).not.toContain(pii);
-    expect(preview.pdfRendererVersion).toBe(3); expect(preview.pdfFontFingerprint).toMatch(/^[a-f0-9]{64}$/); expect(preview.pdfContentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(preview.pdfRendererVersion).toBe(4); expect(preview.pdfFontFingerprint).toMatch(/^[a-f0-9]{64}$/); expect(preview.pdfContentHash).toMatch(/^[a-f0-9]{64}$/);
     previewPdf = Buffer.from(preview.maskedPdfBase64, "base64");
     await mkdir(pdfProofDirectory, {recursive: true}); await writeFile(`${pdfProofDirectory}/masked-from-docker-endpoint.pdf`, previewPdf);
     expect(previewPdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
@@ -223,6 +223,11 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     await expect(reviewPage.getByTestId("external-borrowers-masked")).toBeVisible();
     await expect(reviewPage.locator(".external-borrower-card")).toHaveCount(2);
     await expect(reviewPage.locator(".external-household-liabilities")).toHaveCount(1);
+    // Credit indication carries no PII, so it must be visible in the masked/initial
+    // review too — not gated behind the company committing to "Interested".
+    await expect(reviewPage.getByRole("heading", {name: "חיווי אשראי"})).toBeVisible();
+    await expect(reviewPage.getByText("החזרי צ'קים")).toBeVisible();
+    await expect(reviewPage.getByText("עיקולים")).toBeVisible();
     await reviewPage.setViewportSize({width: 1440, height: 1000}); await mkdir(borrowerLayoutProofDirectory, {recursive: true}); await reviewPage.screenshot({path: `${borrowerLayoutProofDirectory}/live-full-flow-masked-1440.png`, fullPage: true});
     for (const pii of ["בדיקת מסירה", "123456782", "0501234567", "delivery-client@syncash.local", "מעסיק סודי", "רחוב הנכס הסודי"]) await expect(reviewPage.locator("body")).not.toContainText(pii);
     const reviewToken = new URL(reviewA).pathname.split("/").at(-1) ?? "";
@@ -232,9 +237,10 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     expect(persistedMaskedPdf).toEqual(previewPdf);
     expectHealthyHebrewPdf(await extractPdf(persistedMaskedPdf), "masked");
     const regeneratedObject = await s3.send(new GetObjectCommand({Bucket: process.env.S3_BUCKET, Key: maskedObject!.Key}));
-    expect(regeneratedObject.Metadata?.["renderer-version"]).toBe("3"); expect(regeneratedObject.Metadata?.["font-fingerprint"]).toMatch(/^[a-f0-9]{64}$/); expect(regeneratedObject.Metadata?.["content-hash"]).toMatch(/^[a-f0-9]{64}$/);
+    expect(regeneratedObject.Metadata?.["renderer-version"]).toBe("4"); expect(regeneratedObject.Metadata?.["font-fingerprint"]).toMatch(/^[a-f0-9]{64}$/); expect(regeneratedObject.Metadata?.["content-hash"]).toMatch(/^[a-f0-9]{64}$/);
     const maskedDownloadPromise = reviewPage.waitForEvent("download"); await reviewPage.getByRole("button", {name: "הורדת PDF"}).click();
     const maskedDownload = await maskedDownloadPromise; expect(await downloadedBuffer(maskedDownload)).toEqual(previewPdf);
+    expect(maskedDownload.suggestedFilename()).toBe(`SynCash_תיק_מימון_ראשוני_${client.publicCaseNumber}.pdf`);
     await reviewPage.getByRole("button", {name: "מעוניינים", exact: true}).click();
     await expect(reviewPage.getByText("המייל נשלח לשרת הדואר", {exact: false})).toBeVisible();
     await expect(reviewPage.getByText("ספאם, דואר זבל וקידומי מכירות", {exact: false})).toBeVisible();
@@ -297,7 +303,7 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     await portalPage.setViewportSize({width: 1440, height: 1000}); await portalPage.screenshot({path: `${borrowerLayoutProofDirectory}/live-full-flow-full-1440.png`, fullPage: true});
     await portalPage.setViewportSize({width: 390, height: 844}); await portalPage.screenshot({path: `${borrowerLayoutProofDirectory}/live-full-flow-full-390.png`, fullPage: true});
     await portalPage.setViewportSize({width: 1440, height: 1000});
-    const fullPdfPromise = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "PDF מלא"}).click(); const fullPdfDownload = await fullPdfPromise; expect(fullPdfDownload.suggestedFilename()).toContain("תיק-מימון-מלא");
+    const fullPdfPromise = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "PDF מלא"}).click(); const fullPdfDownload = await fullPdfPromise; expect(fullPdfDownload.suggestedFilename()).toBe(`SynCash_תיק_מימון_מלא_${client.publicCaseNumber}.pdf`);
     const fullPdf = await downloadedBuffer(fullPdfDownload); await writeFile(`${pdfProofDirectory}/full-from-docker-endpoint.pdf`, fullPdf); expect(fullPdf.toString("latin1")).toContain("NotoSansHebrew"); const fullExtracted = await extractPdf(fullPdf); expectHealthyHebrewPdf(fullExtracted, "full"); expect(fullExtracted.text).toContain("בדיקת מסירה");
     const documentDownload = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: /^הורדת /}).first().click(); expect((await documentDownload).suggestedFilename()).not.toContain("ID_FRONT");
     const zipDownloadPromise = portalPage.waitForEvent("download"); await portalPage.getByRole("button", {name: "הורדת כל התיק"}).click(); const zipDownload = await zipDownloadPromise; expect(zipDownload.suggestedFilename()).toMatch(/\.zip$/);

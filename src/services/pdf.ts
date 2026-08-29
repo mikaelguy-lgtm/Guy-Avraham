@@ -414,7 +414,14 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
       {label: "גילאי הילדים", value: snapshot.household.childrenAges.length ? snapshot.household.childrenAges.join(", ") : "אין ילדים"}
     ], title, subtitle);
 
-    // 3. פרטי לווים מוגבלים
+    // 3. חיווי אשראי
+    if (snapshot.creditIndication) {
+      sectionTitle(document, "חיווי אשראי", title, subtitle);
+      paragraph(document, "האם היו ב-3 השנים האחרונות:", title, subtitle);
+      fieldRows(document, creditIndicationFields(snapshot.creditIndication), title, subtitle);
+    }
+
+    // 4. פרטי לווים מוגבלים
     sectionTitle(document, "פרטי לווים מוגבלים", title, subtitle);
     for (const borrower of snapshot.borrowers) {
       const fields: PdfField[] = [
@@ -427,7 +434,7 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
       });
     }
 
-    // 4. הכנסות רלוונטיות לבחינה ראשונית
+    // 5. הכנסות רלוונטיות לבחינה ראשונית
     sectionTitle(document, "הכנסות רלוונטיות לבחינה ראשונית", title, subtitle);
     for (const borrower of snapshot.borrowers) {
       const fields = primaryIncomeFields(borrower, true);
@@ -440,13 +447,13 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
       keepTogether(document, additionalHeight + 8, title, subtitle, () => paragraph(document, additionalText, title, subtitle));
     }
 
-    // 5. התחייבויות
+    // 6. התחייבויות
     sectionTitle(document, "התחייבויות", title, subtitle);
     const liabilities = [...snapshot.borrowers.flatMap((borrower) => borrower.liabilities), ...snapshot.householdLiabilities];
     if (liabilities.length) liabilities.forEach((liability, index) => drawLiabilityCard(document, liability, index, title, subtitle));
     else paragraph(document, "לא דווחו התחייבויות פעילות.", title, subtitle);
 
-    // 6. נכס ובקשת מימון
+    // 7. נכס ובקשת מימון
     sectionTitle(document, "נכס ובקשת מימון", title, subtitle);
     fieldRows(document, [
       {label: "סוג נכס", value: formatPropertyType(snapshot.property.propertyType)}, {label: "עיר הנכס", value: snapshot.property.city},
@@ -454,11 +461,11 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
       {label: "תקופה מבוקשת", value: `${snapshot.loanRequest.requestedTermMonths} חודשים`}, {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}
     ], title, subtitle);
 
-    // 7. פירוט העסקה
+    // 8. פירוט העסקה
     sectionTitle(document, "פירוט העסקה", title, subtitle);
     paragraph(document, snapshot.dealDetails, title, subtitle);
 
-    // 8. סטטוס מסמכי חובה
+    // 9. סטטוס מסמכי חובה
     sectionTitle(document, "סטטוס מסמכי חובה", title, subtitle);
     paragraph(document, snapshot.documentStatus, title, subtitle);
 

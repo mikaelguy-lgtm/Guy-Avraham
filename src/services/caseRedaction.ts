@@ -69,7 +69,9 @@ export class CaseRedactionService {
       loanRequest: source.loanRequest,
       dealDetails: sanitize(source.dealDetails) ?? "",
       totals: source.totals,
-      documentStatus: "כל מסמכי החובה קיימים בתיק."
+      documentStatus: "כל מסמכי החובה קיימים בתיק.",
+      // חיווי אשראי אינו מידע מזהה — מוצג גם בתצוגה הראשונית, ללא צורך בהצנעה.
+      creditIndication: source.creditIndication
     };
     categories.add("FULL_NAME"); categories.add("IDENTITY_NUMBER"); categories.add("CONTACT_DETAILS"); categories.add("FULL_ADDRESS"); categories.add("DATE_OF_BIRTH"); categories.add("EMPLOYER"); categories.add("ADVISOR_DETAILS");
     return {maskedSnapshot, redactionReport: {categories: [...categories].sort(), replacementCount, warnings: []}};

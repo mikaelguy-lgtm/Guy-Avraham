@@ -128,6 +128,7 @@ export interface MaskedCaseSnapshot {
   dealDetails: string;
   totals: FullCaseSnapshot["totals"];
   documentStatus: string;
+  creditIndication: CreditIndicationSnapshot | null;
 }
 
 export interface RedactionReport {

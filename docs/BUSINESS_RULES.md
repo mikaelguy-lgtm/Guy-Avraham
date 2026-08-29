@@ -205,11 +205,19 @@ to Production. Key rule changes:
   hardcoded 2-business-day constant. `company_submissions.response_business_days`
   snapshots the value used at send time — changing the setting later never
   retroactively changes an existing submission's deadline.
-- **Credit indication**: new `credit_indications` table (one row per
+- **Credit indication**: `credit_indications` table (one row per
   client), covering bounced checks/direct debits (with counts),
   collections, bankruptcy, liens, and mortgage arrears for the last 3 years.
-  Included in the full lender portal and full PDF only after a company is
-  Interested — never in the masked/initial view.
+  **Updated 2026-08-29**: shown in *both* the masked/initial review (PDF and
+  lender-facing page) and the full portal/PDF — the product owner
+  explicitly decided this data carries no PII and should be visible before
+  a company commits to "Interested", not gated behind it. `MaskedCaseSnapshot`
+  carries `creditIndication` through unchanged (`CaseRedactionService` never
+  sanitizes it, since it contains no identifying values). It is frozen into
+  a case version's `masked_snapshot`/`full_snapshot_encrypted` at send time,
+  same as every other snapshot field — a case version sent before this
+  change simply has no `creditIndication` key in its stored masked snapshot,
+  and that is not "backfilled" from live client data.
 - **Required document**: `CREDIT_DATA_REPORT` ("דוח ריכוז נתוני אשראי") is
   now a required per-borrower document, wired through the same
   `REQUIRED_BORROWER_DOCUMENT_TYPES` constant used everywhere else

@@ -15,7 +15,11 @@ const snapshot: MaskedCaseSnapshot = {
   property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", value: 2_000_000},
   loanRequest: {purpose: "SECOND_HAND_PURCHASE", requestedAmount: 1_000_000, requestedTermMonths: 240, loanToValue: 50},
   dealDetails: "רכישה יד שנייה במרכז הארץ", totals: {monthlyIncome: 20_000, liabilityBalance: 400_000, monthlyPayments: 4_000},
-  documentStatus: "כל מסמכי החובה קיימים בתיק."
+  documentStatus: "כל מסמכי החובה קיימים בתיק.",
+  creditIndication: {
+    bouncedChecks: true, bouncedChecksCount: 5, bouncedDirectDebits: true, bouncedDirectDebitsCount: 3,
+    collectionProceedings: false, bankruptcy: false, liens: false, mortgageArrears: false
+  }
 };
 
 describe("Hebrew PDF rendering integration", () => {
@@ -33,7 +37,11 @@ describe("Hebrew PDF rendering integration", () => {
       pages.push(content.items.map((item) => "str" in item ? item.str : "").join(" ").split("\u0000").join("").replace(/\s+/gu, " ").trim());
     }
     const text = pages.join(" ");
-    for (const expected of ["תיק מימון לבחינה ראשונית", "תקציר העסקה", "סיכום פיננסי ומשפחתי", "פרטי לווים מוגבלים", "הכנסות רלוונטיות לבחינה ראשונית", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(text).toContain(expected);
+    for (const expected of ["תיק מימון לבחינה ראשונית", "תקציר העסקה", "סיכום פיננסי ומשפחתי", "חיווי אשראי", "פרטי לווים מוגבלים", "הכנסות רלוונטיות לבחינה ראשונית", "התחייבויות", "נכס ובקשת מימון", "פירוט העסקה", "כל מסמכי החובה קיימים בתיק"]) expect(text).toContain(expected);
+    expect(text).toContain("החזרי צ'קים");
+    expect(text).toContain("כן (5)");
+    expect(text).toContain("כן (3)");
+    expect(text).toContain("פיגורים במשכנתא");
     expect(text).not.toMatch(/[�□■]/u);
     expect(text).not.toMatch(/SECOND_HAND_PURCHASE|SALARIED|MORTGAGE|APARTMENT/u);
     expect(pages.every((pageText) => pageText.replace(/SYNCASH|מידע סודי|הופק|עמוד|מתוך|\s/gu, "").length > 10)).toBe(true);

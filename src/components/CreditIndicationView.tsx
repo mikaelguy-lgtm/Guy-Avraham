@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Banknote, CircleCheck, Gavel, HelpCircle, HousePlus, Landmark, ShieldQuestion } from "lucide-react";
+import { Banknote, Gavel, HousePlus, Landmark, ShieldQuestion } from "lucide-react";
 import type { CreditIndication } from "../types";
 import { ApiError, api } from "../utils/apiClient";
 
@@ -33,28 +33,24 @@ function statusClass(value: "" | "yes" | "no"): string {
   return value === "yes" ? "flagged" : value === "no" ? "clear" : "unanswered";
 }
 
-function CreditIndicationCard({icon, label, value, onChange, countValue, onCountChange, countLabel}: {
+function CreditIndicationRow({icon, label, value, onChange, countValue, onCountChange, countLabel}: {
   icon: React.ReactNode; label: string; value: "" | "yes" | "no"; onChange: (value: "" | "yes" | "no") => void;
   countValue?: string; onCountChange?: (value: string) => void; countLabel?: string;
 }) {
-  return <article className={`credit-indication-card ${statusClass(value)}`}>
-    <div className="credit-indication-card-heading">
-      <span className="credit-indication-icon" aria-hidden="true">{icon}</span>
-      <span className="credit-indication-question">{label}</span>
-      {value === "" && <span className="credit-indication-pending"><HelpCircle size={14} />טרם נענה</span>}
+  return <div className={`credit-indication-row ${statusClass(value)}`}>
+    <div className="credit-indication-row-main">
+      <span className="credit-indication-row-label"><span aria-hidden="true">{icon}</span>{label}</span>
+      <div className="yes-no-toggle compact" role="radiogroup" aria-label={label}>
+        <label className={value === "no" ? "selected" : ""}>
+          <input type="radio" name={label} checked={value === "no"} onChange={() => onChange("no")} />לא
+        </label>
+        <label className={value === "yes" ? "selected" : ""}>
+          <input type="radio" name={label} checked={value === "yes"} onChange={() => onChange("yes")} />כן
+        </label>
+      </div>
     </div>
-    <div className="yes-no-toggle" role="radiogroup" aria-label={label}>
-      <label className={value === "no" ? "selected" : ""}>
-        <input type="radio" name={label} checked={value === "no"} onChange={() => onChange("no")} />
-        <CircleCheck size={16} aria-hidden="true" />לא
-      </label>
-      <label className={value === "yes" ? "selected" : ""}>
-        <input type="radio" name={label} checked={value === "yes"} onChange={() => onChange("yes")} />
-        <AlertTriangle size={16} aria-hidden="true" />כן
-      </label>
-    </div>
-    {value === "yes" && countValue !== undefined && onCountChange && <label className="form-field credit-indication-count"><span>{countLabel}</span><input type="number" min="1" step="1" inputMode="numeric" value={countValue} onChange={(event) => /^\d*$/.test(event.target.value) && onCountChange(event.target.value)} /></label>}
-  </article>;
+    {value === "yes" && countValue !== undefined && onCountChange && <label className="credit-indication-row-count"><span>{countLabel}</span><input type="number" min="1" step="1" inputMode="numeric" value={countValue} onChange={(event) => /^\d*$/.test(event.target.value) && onCountChange(event.target.value)} /></label>}
+  </div>;
 }
 
 export default function CreditIndicationView({clientId, indication, onUpdated}: {clientId: number; indication: CreditIndication | null; onUpdated: () => void}) {
@@ -94,21 +90,21 @@ export default function CreditIndicationView({clientId, indication, onUpdated}: 
       <span className="credit-indication-progress">{answeredCount} מתוך 6 נענו</span>
     </div>
 
-    <section className="credit-indication-group">
-      <h3><Banknote size={18} aria-hidden="true" />החזרי תשלומים</h3>
-      <div className="credit-indication-grid">
-        <CreditIndicationCard icon={<Banknote size={20} />} label="החזרי צ'קים" value={form.bouncedChecks} onChange={(value) => set("bouncedChecks", value)} countValue={form.bouncedChecksCount} onCountChange={(value) => set("bouncedChecksCount", value)} countLabel="כמה צ'קים?" />
-        <CreditIndicationCard icon={<Banknote size={20} />} label="החזרי הוראות קבע" value={form.bouncedDirectDebits} onChange={(value) => set("bouncedDirectDebits", value)} countValue={form.bouncedDirectDebitsCount} onCountChange={(value) => set("bouncedDirectDebitsCount", value)} countLabel="כמה הוראות קבע?" />
+    <section className="credit-indication-group compact">
+      <h3><Banknote size={14} aria-hidden="true" />החזרי תשלומים</h3>
+      <div className="credit-indication-rows">
+        <CreditIndicationRow icon={<Banknote size={14} />} label="החזרי צ'קים" value={form.bouncedChecks} onChange={(value) => set("bouncedChecks", value)} countValue={form.bouncedChecksCount} onCountChange={(value) => set("bouncedChecksCount", value)} countLabel="מספר צ'קים" />
+        <CreditIndicationRow icon={<Banknote size={14} />} label="החזרי הוראות קבע" value={form.bouncedDirectDebits} onChange={(value) => set("bouncedDirectDebits", value)} countValue={form.bouncedDirectDebitsCount} onCountChange={(value) => set("bouncedDirectDebitsCount", value)} countLabel="מספר הוראות" />
       </div>
     </section>
 
-    <section className="credit-indication-group">
-      <h3><Gavel size={18} aria-hidden="true" />הליכים משפטיים ופיננסיים</h3>
-      <div className="credit-indication-grid">
-        <CreditIndicationCard icon={<Gavel size={20} />} label="הוצאה לפועל" value={form.collectionProceedings} onChange={(value) => set("collectionProceedings", value)} />
-        <CreditIndicationCard icon={<Landmark size={20} />} label="פשיטת רגל" value={form.bankruptcy} onChange={(value) => set("bankruptcy", value)} />
-        <CreditIndicationCard icon={<ShieldQuestion size={20} />} label="עיקולים" value={form.liens} onChange={(value) => set("liens", value)} />
-        <CreditIndicationCard icon={<HousePlus size={20} />} label="פיגורים במשכנתא" value={form.mortgageArrears} onChange={(value) => set("mortgageArrears", value)} />
+    <section className="credit-indication-group compact">
+      <h3><Gavel size={14} aria-hidden="true" />הליכים משפטיים ופיננסיים</h3>
+      <div className="credit-indication-rows">
+        <CreditIndicationRow icon={<Gavel size={14} />} label="הוצאה לפועל" value={form.collectionProceedings} onChange={(value) => set("collectionProceedings", value)} />
+        <CreditIndicationRow icon={<Landmark size={14} />} label="פשיטת רגל" value={form.bankruptcy} onChange={(value) => set("bankruptcy", value)} />
+        <CreditIndicationRow icon={<ShieldQuestion size={14} />} label="עיקולים" value={form.liens} onChange={(value) => set("liens", value)} />
+        <CreditIndicationRow icon={<HousePlus size={14} />} label="פיגורים במשכנתא" value={form.mortgageArrears} onChange={(value) => set("mortgageArrears", value)} />
       </div>
     </section>
 

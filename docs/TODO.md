@@ -102,3 +102,23 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
     was). Left unset deliberately, per the explicit "don't change the
     Production setting right now" instruction — revisit only if the
     business wants a different default.
+
+## Discovered 2026-08-29 running the full E2E suite (pre-existing, unrelated to that day's credit-indication/PDF-filename fixes)
+
+13. **Six E2E spec files are stale against the `0af63f4` portal/address-split
+    rebuild and currently fail**: `external-borrower-layout.spec.ts` (all 9
+    viewport/scenario variants — expects a single `external-borrowers-full`
+    test id, but the full portal was split into four separate sections
+    `external-borrowers-personal`/`-income`/`-additional-incomes`/`-liabilities`
+    as part of that rebuild), `multi-borrower.spec.ts` (fills a single
+    "כתובת מגורים" field that no longer exists — address is now split into
+    "עיר מגורים"/"רחוב ומספר בית"), plus `advisor-registration.spec.ts`,
+    `advisor-visual.spec.ts`, `client-delivery.spec.ts`,
+    `client-edit-navigation.spec.ts` (not yet individually root-caused).
+    Confirmed via `git log` that none of these spec files have been touched
+    since commit `3f5685e`, which predates the `0af63f4` rebuild entirely —
+    this is pre-existing test debt, not a regression from any later change.
+    `full-flow.spec.ts` (the spec most relevant to credit indication and PDF
+    generation) was fixed and passes. The other six need a dedicated pass to
+    update their selectors/assertions to the current UI before they can be
+    trusted again.

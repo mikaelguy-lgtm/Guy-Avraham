@@ -26,7 +26,8 @@ export default function AdminCompanySubmissionsView() {
   const open = async (item: CompanyResponse) => setSelected(await api.adminCompanySubmission(item.publicId));
   const openPdf = async (kind: "masked-pdf" | "full-pdf") => {
     if (!selected) return;
-    try { openFreshPdfBlob(await api.adminCompanySubmissionPdf(selected.publicId, kind)); }
+    const filename = `SynCash_תיק_מימון_${kind === "masked-pdf" ? "ראשוני" : "מלא"}_${selected.publicCaseNumber}.pdf`;
+    try { openFreshPdfBlob(await api.adminCompanySubmissionPdf(selected.publicId, kind), filename); }
     catch { setError("לא ניתן לפתוח את קובץ ה־PDF."); }
   };
   const action = async (name: string, values: Record<string, unknown> = {}) => {

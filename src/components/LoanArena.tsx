@@ -7,9 +7,9 @@ import {openFreshPdfBlob, revokeActivePdfBlob} from "../utils/pdfBlob";
 
 type Stage = "companies" | "preview" | "confirm" | "complete";
 
-function openPdf(base64: string) {
+function openPdf(base64: string, filename?: string) {
   const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
-  openFreshPdfBlob(new Blob([bytes], {type: "application/pdf"}));
+  openFreshPdfBlob(new Blob([bytes], {type: "application/pdf"}), filename);
 }
 
 function MaskedSummary({preview}: {preview: DeliveryPreview}) {
@@ -104,7 +104,7 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
     </>}
 
     {stage === "preview" && preview && <>
-      <header className="section-heading compact"><div><h2>תצוגה מקדימה</h2><p>בדוק שהמידע העסקי מלא ושאין בו פרטים מזהים.</p></div><button type="button" className="secondary-action" onClick={() => openPdf(preview.maskedPdfBase64)}><Eye size={18} />צפייה ב-PDF</button></header>
+      <header className="section-heading compact"><div><h2>תצוגה מקדימה</h2><p>בדוק שהמידע העסקי מלא ושאין בו פרטים מזהים.</p></div><button type="button" className="secondary-action" onClick={() => openPdf(preview.maskedPdfBase64, `SynCash_תיק_מימון_ראשוני_${client?.publicCaseNumber ?? ""}.pdf`)}><Eye size={18} />צפייה ב-PDF</button></header>
       <MaskedSummary preview={preview} />
       <div className="arena-actions split"><button type="button" className="secondary-action" onClick={() => setStage("companies")}><ChevronRight />חזרה</button><button type="button" className="primary-action" onClick={() => setStage("confirm")}>המשך לאישור<ChevronLeft /></button></div>
     </>}

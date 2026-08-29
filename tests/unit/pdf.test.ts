@@ -63,7 +63,7 @@ describe("anonymous PDF", () => {
     expect(visual).not.toContain("321-CS");
     const source = readFileSync(new URL("../../src/services/pdf.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(/split\([^)]*\)\.reverse|reverse\(\)\.join/);
-    expect(PDF_RENDERER_VERSION).toBe(3);
+    expect(PDF_RENDERER_VERSION).toBe(4);
   });
 
   it("is generated only from the anonymous snapshot", async () => {
@@ -107,7 +107,7 @@ describe("anonymous PDF", () => {
     expect(normalizedText).not.toContain("גרסה");
   });
 
-  it("renders self-employed fields with dynamic year labels and a credit indication section only in the full PDF", async () => {
+  it("renders self-employed fields with dynamic year labels and a credit indication section in both the full and masked/initial PDF", async () => {
     const selfEmployedSnapshot: FullCaseSnapshot = {
       ...fullSnapshot,
       borrowers: [{
@@ -136,6 +136,9 @@ describe("anonymous PDF", () => {
     const maskedPdf = await createMaskedCasePdf(redacted, {versionNumber: 1, createdAt: new Date("2026-07-27T09:00:00Z")});
     const {normalizedText: maskedText} = await pdfContent(maskedPdf);
     expect(maskedText).toContain("ייעוץ עסקי");
-    expect(maskedText).not.toContain("חיווי אשראי");
+    expect(maskedText).toContain("חיווי אשראי");
+    expect(maskedText).toContain("החזרי צ'קים");
+    expect(maskedText).toContain("כן (3)");
+    expect(maskedText).toContain("עיקולים");
   });
 });

@@ -318,3 +318,103 @@ migration should capture before-counts for every table that could
 plausibly be affected, not just the ones being intentionally dropped —
 this deploy got away with the narrower scope only because the destructive
 change was so structurally contained.
+
+## Credit indication is shown to lenders before "Interested", not just after (2026-08-29)
+
+**Decision**: the credit-indication section (bounced checks/direct debits
+with counts, collections, bankruptcy, liens, mortgage arrears) is now
+included in the masked/initial review — both the lender-facing review page
+and the initial PDF — in addition to the full portal/PDF where it already
+appeared. `MaskedCaseSnapshot` gained a `creditIndication` field, and
+`CaseRedactionService.redact()` copies it from the full snapshot unchanged
+(no sanitization applied, since none of these fields identify a person).
+
+**Root cause of the original gap**: `MaskedCaseSnapshot` never declared a
+`creditIndication` field, so `CaseRedactionService.redact()` had nothing to
+assign it to — the full snapshot already carried this data correctly
+end-to-end (`loadFullSnapshot()` → `full_snapshot_encrypted` → full
+PDF/portal), the masked pipeline simply never had a code path to carry it
+across. Not a bug in the send/immutability mechanism — a missing field in
+one type and one mapping function.
+
+**Why**: explicit product-owner instruction — credit indication is
+financial-history data, not personally identifying information, and a
+lender company should be able to factor it into their initial go/no-go
+decision rather than only discovering it after committing to "Interested."
+
+**Backward compatibility**: this only affects case versions sent *after*
+this change. `masked_snapshot`/`full_snapshot_encrypted` are captured once,
+immutably, at send time (`case_versions` row creation) — an older case
+version's stored JSON simply has no `creditIndication` key, and every
+render path (`if (snapshot.creditIndication)` / `{data.creditIndication &&
+...}`) already treats an absent/null value as "nothing to show," not as an
+error. No historical snapshot was rewritten, and no code path pulls live
+`credit_indications` data into the rendering of an already-sent version.
+
+**How to apply**: any new snapshot field that is genuinely non-identifying
+should default to being visible at both disclosure tiers unless there's a
+specific reason to gate it — the masked tier exists to hide PII, not every
+data point that happens to live on the full snapshot.
+
+## Credit indication screen redesigned for information density (2026-08-29)
+
+**Decision**: the advisor-facing "חיווי אשראי" tab was rewritten from a
+2-column grid of large bordered cards (one per question, each with a boxed
+icon, a full-card color tint, and large yes/no buttons) to a compact
+single-column list of slim rows — small left-border accent color instead
+of a full-card tint, small inline icon, small toggle buttons, and an inline
+count field that only appears when the answer is "כן." The two existing
+question groups ("החזרי תשלומים", "הליכים משפטיים ופיננסיים") and the "X
+מתוך 6 נענו" progress badge were kept.
+
+**Why**: explicit product-owner feedback that the redesigned screen from
+the prior UX pass was still too large — the goal is for an advisor to
+understand the full credit-indication state at a glance, without scrolling,
+while keeping RTL/accessibility/keyboard-navigation/mobile-responsiveness
+intact.
+
+## PDF renderer version bumped to 4 for the masked/initial credit-indication section (2026-08-29)
+
+**Decision**: `PDF_RENDERER_VERSION` (`src/services/pdfFonts.ts`) was
+incremented from 3 to 4 alongside the `createMaskedCasePdf` change above,
+so any cached masked/full PDF object in MinIO is regenerated (via
+`refreshVersionPdfs()`'s version-mismatch check) the next time it's viewed
+or downloaded, rather than silently serving PDF bytes rendered by the
+pre-change code.
+
+**Why**: this project's established convention (already used for prior
+renderer changes) is that any content/layout change to `pdf.ts` bumps this
+counter — it is the only signal the cache-invalidation logic has that the
+renderer's output changed.
+
+## PDF download filenames normalized to a human-readable Hebrew name (2026-08-29)
+
+**Decision**: every PDF/ZIP a user can save now gets a friendly filename —
+`SynCash_תיק_מימון_ראשוני_<CASE_NUMBER>.pdf` / `SynCash_תיק_מימון_מלא_<CASE_NUMBER>.pdf`
+(and `.zip` for the full-case archive) — instead of a generic hardcoded
+name with no case number, or (for any PDF opened via "view" rather than
+"download") the browser's default `blob:` object-URL identifier.
+
+**Root cause**: the server already computed and sent a correct
+`Content-Disposition: ...; filename*=UTF-8''...` header on every PDF
+route, but that header is only honored by the browser for a direct
+navigation — none of it applies once the frontend fetches the PDF as a
+`Blob` via JavaScript and opens it itself (`window.open(blob:...)` for
+"view", or a client-built `<a download>` for "download"). Every "view"
+call site was calling `openFreshPdfBlob(blob)` with a bare `Blob`, so a
+browser's built-in PDF viewer's own "Save As" had nothing to suggest but
+the blob's internal UUID. Every "download" call site *did* pass a
+filename to its own `<a download>`, but several of those filenames were
+hardcoded generic strings with no case number.
+
+**Fix**: `openFreshPdfBlob()` now accepts an optional filename and, when
+given one, wraps the `Blob` in a `File` before creating the object URL —
+Chromium's built-in PDF viewer reads a `File`'s `name` when offering "Save
+As," which a plain `Blob` has no equivalent for. Every call site (advisor
+pre-send preview, admin submission viewer, lender initial review, lender
+full portal, its ZIP) now passes the same case-number-based filename used
+for actual downloads.
+
+**How to apply**: any new PDF/document "view in a new tab" call site must
+pass a filename to `openFreshPdfBlob`, not just a bare `Blob` — otherwise
+it silently reintroduces the UUID-filename regression.

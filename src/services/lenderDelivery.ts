@@ -701,7 +701,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     await this.pool.query(`update submission_contact_invitations set ${column}=coalesce(${column},now()),updated_at=now() where id=$1`, [row.invitation_id]);
     await this.event(this.pool, {submissionId: Number(row.submission_id), invitationId: Number(row.invitation_id), contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: download ? "MASKED_PDF_DOWNLOADED" : "MASKED_PDF_VIEWED"}, context);
     const body = await this.getCurrentVersionPdf(Number(row.case_version_id), "masked");
-    return {body, filename: `תיק-מימון-ראשוני-${row.public_case_number}.pdf`};
+    return {body, filename: `SynCash_תיק_מימון_ראשוני_${row.public_case_number}.pdf`};
   }
 
   private async queueDecisionMessages(client: PoolClient, row: Row, interested: boolean, context: DeliveryContext): Promise<void> {
@@ -903,7 +903,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   async getPortalPdf(sessionToken: string, context: DeliveryContext): Promise<{body: Buffer; filename: string}> {
     const row = await this.portalSession(sessionToken, context); const body = await this.getCurrentVersionPdf(Number(row.case_version_id), "full");
     await this.event(this.pool, {submissionId: Number(row.submission_id), contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "FULL_PDF_DOWNLOADED"}, context);
-    return {body, filename: `תיק-מימון-מלא-${row.public_case_number}.pdf`};
+    return {body, filename: `SynCash_תיק_מימון_מלא_${row.public_case_number}.pdf`};
   }
 
   private documentPublicId(row: Row): string {
@@ -939,7 +939,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     }
     const body = await zip.generateAsync({type: "nodebuffer", compression: "DEFLATE", compressionOptions: {level: 6}});
     await this.event(this.pool, {submissionId: Number(session.submission_id), contactId: Number(session.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(session.contact_id), type: "FULL_CASE_ZIP_DOWNLOADED"}, context);
-    return {body, filename: `תיק-מלא-${snapshot.publicCaseNumber}.zip`};
+    return {body, filename: `SynCash_תיק_מימון_מלא_${snapshot.publicCaseNumber}.zip`};
   }
 
   async logoutPortal(sessionToken: string): Promise<void> {
@@ -998,7 +998,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     if (!row) throw new DeliveryError("SUBMISSION_NOT_FOUND", 404, "השליחה לא נמצאה.");
     const body = await this.getCurrentVersionPdf(Number(row.case_version_id), kind);
     await this.audit(this.pool, actor.userId, kind === "masked" ? "ADMIN_MASKED_PDF_VIEWED" : "ADMIN_FULL_PDF_VIEWED", "company_submission", Number(row.id), {publicId}, context);
-    return {body, filename: `תיק-מימון-${kind === "masked" ? "ראשוני" : "מלא"}-${row.public_case_number}.pdf`};
+    return {body, filename: `SynCash_תיק_מימון_${kind === "masked" ? "ראשוני" : "מלא"}_${row.public_case_number}.pdf`};
   }
 
   async adminAction(publicId: string, action: string, values: Record<string, unknown>, actor: AdminDeliveryActor, context: DeliveryContext): Promise<unknown> {

@@ -72,6 +72,20 @@ describe("CaseRedactionService", () => {
     expect(JSON.stringify(result.redactionReport)).not.toContain("123456789");
   });
 
+  it("passes credit indication through to the masked/initial snapshot unchanged (not PII)", () => {
+    const withCreditIndication: FullCaseSnapshot = {
+      ...fullSnapshot,
+      creditIndication: {bouncedChecks: true, bouncedChecksCount: 5, bouncedDirectDebits: true, bouncedDirectDebitsCount: 3, collectionProceedings: false, bankruptcy: false, liens: false, mortgageArrears: false}
+    };
+    const {maskedSnapshot} = new CaseRedactionService().redact(withCreditIndication);
+    expect(maskedSnapshot.creditIndication).toEqual(withCreditIndication.creditIndication);
+  });
+
+  it("keeps credit indication null when the client has no recorded indication", () => {
+    const {maskedSnapshot} = new CaseRedactionService().redact(fullSnapshot);
+    expect(maskedSnapshot.creditIndication).toBeNull();
+  });
+
   it("never exposes a full home address as the residence city", () => {
     const unsafe = structuredClone(fullSnapshot);
     unsafe.borrowers[0].address = "כתובת בדיקה זמנית";
