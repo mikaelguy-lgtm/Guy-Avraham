@@ -25,6 +25,14 @@ full case. Production: `https://app.syncash.co.il`.
   to write; values are not).
 - No destructive DB operations (reset, seed, destructive migration) without a
   fresh backup, checksum, schema review, and an explicit go-ahead from the user.
+- Before any Production migration that changes or deletes schema/data, capture
+  row counts for at least: `users`, `clients`, `borrowers`, `documents`,
+  `lenders`, `lender_contacts`, `company_submissions`, `case_versions`,
+  `case_version_documents`, `email_outbox` — plus every table the migration
+  touches directly or indirectly, even if not in that list. Compare counts
+  after the migration and report any unexpected change. A table being
+  intentionally dropped by the migration is not "unexpected" — an unplanned
+  row-count change anywhere else is.
 - No direct edits inside a running container. Every production change is
   Code → Test → Commit → immutable Release → Deploy.
 - No merge to `main`, no force-push, no rebase of production history — ever —
@@ -43,16 +51,34 @@ full case. Production: `https://app.syncash.co.il`.
 
 ## Before starting any task
 
-1. `git status` and `git fetch` — do not assume local HEAD, GitHub, and the
-   Production release match. See `docs/PRODUCTION_HANDOFF.md` for the last
-   known drift between them.
-2. Check `docs/TODO.md` for open items and known discrepancies before
+1. Read `CLAUDE.md` (this file).
+2. Read `docs/PRODUCTION_HANDOFF.md`.
+3. Read `docs/BUSINESS_RULES.md`.
+4. Read `docs/DECISIONS.md`.
+5. Read `docs/TODO.md` for open items and known discrepancies before
    re-discovering them from scratch.
-3. Treat everything in root-level historical reports (`AUDIT.md`,
-   `PRODUCTION_DEPLOYMENT_REPORT.md`, `FINAL_REPORT.md`, etc.) as a dated
-   snapshot, not current truth. Code and live infrastructure state win over
-   any document when they disagree — and the disagreement itself belongs in
-   `docs/TODO.md` or `docs/DECISIONS.md`.
+6. Run `git status` and `git fetch --all --prune` before doing any work —
+   do not assume local HEAD, GitHub, and the Production release match.
+7. Do not assume Repository HEAD must equal the Production active release.
+   A gap is only Config/Code Drift — and something to actually worry
+   about — if the commits between Production and HEAD change runtime
+   behavior. A HEAD that is ahead of Production by documentation-only
+   commits (no `src/`, `drizzle/`, `Dockerfile*`, `docker-compose*`, or
+   `scripts/*.sh` changes) is expected and does not require a deploy.
+8. Before any future deploy, explicitly diff every commit between the
+   current Production SHA and the target SHA and classify each one as
+   runtime-affecting or documentation-only — don't assume the whole range
+   needs deploying just because HEAD moved.
+9. Any new release must be a descendant of the current Repository HEAD.
+   Never build a release from a commit that drops or predates an existing
+   documentation commit.
+10. No merge to `main`, ever, without the user's explicit, per-instance
+    approval (see the non-negotiable safety rules above).
+11. Treat everything in root-level historical reports (`AUDIT.md`,
+    `PRODUCTION_DEPLOYMENT_REPORT.md`, `FINAL_REPORT.md`, etc.) as a dated
+    snapshot, not current truth. Code and live infrastructure state win
+    over any document when they disagree — and the disagreement itself
+    belongs in `docs/TODO.md` or `docs/DECISIONS.md`.
 
 ## Where things live (see docs/ for full detail)
 

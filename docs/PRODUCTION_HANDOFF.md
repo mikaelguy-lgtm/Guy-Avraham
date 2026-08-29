@@ -159,11 +159,16 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 
 ## 5. Git / release state — in sync as of 2026-08-29
 
-Local HEAD, `origin/codex-syncash-production-rebuild`, and the Production
-active release are all `0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e`. No drift.
-(The prior same-day deploy at `3f5685e318f2d06ac2e247635e40602904d80e95` is
-superseded — see its history below, still accurate as a historical record
-of that specific deploy.)
+Production active release: `0af63f40d9f56fa70c7c9dd90fd9217dfa27c39e`.
+Local HEAD and `origin/codex-syncash-production-rebuild`:
+`6e6f2f36f322d680243944db600ca5bee5bf6cf6` — one commit ahead of Production,
+**documentation-only** (this file plus `BUSINESS_RULES.md`/`DECISIONS.md`/
+`TODO.md`, no `src/`/`drizzle/`/Docker/Compose/script changes). This is not
+Config/Code Drift and does not require a deploy — see the "Before starting
+any task" checklist in `CLAUDE.md` for how to reason about a HEAD/Production
+gap in future sessions. (The prior same-day deploy at
+`3f5685e318f2d06ac2e247635e40602904d80e95` is superseded — see its history
+below, still accurate as a historical record of that specific deploy.)
 
 History: this commit bundled 31 previously-uncommitted files plus migration
 `0013` (dynamic additional incomes, RENT liability type, legacy-safe
