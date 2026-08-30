@@ -7,6 +7,7 @@ import { EmailService } from "../services/email.js";
 import { AdvisorEmailVerificationService, EmulatorFirebaseVerificationLinkProvider, ProductionFirebaseVerificationLinkProvider } from "../services/emailVerification.js";
 import { GeminiService } from "../services/gemini.js";
 import { PostgresLenderDeliveryService } from "../services/lenderDelivery.js";
+import { AdvisorPasswordResetService, EmulatorFirebasePasswordResetLinkProvider, ProductionFirebasePasswordResetLinkProvider } from "../services/passwordReset.js";
 import { RedisRateLimitStore } from "../services/rateLimiter.js";
 import { S3StorageService } from "../services/storage.js";
 import { PostgresStore } from "../services/store.js";
@@ -71,12 +72,16 @@ export async function createApiRuntime() {
   const verificationLinks = env.FIREBASE_AUTH_EMULATOR_HOST
     ? new EmulatorFirebaseVerificationLinkProvider(firebaseAuth, env.APP_URL)
     : new ProductionFirebaseVerificationLinkProvider(firebaseAuth, env.APP_URL);
+  const passwordResetLinks = env.FIREBASE_AUTH_EMULATOR_HOST
+    ? new EmulatorFirebasePasswordResetLinkProvider(firebaseAuth, env.APP_URL)
+    : new ProductionFirebasePasswordResetLinkProvider(firebaseAuth, env.APP_URL);
 
   return {
     ...runtime,
     verifier,
     firebaseAuth,
     emailVerification: new AdvisorEmailVerificationService(verificationLinks, email, store),
+    passwordReset: new AdvisorPasswordResetService(passwordResetLinks, email, store),
     limiter: new RedisRateLimitStore(env.REDIS_URL),
     gemini: new GeminiService(env.GEMINI_API_KEY, env.GEMINI_MODEL)
   };

@@ -12,10 +12,14 @@ const app = createApp({
   storage: runtime.storage,
   email: runtime.email,
   emailVerification: runtime.emailVerification,
+  passwordReset: runtime.passwordReset,
   secrets: runtime.secrets,
   limiter: runtime.limiter,
   gemini: runtime.gemini,
-  firebaseAccounts: {deleteUser: (uid) => firebaseAuth.deleteUser(uid)},
+  firebaseAccounts: {
+    deleteUser: (uid) => firebaseAuth.deleteUser(uid),
+    updateUserEmail: (uid, newEmail) => firebaseAuth.updateUser(uid, {email: newEmail}).then(() => undefined)
+  },
   delivery: runtime.delivery,
   deliveryEvents: runtime.deliveryEvents
 });

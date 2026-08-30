@@ -39,6 +39,8 @@ export const submissionActorTypeEnum = pgEnum("submission_actor_type", ["ADVISOR
 export const emailProviderEnum = pgEnum("email_provider", ["GMAIL", "BREVO", "CUSTOM"]);
 export const emailSecurityModeEnum = pgEnum("email_security_mode", ["NONE", "STARTTLS", "TLS"]);
 export const emailConfigurationStatusEnum = pgEnum("email_configuration_status", ["DRAFT", "TESTED", "ACTIVE", "FAILED", "SUPERSEDED"]);
+export const legalDocumentTypeEnum = pgEnum("legal_document_type", ["TERMS", "PRIVACY"]);
+export const legalDocumentStatusEnum = pgEnum("legal_document_status", ["DRAFT", "PUBLISHED", "ARCHIVED"]);
 
 const timestamps = {
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow(),
@@ -662,4 +664,47 @@ export const emailOutbox = pgTable("email_outbox", {
 }, (table) => [
   index("email_outbox_pending_idx").on(table.status, table.availableAt),
   check("email_outbox_attempts_check", sql`${table.attempts} >= 0`)
+]);
+
+// גרסאות מסמכים משפטיים (תנאי שימוש / מדיניות פרטיות). לכל סוג מסמך יש לכל
+// היותר גרסת DRAFT אחת וגרסת PUBLISHED אחת בו-זמנית; גרסה שפורסמה היא
+// immutable ומאוחסנת ל-ARCHIVED רק כשגרסה חדשה מפרסמת אחריה.
+export const legalDocumentVersions = pgTable("legal_document_versions", {
+  id: serial("id").primaryKey(),
+  documentType: legalDocumentTypeEnum("document_type").notNull(),
+  versionNumber: integer("version_number").notNull(),
+  status: legalDocumentStatusEnum("status").notNull().default("DRAFT"),
+  title: varchar("title", {length: 200}).notNull(),
+  content: text("content").notNull(),
+  contactEmail: varchar("contact_email", {length: 320}),
+  contactPhone: varchar("contact_phone", {length: 32}),
+  contactAddress: varchar("contact_address", {length: 300}),
+  effectiveDate: date("effective_date"),
+  contentHash: varchar("content_hash", {length: 64}),
+  createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+  publishedByUserId: integer("published_by_user_id").references(() => users.id),
+  publishedAt: timestamp("published_at", {withTimezone: true}),
+  archivedAt: timestamp("archived_at", {withTimezone: true}),
+  ...timestamps
+}, (table) => [
+  uniqueIndex("legal_document_versions_type_version_uq").on(table.documentType, table.versionNumber),
+  uniqueIndex("legal_document_versions_one_published_uq").on(table.documentType).where(sql`${table.status} = 'PUBLISHED'`),
+  uniqueIndex("legal_document_versions_one_draft_uq").on(table.documentType).where(sql`${table.status} = 'DRAFT'`),
+  index("legal_document_versions_type_status_idx").on(table.documentType, table.status)
+]);
+
+// אישור מסמך משפטי על ידי משתמש — נרשם פעם אחת לכל (משתמש, סוג מסמך, גרסה),
+// לרוב בעת הרשמה. לא נכתב רטרואקטיבית עבור משתמשים קיימים.
+export const legalDocumentAcceptances = pgTable("legal_document_acceptances", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  documentType: legalDocumentTypeEnum("document_type").notNull(),
+  legalDocumentVersionId: integer("legal_document_version_id").notNull().references(() => legalDocumentVersions.id),
+  acceptedAt: timestamp("accepted_at", {withTimezone: true}).notNull().defaultNow(),
+  ipHash: varchar("ip_hash", {length: 64}),
+  userAgentSummary: varchar("user_agent_summary", {length: 255})
+}, (table) => [
+  index("legal_document_acceptances_user_idx").on(table.userId),
+  index("legal_document_acceptances_version_idx").on(table.legalDocumentVersionId),
+  uniqueIndex("legal_document_acceptances_user_type_version_uq").on(table.userId, table.documentType, table.legalDocumentVersionId)
 ]);

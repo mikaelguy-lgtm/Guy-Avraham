@@ -26,7 +26,7 @@ function fakeDelivery(overrides: Partial<LenderDeliveryApplication> = {}): Lende
 
 function application(delivery = fakeDelivery(), store: AppStore = makeStore(), environment = env) {
   const email = {send: vi.fn(), verify: vi.fn(), test: vi.fn(), reload: vi.fn()} as never;
-  return createApp({env: environment, store, verifier, encryption: new EncryptionService(Buffer.alloc(32, 4)), storage: new MemoryStorage(), limiter: new MemoryLimiter(), secrets, email, emailVerification: new AdvisorEmailVerificationService({createVerificationLink: vi.fn()}, email, store), gemini: {analyze: vi.fn()} as never, firebaseAccounts: {deleteUser: vi.fn()}, delivery});
+  return createApp({env: environment, store, verifier, encryption: new EncryptionService(Buffer.alloc(32, 4)), storage: new MemoryStorage(), limiter: new MemoryLimiter(), secrets, email, emailVerification: new AdvisorEmailVerificationService({createVerificationLink: vi.fn()}, email, store), passwordReset: {sendPasswordResetEmail: vi.fn().mockResolvedValue({messageId: "message-1"})}, gemini: {analyze: vi.fn()} as never, firebaseAccounts: {deleteUser: vi.fn(), updateUserEmail: vi.fn()}, delivery});
 }
 
 describe("secure lender delivery API", () => {

@@ -20,6 +20,56 @@ export interface AdvisorAdminRecord extends CurrentUser {
   createdAt: string;
   updatedAt: string;
   lastLoginAt: string | null;
+  archivedAt: string | null;
+}
+
+export interface UserAuditEvent {
+  action: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  actorUserId: number | null;
+}
+
+export type LegalDocumentType = "TERMS" | "PRIVACY";
+
+export interface LegalDocumentVersion {
+  id: number;
+  documentType: LegalDocumentType;
+  versionNumber: number;
+  title: string;
+  content: string;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  contactAddress: string | null;
+  effectiveDate: string | null;
+  publishedAt: string | null;
+}
+
+export interface AdminLegalDocumentVersion extends LegalDocumentVersion {
+  status: "DRAFT" | "PUBLISHED" | "ARCHIVED";
+  contentHash: string | null;
+  createdByUserId: number;
+  publishedByUserId: number | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  acceptanceCount?: number;
+}
+
+export interface AdminLegalDocumentOverview {
+  documentType: LegalDocumentType;
+  active: AdminLegalDocumentVersion | null;
+  draft: AdminLegalDocumentVersion | null;
+}
+
+export interface LegalDocumentAcceptanceRecord {
+  documentType: LegalDocumentType;
+  versionId: number;
+  versionNumber: number;
+  title: string;
+  acceptedAt: string;
+  contentHash: string | null;
+  status: string;
 }
 
 export interface AdvisorProfile {

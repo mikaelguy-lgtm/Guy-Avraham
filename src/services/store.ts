@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, asc, desc, eq, ilike, inArray, isNull, max, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   advisorProfiles,
@@ -13,6 +14,8 @@ import {
   employmentRecords,
   identityRevealRequests,
   incomeSources,
+  legalDocumentAcceptances,
+  legalDocumentVersions,
   lenderInviteTokens,
   lenderContacts,
   lenderResponses,
@@ -27,8 +30,11 @@ import {
   users
 } from "../db/schema.js";
 import type { AdvisorAccount, AnonymousSubmissionSnapshot, DatabaseUser, IdentityField, UserStatus } from "../domain/types.js";
+import type { LegalDocumentType, LegalDocumentVersionRecord } from "../domain/legalDocuments.js";
 import type { AuthorizationDirectory } from "../middleware/auth.js";
 import { listMissingRequiredDocuments } from "../domain/requiredDocuments.js";
+
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 export interface BorrowerMutationRecord {
   borrowerOrder: number;
@@ -367,10 +373,13 @@ export interface AppStore extends AuthorizationDirectory {
   createAdvisorAccount(values: {firebaseUid: string; email: string; firstName: string; lastName: string; phoneEncrypted: string; businessName: string; businessPhoneEncrypted: string; businessEmail: string}): Promise<AdvisorAccount>;
   activateVerifiedAdvisor(userId: number): Promise<AdvisorAccount | null>;
   recordLogin(userId: number): Promise<void>;
-  getAdvisorAccount(userId: number): Promise<AdvisorAccount | null>;
-  listAdvisorAccounts(): Promise<AdvisorAccount[]>;
+  getAdvisorAccount(userId: number, options?: {includeArchived?: boolean}): Promise<AdvisorAccount | null>;
+  listAdvisorAccounts(options?: {includeArchived?: boolean}): Promise<AdvisorAccount[]>;
   updateAdvisorProfile(userId: number, values: {firstName: string; lastName: string; phoneEncrypted: string; businessName: string; businessPhoneEncrypted: string}): Promise<AdvisorAccount | null>;
   updateAdvisorStatus(userId: number, status: UserStatus): Promise<AdvisorAccount | null>;
+  archiveAdvisorAccount(userId: number): Promise<AdvisorAccount | null>;
+  restoreAdvisorAccount(userId: number): Promise<AdvisorAccount | null>;
+  updateAdvisorEmail(userId: number, email: string): Promise<AdvisorAccount | null>;
   softDeleteAdvisorAccount(userId: number): Promise<void>;
   listClients(advisorId: number | null, page: number, pageSize: number, search: string): Promise<{items: ClientRecord[]; total: number}>;
   createClient(record: CreateClientRecord): Promise<ClientRecord>;
@@ -436,6 +445,18 @@ export interface AppStore extends AuthorizationDirectory {
   markNotificationRead(id: number, userId: number): Promise<boolean>;
   markAllNotificationsRead(userId: number): Promise<number>;
   listAuditLogs(limit: number): Promise<unknown[]>;
+  listUserAuditEvents(userId: number, actions: string[]): Promise<Array<{action: string; metadata: Record<string, unknown> | null; createdAt: Date; actorUserId: number | null}>>;
+  listLegalDocumentVersions(documentType: LegalDocumentType): Promise<LegalDocumentVersionRecord[]>;
+  getLegalDocumentVersion(id: number): Promise<LegalDocumentVersionRecord | null>;
+  getActiveLegalDocumentVersion(documentType: LegalDocumentType): Promise<LegalDocumentVersionRecord | null>;
+  getDraftLegalDocumentVersion(documentType: LegalDocumentType): Promise<LegalDocumentVersionRecord | null>;
+  createLegalDocumentDraft(documentType: LegalDocumentType, userId: number): Promise<LegalDocumentVersionRecord>;
+  updateLegalDocumentDraft(id: number, values: {title: string; content: string; contactEmail: string | null; contactPhone: string | null; contactAddress: string | null; effectiveDate: string | null}): Promise<LegalDocumentVersionRecord | null>;
+  discardLegalDocumentDraft(id: number): Promise<boolean>;
+  publishLegalDocumentVersion(id: number, userId: number): Promise<LegalDocumentVersionRecord | null>;
+  countLegalDocumentAcceptances(versionId: number): Promise<number>;
+  recordLegalDocumentAcceptance(userId: number, documentType: LegalDocumentType, versionId: number, context: {ip?: string; userAgent?: string}): Promise<void>;
+  listLegalDocumentAcceptancesForUser(userId: number): Promise<Array<{documentType: LegalDocumentType; versionId: number; versionNumber: number; title: string; acceptedAt: Date; contentHash: string | null; status: string}>>;
 }
 
 export class PostgresStore implements AppStore {
@@ -484,7 +505,7 @@ export class PostgresStore implements AppStore {
     return account;
   }
 
-  async getAdvisorAccount(userId: number): Promise<AdvisorAccount | null> {
+  async getAdvisorAccount(userId: number, options?: {includeArchived?: boolean}): Promise<AdvisorAccount | null> {
     const [row] = await db.select({
       id: users.id, firebaseUid: users.firebaseUid, email: users.email, firstName: users.firstName, lastName: users.lastName,
       phoneEncrypted: users.phoneEncrypted, role: users.role, roleLabel: users.roleLabel, status: users.status,
@@ -493,11 +514,11 @@ export class PostgresStore implements AppStore {
       businessPhoneEncrypted: advisorProfiles.businessPhoneEncrypted, businessEmail: advisorProfiles.businessEmail,
       createdAt: users.createdAt, updatedAt: users.updatedAt, lastLoginAt: users.lastLoginAt
     }).from(users).innerJoin(advisorProfiles, eq(advisorProfiles.userId, users.id))
-      .where(and(eq(users.id, userId), eq(users.role, "ADVISOR"), isNull(users.deletedAt))).limit(1);
+      .where(and(eq(users.id, userId), eq(users.role, "ADVISOR"), options?.includeArchived ? undefined : isNull(users.deletedAt))).limit(1);
     return row ?? null;
   }
 
-  async listAdvisorAccounts(): Promise<AdvisorAccount[]> {
+  async listAdvisorAccounts(options?: {includeArchived?: boolean}): Promise<AdvisorAccount[]> {
     return db.select({
       id: users.id, firebaseUid: users.firebaseUid, email: users.email, firstName: users.firstName, lastName: users.lastName,
       phoneEncrypted: users.phoneEncrypted, role: users.role, roleLabel: users.roleLabel, status: users.status,
@@ -506,7 +527,26 @@ export class PostgresStore implements AppStore {
       businessPhoneEncrypted: advisorProfiles.businessPhoneEncrypted, businessEmail: advisorProfiles.businessEmail,
       createdAt: users.createdAt, updatedAt: users.updatedAt, lastLoginAt: users.lastLoginAt
     }).from(users).innerJoin(advisorProfiles, eq(advisorProfiles.userId, users.id))
-      .where(and(eq(users.role, "ADVISOR"), isNull(users.deletedAt))).orderBy(desc(users.createdAt));
+      .where(and(eq(users.role, "ADVISOR"), options?.includeArchived ? undefined : isNull(users.deletedAt))).orderBy(desc(users.createdAt));
+  }
+
+  async archiveAdvisorAccount(userId: number): Promise<AdvisorAccount | null> {
+    await db.update(users).set({deletedAt: new Date(), updatedAt: new Date()}).where(and(eq(users.id, userId), eq(users.role, "ADVISOR")));
+    return this.getAdvisorAccount(userId, {includeArchived: true});
+  }
+
+  async restoreAdvisorAccount(userId: number): Promise<AdvisorAccount | null> {
+    await db.update(users).set({deletedAt: null, updatedAt: new Date()}).where(and(eq(users.id, userId), eq(users.role, "ADVISOR")));
+    return this.getAdvisorAccount(userId);
+  }
+
+  async updateAdvisorEmail(userId: number, email: string): Promise<AdvisorAccount | null> {
+    await db.transaction(async (transaction) => {
+      await transaction.update(users).set({email, emailVerified: false, status: "PENDING", updatedAt: new Date()})
+        .where(and(eq(users.id, userId), eq(users.role, "ADVISOR")));
+      await transaction.update(advisorProfiles).set({businessEmail: email, updatedAt: new Date()}).where(eq(advisorProfiles.userId, userId));
+    });
+    return this.getAdvisorAccount(userId);
   }
 
   async activateVerifiedAdvisor(userId: number): Promise<AdvisorAccount | null> {
@@ -1482,5 +1522,94 @@ export class PostgresStore implements AppStore {
   async listAuditLogs(limit: number): Promise<unknown[]> {
     return db.select({id: auditLogs.id, actorUserId: auditLogs.actorUserId, action: auditLogs.action, entityType: auditLogs.entityType, entityId: auditLogs.entityId, metadata: auditLogs.metadata, requestId: auditLogs.requestId, createdAt: auditLogs.createdAt})
       .from(auditLogs).orderBy(desc(auditLogs.createdAt)).limit(Math.min(limit, 500));
+  }
+
+  async listUserAuditEvents(userId: number, actions: string[]): Promise<Array<{action: string; metadata: Record<string, unknown> | null; createdAt: Date; actorUserId: number | null}>> {
+    return db.select({action: auditLogs.action, metadata: auditLogs.metadata, createdAt: auditLogs.createdAt, actorUserId: auditLogs.actorUserId})
+      .from(auditLogs).where(and(eq(auditLogs.entityType, "user"), eq(auditLogs.entityId, userId), inArray(auditLogs.action, actions)))
+      .orderBy(desc(auditLogs.createdAt)).limit(50) as unknown as Promise<Array<{action: string; metadata: Record<string, unknown> | null; createdAt: Date; actorUserId: number | null}>>;
+  }
+
+  async listLegalDocumentVersions(documentType: LegalDocumentType): Promise<LegalDocumentVersionRecord[]> {
+    return db.select().from(legalDocumentVersions).where(eq(legalDocumentVersions.documentType, documentType)).orderBy(desc(legalDocumentVersions.versionNumber)) as unknown as Promise<LegalDocumentVersionRecord[]>;
+  }
+
+  async getLegalDocumentVersion(id: number): Promise<LegalDocumentVersionRecord | null> {
+    const [row] = await db.select().from(legalDocumentVersions).where(eq(legalDocumentVersions.id, id)).limit(1);
+    return (row as LegalDocumentVersionRecord) ?? null;
+  }
+
+  async getActiveLegalDocumentVersion(documentType: LegalDocumentType): Promise<LegalDocumentVersionRecord | null> {
+    const [row] = await db.select().from(legalDocumentVersions).where(and(eq(legalDocumentVersions.documentType, documentType), eq(legalDocumentVersions.status, "PUBLISHED"))).limit(1);
+    return (row as LegalDocumentVersionRecord) ?? null;
+  }
+
+  async getDraftLegalDocumentVersion(documentType: LegalDocumentType): Promise<LegalDocumentVersionRecord | null> {
+    const [row] = await db.select().from(legalDocumentVersions).where(and(eq(legalDocumentVersions.documentType, documentType), eq(legalDocumentVersions.status, "DRAFT"))).limit(1);
+    return (row as LegalDocumentVersionRecord) ?? null;
+  }
+
+  async createLegalDocumentDraft(documentType: LegalDocumentType, userId: number): Promise<LegalDocumentVersionRecord> {
+    const existingDraft = await this.getDraftLegalDocumentVersion(documentType);
+    if (existingDraft) return existingDraft;
+    const active = await this.getActiveLegalDocumentVersion(documentType);
+    const [{value: maxVersion}] = await db.select({value: max(legalDocumentVersions.versionNumber)}).from(legalDocumentVersions).where(eq(legalDocumentVersions.documentType, documentType));
+    const versionNumber = (maxVersion ?? 0) + 1;
+    const [row] = await db.insert(legalDocumentVersions).values({
+      documentType, versionNumber, status: "DRAFT",
+      title: active?.title ?? (documentType === "TERMS" ? "תנאי שימוש SynCash" : "מדיניות פרטיות SynCash"),
+      content: active?.content ?? "",
+      contactEmail: active?.contactEmail ?? null, contactPhone: active?.contactPhone ?? null, contactAddress: active?.contactAddress ?? null,
+      effectiveDate: active?.effectiveDate ?? null,
+      createdByUserId: userId
+    }).returning();
+    return row as LegalDocumentVersionRecord;
+  }
+
+  async updateLegalDocumentDraft(id: number, values: {title: string; content: string; contactEmail: string | null; contactPhone: string | null; contactAddress: string | null; effectiveDate: string | null}): Promise<LegalDocumentVersionRecord | null> {
+    const [row] = await db.update(legalDocumentVersions).set({...values, updatedAt: new Date()})
+      .where(and(eq(legalDocumentVersions.id, id), eq(legalDocumentVersions.status, "DRAFT"))).returning();
+    return (row as LegalDocumentVersionRecord) ?? null;
+  }
+
+  async discardLegalDocumentDraft(id: number): Promise<boolean> {
+    const result = await db.delete(legalDocumentVersions).where(and(eq(legalDocumentVersions.id, id), eq(legalDocumentVersions.status, "DRAFT"))).returning({id: legalDocumentVersions.id});
+    return result.length > 0;
+  }
+
+  async publishLegalDocumentVersion(id: number, userId: number): Promise<LegalDocumentVersionRecord | null> {
+    return db.transaction(async (transaction) => {
+      const [draft] = await transaction.select().from(legalDocumentVersions).where(and(eq(legalDocumentVersions.id, id), eq(legalDocumentVersions.status, "DRAFT"))).limit(1);
+      if (!draft) return null;
+      const contentHash = sha256(JSON.stringify({title: draft.title, content: draft.content, contactEmail: draft.contactEmail, contactPhone: draft.contactPhone, contactAddress: draft.contactAddress, effectiveDate: draft.effectiveDate}));
+      await transaction.update(legalDocumentVersions).set({status: "ARCHIVED", archivedAt: new Date(), updatedAt: new Date()})
+        .where(and(eq(legalDocumentVersions.documentType, draft.documentType), eq(legalDocumentVersions.status, "PUBLISHED")));
+      const [published] = await transaction.update(legalDocumentVersions).set({status: "PUBLISHED", publishedAt: new Date(), publishedByUserId: userId, contentHash, updatedAt: new Date()})
+        .where(eq(legalDocumentVersions.id, id)).returning();
+      return published as LegalDocumentVersionRecord;
+    });
+  }
+
+  async countLegalDocumentAcceptances(versionId: number): Promise<number> {
+    const [row] = await db.select({value: sql<number>`count(*)::int`}).from(legalDocumentAcceptances).where(eq(legalDocumentAcceptances.legalDocumentVersionId, versionId));
+    return row?.value ?? 0;
+  }
+
+  async recordLegalDocumentAcceptance(userId: number, documentType: LegalDocumentType, versionId: number, context: {ip?: string; userAgent?: string}): Promise<void> {
+    await db.insert(legalDocumentAcceptances).values({
+      userId, documentType, legalDocumentVersionId: versionId,
+      ipHash: context.ip ? sha256(context.ip) : null,
+      userAgentSummary: context.userAgent ? context.userAgent.slice(0, 255) : null
+    }).onConflictDoNothing();
+  }
+
+  async listLegalDocumentAcceptancesForUser(userId: number): Promise<Array<{documentType: LegalDocumentType; versionId: number; versionNumber: number; title: string; acceptedAt: Date; contentHash: string | null; status: string}>> {
+    return db.select({
+      documentType: legalDocumentAcceptances.documentType, versionId: legalDocumentAcceptances.legalDocumentVersionId,
+      versionNumber: legalDocumentVersions.versionNumber, title: legalDocumentVersions.title,
+      acceptedAt: legalDocumentAcceptances.acceptedAt, contentHash: legalDocumentVersions.contentHash,
+      status: legalDocumentVersions.status
+    }).from(legalDocumentAcceptances).innerJoin(legalDocumentVersions, eq(legalDocumentVersions.id, legalDocumentAcceptances.legalDocumentVersionId))
+      .where(eq(legalDocumentAcceptances.userId, userId)).orderBy(desc(legalDocumentAcceptances.acceptedAt));
   }
 }

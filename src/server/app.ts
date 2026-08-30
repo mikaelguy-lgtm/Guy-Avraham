@@ -24,6 +24,8 @@ import type {
 import type { StorageService } from "../services/storage.js";
 import { sanitizeEmailError, sanitizeSmtpFailure, type EmailService } from "../services/email.js";
 import { ADVISOR_EMAIL_VERIFICATION_TEMPLATE, EmailVerificationDeliveryError, type EmailVerificationService } from "../services/emailVerification.js";
+import { PasswordResetDeliveryError, type PasswordResetService } from "../services/passwordReset.js";
+import { LEGAL_DOCUMENT_TYPES, legalDocumentDraftSchema, legalDocumentTypeParamSchema } from "../domain/legalDocuments.js";
 import type { GeminiService } from "../services/gemini.js";
 import { EncryptionService, hashToken } from "../utils/crypto.js";
 import { calculateAge } from "../utils/age.js";
@@ -42,10 +44,11 @@ export interface AppServices {
   storage: StorageService;
   email: EmailService;
   emailVerification: EmailVerificationService;
+  passwordReset: PasswordResetService;
   secrets: SecretProvider;
   limiter: RateLimitStore;
   gemini: GeminiService;
-  firebaseAccounts: {deleteUser(uid: string): Promise<void>};
+  firebaseAccounts: {deleteUser(uid: string): Promise<void>; updateUserEmail(uid: string, newEmail: string): Promise<void>};
   delivery?: LenderDeliveryApplication;
   deliveryEvents?: DeliveryEventBroker;
 }
@@ -132,7 +135,9 @@ function publicEmailConfiguration(configuration: EmailConfigurationRecord, passw
   };
 }
 
-const advisorStatusSchema = z.object({status: z.enum(["ACTIVE", "SUSPENDED", "DISABLED"])}).strict();
+const advisorStatusSchema = z.object({status: z.enum(["ACTIVE", "SUSPENDED", "DISABLED"]), reason: z.string().trim().max(500).optional()}).strict();
+const archiveAdvisorSchema = z.object({reason: z.string().trim().max(500).optional()}).strict();
+const advisorEmailChangeSchema = z.object({email: z.string().trim().email().max(320)}).strict();
 const companySchema = z.object({name: z.string().trim().min(2).max(200), legalName: z.string().trim().max(250).nullable().optional(), companyNumber: z.string().trim().max(50).nullable().optional(), phone: z.string().trim().max(50).nullable().optional(), address: z.string().trim().max(500).nullable().optional(), website: z.string().trim().url().max(500).nullable().optional(), activityAreas: z.array(z.string().trim().min(1).max(100)).max(30), adminNotes: z.string().trim().max(4000).nullable().optional(), active: z.boolean()}).strict();
 const contactSchema = z.object({firstName: z.string().trim().min(1).max(100), lastName: z.string().trim().min(1).max(100), roleTitle: z.string().trim().min(1).max(150), email: z.string().trim().email().max(320), phone: z.string().trim().max(50).nullable().optional(), isPrimary: z.boolean(), active: z.boolean()}).strict();
 const calendarSchema = z.object({date: z.iso.date(), type: z.enum(["HOLIDAY", "NON_WORKING_DAY", "FORCED_WORKING_DAY"]), title: z.string().trim().min(1).max(200), source: z.string().trim().min(1).max(200)}).strict();
@@ -145,7 +150,7 @@ function publicAdvisorAccount(account: Awaited<ReturnType<AppStore["getAdvisorAc
     roleLabel: account.roleLabel, status: account.status, emailVerified: account.emailVerified,
     advisorId: account.advisorId, lenderId: null, businessName: account.businessName ?? "",
     businessEmail: account.businessEmail ?? account.email, createdAt: account.createdAt,
-    updatedAt: account.updatedAt, lastLoginAt: account.lastLoginAt
+    updatedAt: account.updatedAt, lastLoginAt: account.lastLoginAt, archivedAt: account.deletedAt
   };
 }
 
@@ -522,6 +527,26 @@ export function createApp(services: AppServices) {
   const loginAttemptLimit = services.env.NODE_ENV === "production" ? 10 : 100;
   app.post("/api/auth/login-attempt", rateLimit(services.limiter, "login-attempt", loginAttemptLimit, 15 * 60), (_request, response) => response.json({allowed: true}));
 
+  app.post("/api/auth/forgot-password", rateLimit(services.limiter, "forgot-password-minute", 2, 60), rateLimit(services.limiter, "forgot-password-hour", 5, 60 * 60), asyncRoute(async (request, response) => {
+    const {email} = z.object({email: z.string().trim().email()}).strict().parse(request.body);
+    const normalized = normalizeEmail(email);
+    const genericMessage = "אם קיים חשבון המשויך לכתובת הזו, נשלח אליך קישור לאיפוס הסיסמה.";
+    // הודעה זהה בכל מקרה (קיים/לא קיים/כשל שליחה) — כדי שלא ניתן יהיה ללמוד
+    // מהתגובה עצמה אם כתובת דוא״ל מסוימת רשומה במערכת.
+    const user = await services.store.findUserByEmail(normalized);
+    if (user && user.deletedAt === null) {
+      try {
+        await services.passwordReset.sendPasswordResetEmail({email: user.email, userId: user.id}, {requestId: request.requestId});
+        await services.store.addAudit(null, "PASSWORD_RESET_REQUESTED", "user", user.id, {source: "self_service"}, request.requestId, request.ip, request.header("user-agent"));
+      } catch {
+        await services.store.addAudit(null, "PASSWORD_RESET_EMAIL_FAILED", "user", user.id, {source: "self_service"}, request.requestId, request.ip, request.header("user-agent"));
+      }
+    } else {
+      await services.store.addAudit(null, "PASSWORD_RESET_REQUESTED_UNKNOWN_EMAIL", "user", null, {}, request.requestId, request.ip, request.header("user-agent"));
+    }
+    response.json({success: true, message: genericMessage});
+  }));
+
   app.post("/api/auth/register-advisor", requirePublicRegistration, auth.requireFirebaseAuth, rateLimit(services.limiter, "advisor-registration", 5, 60 * 60), asyncRoute(async (request, response) => {
     await services.store.addAudit(null, "ADVISOR_REGISTRATION_STARTED", "user", null, {source: "self_service"}, request.requestId, request.ip, request.header("user-agent"));
     const parsed = advisorRegistrationApiSchema.safeParse(request.body);
@@ -550,6 +575,12 @@ export function createApp(services: AppServices) {
         businessPhoneEncrypted: encryptedPhone, businessEmail: email
       });
       await services.store.addAudit(account.id, "ADVISOR_REGISTERED", "user", account.id, {source: "self_service"}, request.requestId, request.ip, request.header("user-agent"));
+      // רושמים אישור רק עבור סוגי מסמכים שיש להם כרגע גרסה פעילה (PUBLISHED) —
+      // אם מדיניות הפרטיות עדיין בטיוטה בלבד, לא נרשם עבורה אישור בדוי.
+      for (const documentType of LEGAL_DOCUMENT_TYPES) {
+        const active = await services.store.getActiveLegalDocumentVersion(documentType);
+        if (active) await services.store.recordLegalDocumentAcceptance(account.id, documentType, active.id, {ip: request.ip, userAgent: request.header("user-agent")});
+      }
     } catch (error: unknown) {
       const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
       await services.store.addAudit(null, "ADVISOR_REGISTRATION_FAILED", "user", null, {reason: code === "23505" ? "DUPLICATE_ACCOUNT" : "DATABASE_ERROR"}, request.requestId, request.ip, request.header("user-agent"));
@@ -1112,20 +1143,100 @@ export function createApp(services: AppServices) {
     response.json({active: publicEmailConfiguration(configuration, Boolean(configuration.secretName && await services.secrets.isConfigured(configuration.secretName, configuration.secretVersion)))});
   }));
 
-  app.get("/api/admin/advisors", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
-    const advisors = await services.store.listAdvisorAccounts();
+  app.get("/api/admin/advisors", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const advisors = await services.store.listAdvisorAccounts({includeArchived: request.query.includeArchived === "1"});
     response.json(advisors.map((advisor) => publicAdvisorAccount(advisor, services.encryption)));
   }));
 
+  app.get("/api/admin/advisors/:id/audit-events", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const advisor = await services.store.getAdvisorAccount(Number(request.params.id), {includeArchived: true});
+    if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    const events = await services.store.listUserAuditEvents(advisor.id, [
+      "USER_UPDATED", "USER_ENABLED", "USER_SUSPENDED", "USER_DISABLED", "USER_ARCHIVED", "USER_RESTORED",
+      "PASSWORD_RESET_REQUESTED_BY_ADMIN", "EMAIL_VERIFICATION_RESENT", "EMAIL_VERIFICATION_SENT"
+    ]);
+    response.json(events);
+  }));
+
+  app.get("/api/admin/advisors/:id/legal-acceptances", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const advisor = await services.store.getAdvisorAccount(Number(request.params.id), {includeArchived: true});
+    if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    response.json(await services.store.listLegalDocumentAcceptancesForUser(advisor.id));
+  }));
+
   app.patch("/api/admin/advisors/:id/status", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
-    const {status} = advisorStatusSchema.parse(request.body);
+    const {status, reason} = advisorStatusSchema.parse(request.body);
     const advisor = await services.store.getAdvisorAccount(Number(request.params.id));
     if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
     if (status === "ACTIVE" && !advisor.emailVerified) { response.status(409).json({error: "EMAIL_NOT_VERIFIED", requestId: request.requestId}); return; }
     const updated = await services.store.updateAdvisorStatus(advisor.id, status);
-    await services.store.addAudit(request.user!.id, `ADVISOR_${status}`, "user", advisor.id, {previousStatus: advisor.status}, request.requestId, request.ip, request.header("user-agent"));
+    const action = status === "DISABLED" ? "USER_DISABLED" : status === "ACTIVE" ? "USER_ENABLED" : "USER_SUSPENDED";
+    await services.store.addAudit(request.user!.id, action, "user", advisor.id, {previousStatus: advisor.status, reason: reason ?? null}, request.requestId, request.ip, request.header("user-agent"));
     response.json(publicAdvisorAccount(updated, services.encryption));
   }));
+
+  app.post("/api/admin/advisors/:id/archive", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const {reason} = archiveAdvisorSchema.parse(request.body ?? {});
+    const advisor = await services.store.getAdvisorAccount(Number(request.params.id));
+    if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    const updated = await services.store.archiveAdvisorAccount(advisor.id);
+    await services.store.addAudit(request.user!.id, "USER_ARCHIVED", "user", advisor.id, {reason: reason ?? null}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(publicAdvisorAccount(updated, services.encryption));
+  }));
+
+  app.post("/api/admin/advisors/:id/restore", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const advisor = await services.store.getAdvisorAccount(Number(request.params.id), {includeArchived: true});
+    if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    const updated = await services.store.restoreAdvisorAccount(advisor.id);
+    await services.store.addAudit(request.user!.id, "USER_RESTORED", "user", advisor.id, {}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(publicAdvisorAccount(updated, services.encryption));
+  }));
+
+  app.patch("/api/admin/advisors/:id/profile", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const input = advisorProfileSchema.parse(request.body);
+    const advisorId = Number(request.params.id);
+    const existing = await services.store.getAdvisorAccount(advisorId);
+    if (!existing) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    const encryptedPhone = services.encryption.encrypt(input.phone);
+    const advisor = await services.store.updateAdvisorProfile(advisorId, {
+      firstName: input.firstName, lastName: input.lastName, phoneEncrypted: encryptedPhone,
+      businessName: input.businessName, businessPhoneEncrypted: encryptedPhone
+    });
+    await services.store.addAudit(request.user!.id, "USER_UPDATED", "user", advisorId, {fields: ["firstName", "lastName", "phone", "businessName"], adminTriggered: true}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(publicAdvisorAccount(advisor, services.encryption));
+  }));
+
+  app.patch("/api/admin/advisors/:id/email", ...authenticated, auth.requireSuperAdmin, requireEmailDelivery,
+    rateLimit(services.limiter, "admin-email-change-minute", 3, 60), asyncRoute(async (request, response) => {
+      const {email} = advisorEmailChangeSchema.parse(request.body);
+      const normalized = normalizeEmail(email);
+      const advisorId = Number(request.params.id);
+      const existing = await services.store.getAdvisorAccount(advisorId);
+      if (!existing) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+      if (normalized === existing.email) { response.status(409).json({error: "EMAIL_UNCHANGED", requestId: request.requestId}); return; }
+      if (await services.store.findUserByEmail(normalized)) { response.status(409).json({error: "EMAIL_ALREADY_IN_USE", requestId: request.requestId}); return; }
+      await services.firebaseAccounts.updateUserEmail(existing.firebaseUid, normalized);
+      const advisor = await services.store.updateAdvisorEmail(advisorId, normalized);
+      await services.store.addAudit(request.user!.id, "USER_UPDATED", "user", advisorId, {field: "email", previousEmailMasked: maskEmailAddress(existing.email)}, request.requestId, request.ip, request.header("user-agent"));
+      try {
+        await services.emailVerification.sendVerificationEmail({firebaseUid: existing.firebaseUid, email: normalized, displayName: existing.firstName}, {userId: advisorId, requestId: request.requestId});
+      } catch { /* כתובת הדוא״ל כבר עודכנה בהצלחה; כשל בשליחת מייל האימות אינו קריטי — ניתן לשלוח מחדש מהמסך */ }
+      response.json(publicAdvisorAccount(advisor, services.encryption));
+    }));
+
+  app.post("/api/admin/advisors/:id/send-password-reset", ...authenticated, auth.requireSuperAdmin, requireEmailDelivery,
+    rateLimit(services.limiter, "admin-password-reset-minute", 1, 60), asyncRoute(async (request, response) => {
+      const advisor = await services.store.getAdvisorAccount(Number(request.params.id));
+      if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+      try {
+        await services.passwordReset.sendPasswordResetEmail({email: advisor.email, userId: advisor.id}, {requestId: request.requestId});
+        await services.store.addAudit(request.user!.id, "PASSWORD_RESET_REQUESTED_BY_ADMIN", "user", advisor.id, {}, request.requestId, request.ip, request.header("user-agent"));
+        response.json({success: true});
+      } catch (error) {
+        const failure = error instanceof PasswordResetDeliveryError ? error : new PasswordResetDeliveryError("PASSWORD_RESET_EMAIL_DELIVERY_FAILED", 502);
+        response.status(failure.status).json({error: failure.code, requestId: request.requestId});
+      }
+    }));
 
   app.post("/api/admin/advisors/:id/resend-verification", ...authenticated, auth.requireSuperAdmin, requireEmailDelivery,
     rateLimit(services.limiter, "admin-verification-resend-minute", 1, 60), rateLimit(services.limiter, "admin-verification-resend-hour", 5, 60 * 60), asyncRoute(async (request, response) => {
@@ -1133,9 +1244,89 @@ export function createApp(services: AppServices) {
       if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
       if (advisor.status !== "PENDING" || advisor.emailVerified) { response.status(409).json({error: "VERIFICATION_NOT_REQUIRED", requestId: request.requestId}); return; }
       await services.emailVerification.sendVerificationEmail({firebaseUid: advisor.firebaseUid, email: advisor.email, displayName: advisor.firstName}, {userId: advisor.id, requestId: request.requestId});
-      await services.store.addAudit(request.user!.id, "EMAIL_VERIFICATION_SENT", "user", advisor.id, {channel: "smtp", template: ADVISOR_EMAIL_VERIFICATION_TEMPLATE, adminTriggered: true}, request.requestId, request.ip, request.header("user-agent"));
+      await services.store.addAudit(request.user!.id, "EMAIL_VERIFICATION_RESENT", "user", advisor.id, {channel: "smtp", template: ADVISOR_EMAIL_VERIFICATION_TEMPLATE, adminTriggered: true}, request.requestId, request.ip, request.header("user-agent"));
       response.json({success: true, verificationEmailSent: true});
     }));
+
+  const publicLegalDocumentVersion = (version: Awaited<ReturnType<AppStore["getActiveLegalDocumentVersion"]>>) => version && {
+    id: version.id, documentType: version.documentType, versionNumber: version.versionNumber, title: version.title,
+    content: version.content, contactEmail: version.contactEmail, contactPhone: version.contactPhone, contactAddress: version.contactAddress,
+    effectiveDate: version.effectiveDate, publishedAt: version.publishedAt
+  };
+  const adminLegalDocumentVersion = (version: Awaited<ReturnType<AppStore["getLegalDocumentVersion"]>>) => version && {
+    ...publicLegalDocumentVersion(version), status: version.status, contentHash: version.contentHash,
+    createdByUserId: version.createdByUserId, publishedByUserId: version.publishedByUserId,
+    archivedAt: version.archivedAt, createdAt: version.createdAt, updatedAt: version.updatedAt
+  };
+
+  app.get("/api/legal-documents/:type", asyncRoute(async (request, response) => {
+    const documentType = legalDocumentTypeParamSchema.parse(request.params.type);
+    const active = await services.store.getActiveLegalDocumentVersion(documentType);
+    if (!active) { response.status(404).json({error: "LEGAL_DOCUMENT_NOT_PUBLISHED", requestId: request.requestId}); return; }
+    response.json(publicLegalDocumentVersion(active));
+  }));
+
+  app.get("/api/admin/legal-documents", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
+    const overview = await Promise.all(LEGAL_DOCUMENT_TYPES.map(async (documentType) => ({
+      documentType,
+      active: adminLegalDocumentVersion(await services.store.getActiveLegalDocumentVersion(documentType)),
+      draft: adminLegalDocumentVersion(await services.store.getDraftLegalDocumentVersion(documentType))
+    })));
+    response.json(overview);
+  }));
+
+  app.get("/api/admin/legal-documents/:type/versions", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const documentType = legalDocumentTypeParamSchema.parse(request.params.type);
+    const versions = await services.store.listLegalDocumentVersions(documentType);
+    const withCounts = await Promise.all(versions.map(async (version) => ({...adminLegalDocumentVersion(version), acceptanceCount: await services.store.countLegalDocumentAcceptances(version.id)})));
+    response.json(withCounts);
+  }));
+
+  app.get("/api/admin/legal-documents/versions/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const version = await services.store.getLegalDocumentVersion(Number(request.params.id));
+    if (!version) { response.status(404).json({error: "LEGAL_DOCUMENT_VERSION_NOT_FOUND", requestId: request.requestId}); return; }
+    response.json({...adminLegalDocumentVersion(version), acceptanceCount: await services.store.countLegalDocumentAcceptances(version.id)});
+  }));
+
+  app.post("/api/admin/legal-documents/:type/draft", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const documentType = legalDocumentTypeParamSchema.parse(request.params.type);
+    const draft = await services.store.createLegalDocumentDraft(documentType, request.user!.id);
+    await services.store.addAudit(request.user!.id, "LEGAL_DOCUMENT_DRAFT_CREATED", "legal_document_version", draft.id, {documentType, versionNumber: draft.versionNumber}, request.requestId, request.ip, request.header("user-agent"));
+    response.status(201).json(adminLegalDocumentVersion(draft));
+  }));
+
+  app.patch("/api/admin/legal-documents/versions/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const id = Number(request.params.id);
+    const existing = await services.store.getLegalDocumentVersion(id);
+    if (!existing) { response.status(404).json({error: "LEGAL_DOCUMENT_VERSION_NOT_FOUND", requestId: request.requestId}); return; }
+    if (existing.status !== "DRAFT") { response.status(409).json({error: "LEGAL_DOCUMENT_VERSION_NOT_EDITABLE", message: "ניתן לערוך רק גרסת טיוטה.", requestId: request.requestId}); return; }
+    const input = legalDocumentDraftSchema.parse(request.body);
+    const updated = await services.store.updateLegalDocumentDraft(id, input);
+    await services.store.addAudit(request.user!.id, "LEGAL_DOCUMENT_DRAFT_UPDATED", "legal_document_version", id, {documentType: existing.documentType}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(adminLegalDocumentVersion(updated));
+  }));
+
+  app.delete("/api/admin/legal-documents/versions/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const id = Number(request.params.id);
+    const existing = await services.store.getLegalDocumentVersion(id);
+    if (!existing) { response.status(404).json({error: "LEGAL_DOCUMENT_VERSION_NOT_FOUND", requestId: request.requestId}); return; }
+    if (existing.status !== "DRAFT") { response.status(409).json({error: "LEGAL_DOCUMENT_VERSION_NOT_EDITABLE", message: "ניתן למחוק רק גרסת טיוטה.", requestId: request.requestId}); return; }
+    await services.store.discardLegalDocumentDraft(id);
+    await services.store.addAudit(request.user!.id, "LEGAL_DOCUMENT_DRAFT_DISCARDED", "legal_document_version", id, {documentType: existing.documentType}, request.requestId, request.ip, request.header("user-agent"));
+    response.status(204).send();
+  }));
+
+  app.post("/api/admin/legal-documents/versions/:id/publish", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const id = Number(request.params.id);
+    const existing = await services.store.getLegalDocumentVersion(id);
+    if (!existing) { response.status(404).json({error: "LEGAL_DOCUMENT_VERSION_NOT_FOUND", requestId: request.requestId}); return; }
+    if (existing.status !== "DRAFT") { response.status(409).json({error: "LEGAL_DOCUMENT_VERSION_NOT_EDITABLE", message: "ניתן לפרסם רק גרסת טיוטה.", requestId: request.requestId}); return; }
+    if (!existing.content.trim()) { response.status(422).json({error: "LEGAL_DOCUMENT_CONTENT_REQUIRED", message: "יש להזין תוכן לפני פרסום.", requestId: request.requestId}); return; }
+    const published = await services.store.publishLegalDocumentVersion(id, request.user!.id);
+    const action = existing.documentType === "TERMS" ? "TERMS_VERSION_PUBLISHED" : "PRIVACY_VERSION_PUBLISHED";
+    await services.store.addAudit(request.user!.id, action, "legal_document_version", id, {documentType: existing.documentType, versionNumber: existing.versionNumber, contentHash: published?.contentHash}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(adminLegalDocumentVersion(published));
+  }));
 
   app.patch("/api/advisor/profile", ...authenticated, auth.requireRole("ADVISOR"), asyncRoute(async (request, response) => {
     const input = advisorProfileSchema.parse(request.body);

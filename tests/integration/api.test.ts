@@ -16,7 +16,7 @@ type TestEmailService = {
   isDeliveryActive: ReturnType<typeof vi.fn>;
 };
 
-function app(overrides: Parameters<typeof makeStore>[0] = {}, emailService?: Partial<TestEmailService> | EmailService, secretProvider: SecretProvider = secrets, environment = env, verificationService?: EmailVerificationService) {
+function app(overrides: Parameters<typeof makeStore>[0] = {}, emailService?: Partial<TestEmailService> | EmailService, secretProvider: SecretProvider = secrets, environment = env, verificationService?: EmailVerificationService, firebaseAccounts?: {deleteUser(uid: string): Promise<void>; updateUserEmail(uid: string, newEmail: string): Promise<void>}) {
   const store = makeStore(overrides);
   const defaultEmail = {verify: vi.fn(), send: vi.fn().mockResolvedValue({messageId: "message-1"}), test: vi.fn().mockResolvedValue({messageId: "message-1"}), reload: vi.fn(), isDeliveryActive: vi.fn().mockResolvedValue(environment.EMAIL_DELIVERY_ENABLED)};
   const email = emailService instanceof EmailService ? emailService : {...defaultEmail, ...(emailService ?? {})} as unknown as EmailService;
@@ -25,8 +25,9 @@ function app(overrides: Parameters<typeof makeStore>[0] = {}, emailService?: Par
     storage: new MemoryStorage(), limiter: new MemoryLimiter(), secrets: secretProvider,
     email,
     emailVerification: verificationService ?? new AdvisorEmailVerificationService({createVerificationLink: vi.fn().mockResolvedValue({url: "http://localhost:9099/verify?oobCode=private"})}, email, store),
+    passwordReset: {sendPasswordResetEmail: vi.fn().mockResolvedValue({messageId: "message-1"})},
     gemini: {analyze: vi.fn().mockResolvedValue("analysis")} as never,
-    firebaseAccounts: {deleteUser: vi.fn().mockResolvedValue(undefined)}
+    firebaseAccounts: firebaseAccounts ?? {deleteUser: vi.fn().mockResolvedValue(undefined), updateUserEmail: vi.fn().mockResolvedValue(undefined)}
   });
 }
 
@@ -241,7 +242,8 @@ describe("advisor self-registration", () => {
     const application = createApp({
       env, store, verifier, encryption: new EncryptionService(Buffer.alloc(32, 4)), storage: new MemoryStorage(),
       limiter: new MemoryLimiter(), secrets, email, emailVerification: verification,
-      gemini: {analyze: vi.fn()} as never, firebaseAccounts: {deleteUser: vi.fn()}
+      passwordReset: {sendPasswordResetEmail: vi.fn().mockResolvedValue({messageId: "message-1"})},
+      gemini: {analyze: vi.fn()} as never, firebaseAccounts: {deleteUser: vi.fn(), updateUserEmail: vi.fn()}
     });
     const registration = await request(application).post("/api/auth/register-advisor").set("authorization", "Bearer new-advisor").send(registrationInput).expect(201);
     const resend = await request(application).post("/api/auth/email-verification/resend").set("authorization", "Bearer pending").expect(200);
@@ -785,5 +787,171 @@ describe("submission delivery", () => {
       message: expect.stringContaining("ההתחייבויות")
     }));
     expect(createSubmission).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("forgot password", () => {
+  it("returns the same generic message and audits PASSWORD_RESET_REQUESTED for an existing, active email", async () => {
+    const targetEmail = "advisor@example.com";
+    const findUserByEmail = vi.fn().mockResolvedValue({...users.advisor, email: targetEmail});
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    const response = await request(app({findUserByEmail, addAudit})).post("/api/auth/forgot-password")
+      .send({email: targetEmail}).expect(200);
+    expect(response.body).toEqual({success: true, message: expect.stringContaining("אם קיים חשבון")});
+    expect(addAudit).toHaveBeenCalledWith(null, "PASSWORD_RESET_REQUESTED", "user", users.advisor.id, {source: "self_service"}, expect.any(String), expect.any(String), undefined);
+    // ה-helper המקומי app() לא מזריק passwordReset מותאם אישית, לכן בודקים רק שהתשובה עקבית ושלא נחשפה כתובת הדוא״ל בהודעה עצמה.
+    expect(response.body.message).not.toContain(targetEmail);
+  });
+
+  it("returns the identical generic message for an email that does not exist (anti-enumeration)", async () => {
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    const response = await request(app({addAudit})).post("/api/auth/forgot-password")
+      .send({email: "no-such-account@example.com"}).expect(200);
+    expect(response.body).toEqual({success: true, message: expect.stringContaining("אם קיים חשבון")});
+    expect(addAudit).toHaveBeenCalledWith(null, "PASSWORD_RESET_REQUESTED_UNKNOWN_EMAIL", "user", null, {}, expect.any(String), expect.any(String), undefined);
+  });
+
+  it("rejects a malformed email before touching the store", async () => {
+    const findUserByEmail = vi.fn();
+    await request(app({findUserByEmail})).post("/api/auth/forgot-password").send({email: "not-an-email"}).expect(400);
+    expect(findUserByEmail).not.toHaveBeenCalled();
+  });
+
+  it("does not send a reset link for an archived (soft-deleted) account, but still returns the generic message", async () => {
+    const targetEmail = "archived@example.com";
+    const archivedUser = {...users.advisor, email: targetEmail, deletedAt: new Date()};
+    const findUserByEmail = vi.fn().mockResolvedValue(archivedUser);
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    const response = await request(app({findUserByEmail, addAudit})).post("/api/auth/forgot-password")
+      .send({email: targetEmail}).expect(200);
+    expect(response.body).toEqual({success: true, message: expect.stringContaining("אם קיים חשבון")});
+    expect(addAudit).toHaveBeenCalledWith(null, "PASSWORD_RESET_REQUESTED_UNKNOWN_EMAIL", "user", null, {}, expect.any(String), expect.any(String), undefined);
+  });
+});
+
+describe("SUPER_ADMIN user management", () => {
+  it("records an optional reason and the correct action name when disabling a user", async () => {
+    const updateAdvisorStatus = vi.fn().mockResolvedValue({...users.advisor, status: "DISABLED"});
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    await request(app({updateAdvisorStatus, addAudit})).patch(`/api/admin/advisors/${users.advisor.id}/status`)
+      .set("authorization", "Bearer super").send({status: "DISABLED", reason: "בקשת הלקוח"}).expect(200);
+    expect(addAudit).toHaveBeenCalledWith(users.super.id, "USER_DISABLED", "user", users.advisor.id, {previousStatus: "ACTIVE", reason: "בקשת הלקוח"}, expect.any(String), expect.any(String), undefined);
+  });
+
+  it("uses USER_ENABLED / USER_SUSPENDED for the other two status transitions", async () => {
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    await request(app({addAudit})).patch(`/api/admin/advisors/${users.advisor.id}/status`).set("authorization", "Bearer super").send({status: "SUSPENDED"}).expect(200);
+    expect(addAudit).toHaveBeenCalledWith(users.super.id, "USER_SUSPENDED", "user", users.advisor.id, {previousStatus: "ACTIVE", reason: null}, expect.any(String), expect.any(String), undefined);
+    await request(app({addAudit})).patch(`/api/admin/advisors/${users.advisor.id}/status`).set("authorization", "Bearer super").send({status: "ACTIVE"}).expect(200);
+    expect(addAudit).toHaveBeenCalledWith(users.super.id, "USER_ENABLED", "user", users.advisor.id, {previousStatus: "ACTIVE", reason: null}, expect.any(String), expect.any(String), undefined);
+  });
+
+  it("blocks non-SUPER_ADMIN roles from every new advisor-management route", async () => {
+    for (const token of ["admin", "advisor", "lender"]) {
+      await request(app()).patch(`/api/admin/advisors/${users.advisor.id}/profile`).set("authorization", `Bearer ${token}`).send({firstName: "X", lastName: "Y", phone: "0500000000", businessName: "B"}).expect(403);
+      await request(app()).patch(`/api/admin/advisors/${users.advisor.id}/email`).set("authorization", `Bearer ${token}`).send({email: "new@example.com"}).expect(403);
+      await request(app()).post(`/api/admin/advisors/${users.advisor.id}/send-password-reset`).set("authorization", `Bearer ${token}`).expect(403);
+      await request(app()).post(`/api/admin/advisors/${users.advisor.id}/archive`).set("authorization", `Bearer ${token}`).expect(403);
+      await request(app()).post(`/api/admin/advisors/${users.advisor.id}/restore`).set("authorization", `Bearer ${token}`).expect(403);
+    }
+  });
+
+  it("edits an advisor's profile fields and audits USER_UPDATED", async () => {
+    const updateAdvisorProfile = vi.fn().mockResolvedValue({...users.advisor, firstName: "Renamed"});
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    const response = await request(app({updateAdvisorProfile, addAudit})).patch(`/api/admin/advisors/${users.advisor.id}/profile`)
+      .set("authorization", "Bearer super").send({firstName: "Renamed", lastName: "One", phone: "0500000000", businessName: "Business"}).expect(200);
+    expect(response.body.firstName).toBe("Renamed");
+    expect(updateAdvisorProfile).toHaveBeenCalledWith(users.advisor.id, expect.objectContaining({firstName: "Renamed", lastName: "One"}));
+    expect(addAudit).toHaveBeenCalledWith(users.super.id, "USER_UPDATED", "user", users.advisor.id, expect.objectContaining({adminTriggered: true}), expect.any(String), expect.any(String), undefined);
+  });
+
+  it("archives then restores an advisor, and audits both transitions", async () => {
+    const encryption = new EncryptionService(Buffer.alloc(32, 4));
+    const fullAccount = (patch: Partial<Record<string, unknown>>) => ({
+      ...users.advisor, phoneEncrypted: encryption.encrypt("+972501234567"), businessName: "Test Business",
+      businessPhoneEncrypted: encryption.encrypt("+972501234567"), businessEmail: users.advisor.email,
+      createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null, ...patch
+    });
+    const archiveAdvisorAccount = vi.fn().mockResolvedValue(fullAccount({deletedAt: new Date()}));
+    const restoreAdvisorAccount = vi.fn().mockResolvedValue(fullAccount({deletedAt: null}));
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    await request(app({archiveAdvisorAccount, addAudit})).post(`/api/admin/advisors/${users.advisor.id}/archive`)
+      .set("authorization", "Bearer super").send({reason: "כפל חשבון"}).expect(200);
+    expect(addAudit).toHaveBeenCalledWith(users.super.id, "USER_ARCHIVED", "user", users.advisor.id, {reason: "כפל חשבון"}, expect.any(String), expect.any(String), undefined);
+    await request(app({getAdvisorAccount: async (_id, options) => options?.includeArchived ? fullAccount({deletedAt: new Date()}) : null, restoreAdvisorAccount, addAudit}))
+      .post(`/api/admin/advisors/${users.advisor.id}/restore`).set("authorization", "Bearer super").expect(200);
+    expect(addAudit).toHaveBeenCalledWith(users.super.id, "USER_RESTORED", "user", users.advisor.id, {}, expect.any(String), expect.any(String), undefined);
+  });
+
+  it("rejects an email change to an address already in use, without touching Firebase", async () => {
+    const targetEmail = "advisor2@example.com";
+    const findUserByEmail = vi.fn().mockResolvedValue({...users.advisor2, email: targetEmail});
+    const updateUserEmail = vi.fn();
+    await request(app({findUserByEmail}, undefined, secrets, env, undefined, {deleteUser: vi.fn(), updateUserEmail}))
+      .patch(`/api/admin/advisors/${users.advisor.id}/email`).set("authorization", "Bearer super").send({email: targetEmail}).expect(409);
+    expect(updateUserEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("legal documents", () => {
+  it("exposes only the published fields of the active version publicly, and 404s when none is published", async () => {
+    const getActiveLegalDocumentVersion = vi.fn().mockResolvedValue({
+      id: 1, documentType: "TERMS", versionNumber: 1, status: "PUBLISHED", title: "תנאי שימוש", content: "תוכן",
+      contactEmail: "syncash.support@gmail.com", contactPhone: null, contactAddress: null, effectiveDate: "2026-08-01",
+      contentHash: "hash", createdByUserId: users.super.id, publishedByUserId: users.super.id, publishedAt: new Date(), archivedAt: null, createdAt: new Date(), updatedAt: new Date()
+    });
+    const response = await request(app({getActiveLegalDocumentVersion})).get("/api/legal-documents/TERMS").expect(200);
+    expect(response.body).toEqual(expect.objectContaining({title: "תנאי שימוש", content: "תוכן"}));
+    expect(response.body).not.toHaveProperty("createdByUserId");
+    expect(response.body).not.toHaveProperty("status");
+    await request(app({getActiveLegalDocumentVersion: async () => null})).get("/api/legal-documents/PRIVACY").expect(404);
+  });
+
+  it("refuses to edit or publish a version that is not a draft", async () => {
+    const getLegalDocumentVersion = vi.fn().mockResolvedValue({
+      id: 2, documentType: "TERMS", versionNumber: 1, status: "PUBLISHED", title: "t", content: "c",
+      contactEmail: null, contactPhone: null, contactAddress: null, effectiveDate: null, contentHash: "h",
+      createdByUserId: users.super.id, publishedByUserId: users.super.id, publishedAt: new Date(), archivedAt: null, createdAt: new Date(), updatedAt: new Date()
+    });
+    await request(app({getLegalDocumentVersion})).patch("/api/admin/legal-documents/versions/2")
+      .set("authorization", "Bearer super").send({title: "t2", content: "c2", contactEmail: null, contactPhone: null, contactAddress: null, effectiveDate: null}).expect(409);
+    await request(app({getLegalDocumentVersion})).post("/api/admin/legal-documents/versions/2/publish").set("authorization", "Bearer super").expect(409);
+    await request(app({getLegalDocumentVersion})).delete("/api/admin/legal-documents/versions/2").set("authorization", "Bearer super").expect(409);
+  });
+
+  it("refuses to publish a draft with empty content", async () => {
+    const getLegalDocumentVersion = vi.fn().mockResolvedValue({
+      id: 3, documentType: "PRIVACY", versionNumber: 1, status: "DRAFT", title: "t", content: "   ",
+      contactEmail: null, contactPhone: null, contactAddress: null, effectiveDate: null, contentHash: null,
+      createdByUserId: users.super.id, publishedByUserId: null, publishedAt: null, archivedAt: null, createdAt: new Date(), updatedAt: new Date()
+    });
+    await request(app({getLegalDocumentVersion})).post("/api/admin/legal-documents/versions/3/publish").set("authorization", "Bearer super").expect(422);
+  });
+
+  it("audits TERMS_VERSION_PUBLISHED / PRIVACY_VERSION_PUBLISHED with the content hash on successful publish", async () => {
+    const draft = {
+      id: 4, documentType: "PRIVACY" as const, versionNumber: 2, status: "DRAFT" as const, title: "t", content: "content",
+      contactEmail: null, contactPhone: null, contactAddress: null, effectiveDate: null, contentHash: null,
+      createdByUserId: users.super.id, publishedByUserId: null, publishedAt: null, archivedAt: null, createdAt: new Date(), updatedAt: new Date()
+    };
+    const getLegalDocumentVersion = vi.fn().mockResolvedValue(draft);
+    const publishLegalDocumentVersion = vi.fn().mockResolvedValue({...draft, status: "PUBLISHED", contentHash: "abc123", publishedAt: new Date(), publishedByUserId: users.super.id});
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    await request(app({getLegalDocumentVersion, publishLegalDocumentVersion, addAudit})).post("/api/admin/legal-documents/versions/4/publish")
+      .set("authorization", "Bearer super").expect(200);
+    expect(addAudit).toHaveBeenCalledWith(users.super.id, "PRIVACY_VERSION_PUBLISHED", "legal_document_version", 4, expect.objectContaining({documentType: "PRIVACY", versionNumber: 2, contentHash: "abc123"}), expect.any(String), expect.any(String), undefined);
+  });
+
+  it("only records acceptance for document types that currently have a published version", async () => {
+    const createAdvisorAccount = vi.fn().mockResolvedValue(registeredAdvisor);
+    const addEmailLog = vi.fn().mockResolvedValue(undefined);
+    const getActiveLegalDocumentVersion = vi.fn().mockImplementation(async (type: string) => type === "TERMS" ? {id: 9, documentType: "TERMS", versionNumber: 1} : null);
+    const recordLegalDocumentAcceptance = vi.fn().mockResolvedValue(undefined);
+    const createVerificationLink = vi.fn().mockResolvedValue({url: "http://localhost:9099/verify?oobCode=private"});
+    await request(app({createAdvisorAccount, addEmailLog, getActiveLegalDocumentVersion, recordLegalDocumentAcceptance}, undefined, secrets, env, new AdvisorEmailVerificationService({createVerificationLink}, {send: vi.fn().mockResolvedValue({messageId: "m"})} as never, makeStore())))
+      .post("/api/auth/register-advisor").set("authorization", "Bearer new-advisor").send(registrationInput).expect(201);
+    expect(recordLegalDocumentAcceptance).toHaveBeenCalledTimes(1);
+    expect(recordLegalDocumentAcceptance).toHaveBeenCalledWith(registeredAdvisor.id, "TERMS", 9, expect.objectContaining({}));
   });
 });

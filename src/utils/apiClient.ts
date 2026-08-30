@@ -1,7 +1,7 @@
 import { createUserWithEmailAndPassword, deleteUser, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import {requireFrontendConfig} from "../config/frontend";
-import type { AdminEmailLogRecord, AdvisorAdminRecord, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, MissingRequiredDocument, NotificationRecord } from "../types";
+import type { AdminEmailLogRecord, AdminLegalDocumentOverview, AdminLegalDocumentVersion, AdvisorAdminRecord, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LegalDocumentAcceptanceRecord, LegalDocumentType, LegalDocumentVersion, MissingRequiredDocument, NotificationRecord, UserAuditEvent } from "../types";
 import type { AdvisorRegistrationInput } from "../domain/advisorRegistration";
 
 const API_URL = requireFrontendConfig().apiBaseUrl;
@@ -199,10 +199,26 @@ export const api = {
   markNotificationRead: (id: number) => authFetch(`/api/notifications/${id}/read`, {method: "PATCH"}),
   markAllNotificationsRead: () => authFetch<{read: true; count: number}>("/api/notifications/read-all", {method: "PATCH"}),
   updateAdvisorProfile: (values: {firstName: string; lastName: string; phone: string; businessName: string}) => authFetch<CurrentUser>("/api/advisor/profile", {method: "PATCH", body: JSON.stringify(values)}),
-  adminAdvisors: () => authFetch<AdvisorAdminRecord[]>("/api/admin/advisors"),
+  adminAdvisors: (includeArchived = false) => authFetch<AdvisorAdminRecord[]>(`/api/admin/advisors${includeArchived ? "?includeArchived=1" : ""}`),
   adminEmailLogs: () => authFetch<AdminEmailLogRecord[]>("/api/admin/email-logs"),
-  updateAdvisorStatus: (id: number, status: "ACTIVE" | "SUSPENDED" | "DISABLED") => authFetch<AdvisorAdminRecord>(`/api/admin/advisors/${id}/status`, {method: "PATCH", body: JSON.stringify({status})}),
+  updateAdvisorStatus: (id: number, status: "ACTIVE" | "SUSPENDED" | "DISABLED", reason?: string) => authFetch<AdvisorAdminRecord>(`/api/admin/advisors/${id}/status`, {method: "PATCH", body: JSON.stringify({status, reason})}),
   adminResendAdvisorVerification: (id: number) => authFetch<{success: true; verificationEmailSent: true}>(`/api/admin/advisors/${id}/resend-verification`, {method: "POST"}),
+  adminUpdateAdvisorProfile: (id: number, values: {firstName: string; lastName: string; phone: string; businessName: string}) => authFetch<AdvisorAdminRecord>(`/api/admin/advisors/${id}/profile`, {method: "PATCH", body: JSON.stringify(values)}),
+  adminUpdateAdvisorEmail: (id: number, email: string) => authFetch<AdvisorAdminRecord>(`/api/admin/advisors/${id}/email`, {method: "PATCH", body: JSON.stringify({email})}),
+  adminSendAdvisorPasswordReset: (id: number) => authFetch<{success: true}>(`/api/admin/advisors/${id}/send-password-reset`, {method: "POST"}),
+  adminArchiveAdvisor: (id: number, reason?: string) => authFetch<AdvisorAdminRecord>(`/api/admin/advisors/${id}/archive`, {method: "POST", body: JSON.stringify({reason})}),
+  adminRestoreAdvisor: (id: number) => authFetch<AdvisorAdminRecord>(`/api/admin/advisors/${id}/restore`, {method: "POST"}),
+  adminAdvisorAuditEvents: (id: number) => authFetch<UserAuditEvent[]>(`/api/admin/advisors/${id}/audit-events`),
+  adminAdvisorLegalAcceptances: (id: number) => authFetch<LegalDocumentAcceptanceRecord[]>(`/api/admin/advisors/${id}/legal-acceptances`),
+  forgotPassword: (email: string) => publicFetch<{success: true; message: string}>("/api/auth/forgot-password", {method: "POST", body: JSON.stringify({email})}),
+  legalDocument: (type: LegalDocumentType) => publicFetch<LegalDocumentVersion>(`/api/legal-documents/${type}`),
+  adminLegalDocuments: () => authFetch<AdminLegalDocumentOverview[]>("/api/admin/legal-documents"),
+  adminLegalDocumentVersions: (type: LegalDocumentType) => authFetch<AdminLegalDocumentVersion[]>(`/api/admin/legal-documents/${type}/versions`),
+  adminLegalDocumentVersion: (id: number) => authFetch<AdminLegalDocumentVersion>(`/api/admin/legal-documents/versions/${id}`),
+  adminCreateLegalDocumentDraft: (type: LegalDocumentType) => authFetch<AdminLegalDocumentVersion>(`/api/admin/legal-documents/${type}/draft`, {method: "POST"}),
+  adminUpdateLegalDocumentDraft: (id: number, values: {title: string; content: string; contactEmail: string | null; contactPhone: string | null; contactAddress: string | null; effectiveDate: string | null}) => authFetch<AdminLegalDocumentVersion>(`/api/admin/legal-documents/versions/${id}`, {method: "PATCH", body: JSON.stringify(values)}),
+  adminDiscardLegalDocumentDraft: (id: number) => authFetch<void>(`/api/admin/legal-documents/versions/${id}`, {method: "DELETE"}),
+  adminPublishLegalDocumentVersion: (id: number) => authFetch<AdminLegalDocumentVersion>(`/api/admin/legal-documents/versions/${id}/publish`, {method: "POST"}),
   deliveryCompanies: (clientId: number) => authFetch<DeliveryCompany[]>(`/api/advisor/financing-companies?clientId=${clientId}`),
   deliveryPreflight: (clientId: number) => authFetch<DeliveryPreflight>(`/api/clients/${clientId}/delivery/preflight`),
   deliveryPreview: (clientId: number) => authFetch<DeliveryPreview>(`/api/clients/${clientId}/delivery/preview`, {method: "POST", body: JSON.stringify({})}),

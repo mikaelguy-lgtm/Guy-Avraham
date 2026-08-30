@@ -30,6 +30,7 @@ export default function AuthScreen({onAuthenticated}: {onAuthenticated: (user: C
       <h1>כניסה מאובטחת</h1>
       <label>דואר אלקטרוני<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
       <label>סיסמה<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
+      <p className="auth-link forgot-password-link"><Link to="/forgot-password">שכחתי סיסמה?</Link></p>
       {error && <p className="error" role="alert">{error}</p>}
       <button disabled={busy}>{busy ? "מתחבר…" : "כניסה"}</button>
       {registrationEnabled && <p className="auth-link">עדיין אין לך חשבון? <Link to="/register/advisor">הרשמה ליועצים</Link></p>}

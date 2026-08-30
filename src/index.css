@@ -702,3 +702,35 @@ h4 { font-size: 1rem; font-weight: 700; }
 @media (max-width: 560px) {
   .response-pending-card { flex-direction: column; align-items: start; text-align: start; }
 }
+
+/* שכחתי סיסמה */
+.forgot-password-link { margin-block-start: -.4rem; text-align: end; font-size: .85rem; }
+.auth-hint { color: var(--muted); font-size: .92rem; margin-block-end: .3rem; }
+
+/* מסמכים משפטיים */
+.status-published { color: #a7f3d0; background: rgba(16, 185, 129, .1); border-color: rgba(16, 185, 129, .24); }
+.status-archived { color: #cbd5e1; background: rgba(100, 116, 139, .16); border-color: rgba(100, 116, 139, .3); }
+.legal-document-type-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.legal-document-type-card { cursor: pointer; display: grid; gap: .7rem; transition: border-color .16s ease, transform .16s ease; }
+.legal-document-type-card:hover { transform: translateY(-2px); border-color: rgba(6, 182, 212, .5); }
+.legal-document-type-card.selected { border-color: var(--cyan); background: rgba(6, 182, 212, .06); }
+.legal-document-type-card header { display: flex; align-items: center; gap: .6rem; }
+.legal-document-type-card header svg { color: var(--gold); }
+.legal-document-type-card dl { display: grid; gap: .35rem; margin: 0; }
+.legal-document-type-card dl div { display: flex; justify-content: space-between; gap: .8rem; color: var(--muted); font-size: .88rem; }
+.legal-document-type-card dl dd { color: var(--text); font-weight: 700; }
+.legal-document-editor { margin-block-start: 1.2rem; display: grid; gap: 1.2rem; }
+.legal-document-draft-form { display: grid; gap: 1rem; padding: 1rem; border: 1px dashed rgba(220, 167, 55, .35); border-radius: 14px; background: rgba(220, 167, 55, .04); }
+.legal-document-content-editor { min-block-size: 420px; font-family: inherit; line-height: 1.7; resize: vertical; }
+.legal-document-content-view { white-space: pre-wrap; line-height: 1.8; max-block-size: 60vh; overflow-y: auto; padding: 1rem; border-radius: 12px; background: rgba(3, 11, 27, .5); border: 1px solid var(--border-soft); }
+.legal-document-updated-label { color: var(--muted); font-size: .88rem; margin-block-end: .8rem; }
+.legal-document-contact { margin-block-start: 1rem; padding-block-start: 1rem; border-block-start: 1px solid var(--border-soft); }
+.legal-document-contact p { margin: .3rem 0; color: var(--muted); }
+.legal-document-preview-modal { inline-size: min(760px, 100%); max-block-size: calc(100vh - 3rem); overflow-y: auto; }
+@media (max-width: 900px) {
+  .legal-document-type-grid { grid-template-columns: 1fr; }
+}
+.advisor-admin-card.archived { opacity: .65; }
+.link-action { display: inline; padding: 0; border: 0; background: none; color: #67e8f9; font: inherit; font-weight: 800; text-decoration: underline; cursor: pointer; }
+.advisor-management-modal { inline-size: min(760px, 100%); max-block-size: calc(100vh - 3rem); overflow-y: auto; }
+.advisor-management-modal h3 { margin-block-start: 1.4rem; }

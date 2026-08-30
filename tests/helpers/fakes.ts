@@ -56,6 +56,22 @@ export function makeStore(overrides: Partial<AppStore> = {}): AppStore {
       const user = Object.values(users).find((candidate) => candidate.id === userId && candidate.role === "ADVISOR");
       return user ? {...user, status: "ACTIVE", emailVerified: true, phoneEncrypted: encryption.encrypt("+972501234567"), businessName: "Test Business", businessPhoneEncrypted: encryption.encrypt("+972501234567"), businessEmail: user.email, createdAt: new Date(), updatedAt: new Date(), lastLoginAt: new Date()} : null;
     },
+    updateAdvisorStatus: async (userId, status) => {
+      const user = Object.values(users).find((candidate) => candidate.id === userId && candidate.role === "ADVISOR");
+      return user ? {...user, status, phoneEncrypted: encryption.encrypt("+972501234567"), businessName: "Test Business", businessPhoneEncrypted: encryption.encrypt("+972501234567"), businessEmail: user.email, createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null} : null;
+    },
+    updateAdvisorProfile: async (userId, values) => {
+      const user = Object.values(users).find((candidate) => candidate.id === userId && candidate.role === "ADVISOR");
+      return user ? {...user, firstName: values.firstName, lastName: values.lastName, phoneEncrypted: values.phoneEncrypted, businessName: values.businessName, businessPhoneEncrypted: values.businessPhoneEncrypted, businessEmail: user.email, createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null} : null;
+    },
+    archiveAdvisorAccount: async (userId) => {
+      const user = Object.values(users).find((candidate) => candidate.id === userId && candidate.role === "ADVISOR");
+      return user ? {...user, deletedAt: new Date(), phoneEncrypted: encryption.encrypt("+972501234567"), businessName: "Test Business", businessPhoneEncrypted: encryption.encrypt("+972501234567"), businessEmail: user.email, createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null} : null;
+    },
+    restoreAdvisorAccount: async (userId) => {
+      const user = Object.values(users).find((candidate) => candidate.id === userId && candidate.role === "ADVISOR");
+      return user ? {...user, deletedAt: null, phoneEncrypted: encryption.encrypt("+972501234567"), businessName: "Test Business", businessPhoneEncrypted: encryption.encrypt("+972501234567"), businessEmail: user.email, createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null} : null;
+    },
     getClientAdvisorId: async (id) => id === 1 ? 10 : id === 2 ? 20 : null,
     getClient: async (id) => id === 1 ? {id: 1, publicCaseNumber: "SC-1", advisorId: 10, status: "ACTIVE", firstNameEncrypted: encryption.encrypt("Dana"), lastNameEncrypted: encryption.encrypt("Levi"), identityNumberEncrypted: encryption.encrypt("123456789"), phoneEncrypted: encryption.encrypt("0500000000"), emailEncrypted: encryption.encrypt("dana@example.com"), addressEncrypted: encryption.encrypt("Street 1"), notesEncrypted: encryption.encrypt("Professional notes"), dealDetailsEncrypted: encryption.encrypt("Professional notes"), dealDetailsUpdatedByUserId: 1, dealDetailsUpdatedAt: new Date(), maritalStatus: "MARRIED", numberOfChildren: 0, childrenAges: [], borrowerCount: 2, numberOfBorrowers: 2, borrowerRelationship: "MARRIED", borrowerRelationshipOtherEncrypted: null, householdChildrenCount: 2, householdChildrenAges: [4, 8], deletedAt: null, createdAt: new Date(), updatedAt: new Date()} : null,
     updateClient: async () => null,
@@ -117,7 +133,12 @@ export function makeStore(overrides: Partial<AppStore> = {}): AppStore {
     hasIncompleteLegacyLiabilities: async () => false,
     getRevealedData: async () => null,
     getCreditIndication: async () => null,
-    upsertCreditIndication: async (_clientId: number, values: CreditIndicationRecord) => values
+    upsertCreditIndication: async (_clientId: number, values: CreditIndicationRecord) => values,
+    getActiveLegalDocumentVersion: async () => null,
+    getDraftLegalDocumentVersion: async () => null,
+    recordLegalDocumentAcceptance: async () => undefined,
+    listLegalDocumentAcceptancesForUser: async () => [],
+    listUserAuditEvents: async () => []
   };
   const values = {...defaults, ...overrides} as Record<string, unknown>;
   return new Proxy(values, {get(target, property) {
