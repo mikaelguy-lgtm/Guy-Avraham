@@ -60,7 +60,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `b419eeda5d9417e1ecf31768cc6e07f1d18e5683` |
+| Active release | `/opt/syncash/current` (symlink) → `9756facdac3476b98bf1cc38df380c13eb09c04d` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -135,28 +135,29 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-08-30 (post `b419eed` deploy)
+## 4. Operational state — live-verified 2026-08-30 (post `9756fac` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/b419eeda5d9417e1ecf31768cc6e07f1d18e5683` |
-| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `b419eed...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/9756facdac3476b98bf1cc38df380c13eb09c04d` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `9756fac...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
 | Public site (`https://app.syncash.co.il`) | `200` externally |
-| Migrations | `0016` applied (`legal_document_versions`, `legal_document_acceptances` — purely additive, no existing table touched); `migrate-production.sh` ran it exactly once during deploy |
+| Migrations | `0017` applied (`privacy_requests` table + `DPA` added to the `legal_document_type` enum — purely additive, no existing table touched); confirmed exactly one row for it in `drizzle.__drizzle_migrations`; `migrate-production.sh` ran it exactly once during deploy |
 | API/Worker error logs (post-deploy) | Zero error markers in either |
-| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release (`syncash-20260830T155113Z-b419eeda5d9417e1ecf31768cc6e07f1d18e5683.tar.gz.gpg`) |
-| Legal documents seeded | Real Terms of Service (21 sections, from the business-provided PDF) published as `TERMS` v1 via `scripts/seed-legal-terms.ts` run against the live API's compiled code (not hand-written SQL) — effective date `2026-08-01`, contact `syncash.support@gmail.com`, no phone; confirmed live at `GET /api/legal-documents/TERMS`. Privacy Policy has no real content yet, so a placeholder `DRAFT` was created and deliberately left **unpublished** — `GET /api/legal-documents/PRIVACY` correctly still 404s |
-| Forgot-password verified against live Production | `POST /api/auth/forgot-password` confirmed returning the generic message for both a real account and an unknown address, without hitting the database differently in either response |
-| Scope of this release | Self-service forgot-password (Firebase Admin reset-link generation, generic response, rate-limited); SUPER_ADMIN advisor management (edit profile, change email, disable/enable, archive/restore, resend verification, admin-triggered password reset), all audited; full legal-documents subsystem (draft/publish versioning, immutable published versions, content-hash, per-user acceptance history, registration-time acceptance recording) |
+| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release (`syncash-20260830T174722Z-9756facdac3476b98bf1cc38df380c13eb09c04d.tar.gz.gpg`) |
+| Legal documents — published content unchanged | `TERMS` v1 (id 1) still `PUBLISHED`, still 11,532 characters, same `published_at` (2026-08-30 15:57:27Z) and same contact email — confirmed byte-length-identical before/after this deploy via direct DB read, and via the live `GET /api/legal-documents/TERMS` response |
+| Legal documents — new drafts seeded, none published | `scripts/seed-legal-drafts-v2.ts` run against the live API's compiled code created/updated three `DRAFT` rows: `TERMS` v2 (id 3, updated lender-targeting/versioning language), `PRIVACY` v1 (id 2, real 21-section policy replacing the old placeholder), `DPA` v1 (id 4, new 18-section document). All three have `published_at IS NULL`; `GET /api/legal-documents/PRIVACY` and `GET /api/legal-documents/DPA` both correctly 404 (`LEGAL_DOCUMENT_NOT_PUBLISHED`) |
+| Legal-document acceptances | `SELECT document_type, legal_document_version_id, count(*) FROM legal_document_acceptances GROUP BY ...` returns 0 rows — no acceptance of any kind exists yet for `PRIVACY` or `DPA` (none fabricated by the seed script; the registration route only records an acceptance for a document type that currently has a published version) |
+| Scope of this release | Legal Center (tabbed Terms/Privacy/DPA/Requests UI replacing the two separate modals, with scroll-to-accept on Terms); DPA as a third versioned legal-document type; full privacy-requests entity (public submission form, SUPER_ADMIN review workflow, audited); Terms v2/Privacy/DPA content drafted for review, none published |
 | Rollback required | No |
 
 ## 5. Git / release state — in sync as of 2026-08-30
 
-Production active release: `b419eeda5d9417e1ecf31768cc6e07f1d18e5683`.
+Production active release: `9756facdac3476b98bf1cc38df380c13eb09c04d`.
 Local HEAD and `origin/codex-syncash-production-rebuild`: same SHA
-(`b419eeda5d9417e1ecf31768cc6e07f1d18e5683`) — fully in sync as of this deploy.
-Prior release `75df21008189532e54a61cf73b25131524d46999` remains on disk at
-`/opt/syncash/releases/75df21008189532e54a61cf73b25131524d46999` for rollback
+(`9756facdac3476b98bf1cc38df380c13eb09c04d`) — fully in sync as of this deploy.
+Prior release `b419eeda5d9417e1ecf31768cc6e07f1d18e5683` remains on disk at
+`/opt/syncash/releases/b419eeda5d9417e1ecf31768cc6e07f1d18e5683` for rollback
 if needed. See the "Before starting any task"
 checklist in `CLAUDE.md` for how to reason about a HEAD/Production gap in
 future sessions; always confirm the exact current HEAD with `git log`

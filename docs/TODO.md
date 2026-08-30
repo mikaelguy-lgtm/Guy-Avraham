@@ -1,10 +1,11 @@
 # SynCash — Open Items
 
-Last synced 2026-08-30 after the Production deployment of `b419eed`
-(migration `0016` applied — forgot-password, SUPER_ADMIN user management,
-and versioned legal documents), which superseded the earlier `75df210`
-deploy (no schema change). See `docs/PRODUCTION_HANDOFF.md` section 4/5 for
-the live-verified operational state. Only
+Last synced 2026-08-30 after the Production deployment of `9756fac`
+(migration `0017` applied — DPA document type, privacy-requests entity,
+Legal Center UI), which superseded the earlier `b419eed` deploy (migration
+`0016` — forgot-password, SUPER_ADMIN user management, versioned legal
+documents). See `docs/PRODUCTION_HANDOFF.md` section 4/5 for the
+live-verified operational state. Only
 real, unresolved items — nothing here is a suggestion to refactor or a style
 preference. Resolved items are removed rather than archived here; see
 `docs/DECISIONS.md` and `docs/PRODUCTION_HANDOFF.md` for the historical record
@@ -126,14 +127,17 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
 
 ## Open from the 2026-08-30 forgot-password / SUPER_ADMIN / legal-documents phase
 
-15. **Privacy Policy has no real content yet** — per the explicit instruction
-    not to invent content, only a placeholder `DRAFT` was created
-    (`scripts/seed-legal-terms.ts`'s Privacy branch) and it was
-    deliberately left unpublished. `GET /api/legal-documents/PRIVACY`
-    correctly 404s in Production today. Needs the user to supply the real
-    privacy policy text (mirroring how the real Terms of Service PDF was
-    supplied this phase) before a SUPER_ADMIN can publish it from
-    Settings → Legal Documents.
+15. **Privacy Policy now has real content, drafted but not yet published** —
+    superseded by the 2026-08-30 legal-suite phase: a full 21-section
+    Privacy Policy and an 18-section DPA were drafted
+    (`scripts/seed-legal-drafts-v2.ts`), along with a `TERMS` v2 draft
+    updating the lender-targeting/versioning language. All three are
+    `DRAFT`, none published — `GET /api/legal-documents/PRIVACY` and
+    `/DPA` correctly 404 in Production. A SUPER_ADMIN needs to review each
+    draft in Settings → Legal Documents and decide when to publish. Phone
+    and address are still `[להשלמה]`-equivalent (left `null`, not
+    fabricated) — the publish-confirmation modal warns about this for
+    non-TERMS documents, but does not block publishing.
 16. **Local Docker dev containers (`newproject-api-1`, `newproject-frontend-1`)
     needed a manual `docker compose restart` during this phase** before newly
     added routes/UI were reachable, despite the bind-mounted source already
@@ -145,3 +149,18 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
     remembering for future long-running local sessions: if a brand-new route
     or component 404s/fails to load locally despite the source looking
     correct, restart the dev containers before assuming a code defect.
+
+## Open from the 2026-08-30 Legal Center / DPA / privacy-requests phase
+
+17. **Publishing `TERMS` v2 is a business decision, not made in this phase**
+    — it would archive the currently-accepted v1 and change what new
+    registrants must accept. The v2 draft (id 3 in Production) is ready
+    for SUPER_ADMIN review but was deliberately left unpublished, matching
+    the earlier phase's rule not to unilaterally change what users must
+    accept.
+18. **Legal-entity company number `000000000` is a placeholder** used inside
+    the drafted Privacy Policy body text (not a structured field) — flagged
+    in the admin Legal Documents banner ("פרט זמני — יש לעדכן לפני השקה
+    מסחרית") but not shown to end users in the document itself, per the
+    explicit instruction. Needs a real company number before any of the
+    three drafts (Terms v2, Privacy, DPA) are published commercially.
