@@ -955,3 +955,45 @@ describe("legal documents", () => {
     expect(recordLegalDocumentAcceptance).toHaveBeenCalledWith(registeredAdvisor.id, "TERMS", 9, expect.objectContaining({}));
   });
 });
+
+describe("privacy requests", () => {
+  it("accepts a public, unauthenticated submission and audits it with a null actor", async () => {
+    const createPrivacyRequest = vi.fn().mockResolvedValue({id: 5, requestType: "DELETION", name: "לקוח קצה", email: "client@example.com", description: null, status: "NEW", internalNotes: null, handledByUserId: null, createdAt: new Date(), updatedAt: new Date()});
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    const response = await request(app({createPrivacyRequest, addAudit})).post("/api/privacy-requests")
+      .send({requestType: "DELETION", name: "לקוח קצה", email: "client@example.com"}).expect(201);
+    expect(response.body).toEqual({success: true});
+    expect(createPrivacyRequest).toHaveBeenCalledWith({requestType: "DELETION", name: "לקוח קצה", email: "client@example.com", description: null});
+    expect(addAudit).toHaveBeenCalledWith(null, "PRIVACY_REQUEST_CREATED", "privacy_request", 5, {requestType: "DELETION"}, expect.any(String), expect.any(String), undefined);
+  });
+
+  it("rejects an invalid submission before touching the store", async () => {
+    const createPrivacyRequest = vi.fn();
+    await request(app({createPrivacyRequest})).post("/api/privacy-requests").send({requestType: "DELETION", name: "א", email: "not-an-email"}).expect(400);
+    expect(createPrivacyRequest).not.toHaveBeenCalled();
+  });
+
+  it("requires SUPER_ADMIN for every admin privacy-request route", async () => {
+    await request(app()).get("/api/admin/privacy-requests").set("authorization", "Bearer advisor").expect(403);
+    await request(app()).get("/api/admin/privacy-requests/1").set("authorization", "Bearer advisor").expect(403);
+    await request(app()).patch("/api/admin/privacy-requests/1").set("authorization", "Bearer advisor").send({status: "IN_REVIEW"}).expect(403);
+  });
+
+  it("404s for a privacy request that does not exist", async () => {
+    const getPrivacyRequest = vi.fn().mockResolvedValue(null);
+    await request(app({getPrivacyRequest})).get("/api/admin/privacy-requests/999").set("authorization", "Bearer super").expect(404);
+    await request(app({getPrivacyRequest})).patch("/api/admin/privacy-requests/999").set("authorization", "Bearer super").send({status: "IN_REVIEW"}).expect(404);
+  });
+
+  it("updates status and internal notes, and audits PRIVACY_REQUEST_UPDATED with the acting SUPER_ADMIN", async () => {
+    const existing = {id: 7, requestType: "VIEW", name: "פונה", email: "requester@example.com", description: null, status: "NEW", internalNotes: null, handledByUserId: null, createdAt: new Date(), updatedAt: new Date()};
+    const getPrivacyRequest = vi.fn().mockResolvedValue(existing);
+    const updatePrivacyRequestStatus = vi.fn().mockResolvedValue({...existing, status: "COMPLETED", internalNotes: "טופל בטלפון", handledByUserId: users.super.id});
+    const addAudit = vi.fn().mockResolvedValue(undefined);
+    const response = await request(app({getPrivacyRequest, updatePrivacyRequestStatus, addAudit})).patch("/api/admin/privacy-requests/7")
+      .set("authorization", "Bearer super").send({status: "COMPLETED", internalNotes: "טופל בטלפון"}).expect(200);
+    expect(response.body).toEqual(expect.objectContaining({status: "COMPLETED", internalNotes: "טופל בטלפון"}));
+    expect(updatePrivacyRequestStatus).toHaveBeenCalledWith(7, {status: "COMPLETED", internalNotes: "טופל בטלפון"}, users.super.id);
+    expect(addAudit).toHaveBeenCalledWith(users.super.id, "PRIVACY_REQUEST_UPDATED", "privacy_request", 7, {status: "COMPLETED"}, expect.any(String), expect.any(String), undefined);
+  });
+});

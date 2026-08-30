@@ -3,6 +3,7 @@ import type { DatabaseUser } from "../../src/domain/types";
 import type { TokenVerifier } from "../../src/middleware/auth";
 import type { RateLimitStore } from "../../src/services/rateLimiter";
 import type { AppStore, CreditIndicationRecord } from "../../src/services/store";
+import type { PrivacyRequestStatus, PrivacyRequestType } from "../../src/domain/privacyRequests";
 import type { StorageService, StoredObject } from "../../src/services/storage";
 import { EncryptionService } from "../../src/utils/crypto";
 import { InMemorySecretProvider } from "../../src/utils/secretManager";
@@ -138,7 +139,11 @@ export function makeStore(overrides: Partial<AppStore> = {}): AppStore {
     getDraftLegalDocumentVersion: async () => null,
     recordLegalDocumentAcceptance: async () => undefined,
     listLegalDocumentAcceptancesForUser: async () => [],
-    listUserAuditEvents: async () => []
+    listUserAuditEvents: async () => [],
+    createPrivacyRequest: async (values: {requestType: PrivacyRequestType; name: string; email: string; description: string | null}) => ({id: 1, ...values, status: "NEW" as PrivacyRequestStatus, internalNotes: null, handledByUserId: null, createdAt: new Date(), updatedAt: new Date()}),
+    listPrivacyRequests: async () => [],
+    getPrivacyRequest: async (id: number) => id === 1 ? {id: 1, requestType: "VIEW" as PrivacyRequestType, name: "פונה לדוגמה", email: "requester@example.com", description: null, status: "NEW" as PrivacyRequestStatus, internalNotes: null, handledByUserId: null, createdAt: new Date(), updatedAt: new Date()} : null,
+    updatePrivacyRequestStatus: async (id: number, values: {status: PrivacyRequestStatus; internalNotes: string | null}) => id === 1 ? {id: 1, requestType: "VIEW" as PrivacyRequestType, name: "פונה לדוגמה", email: "requester@example.com", description: null, ...values, handledByUserId: 1, createdAt: new Date(), updatedAt: new Date()} : null
   };
   const values = {...defaults, ...overrides} as Record<string, unknown>;
   return new Proxy(values, {get(target, property) {

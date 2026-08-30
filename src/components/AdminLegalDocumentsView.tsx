@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import { Eye, FileText, Plus, Trash2, X } from "lucide-react";
 import type { AdminLegalDocumentOverview, AdminLegalDocumentVersion, LegalDocumentType } from "../types";
 import { ApiError, api } from "../utils/apiClient";
-import { formatDate } from "../utils/formatters";
+import { formatDate, formatLegalDocumentType } from "../utils/formatters";
 
-const documentTypeLabel: Record<LegalDocumentType, string> = { TERMS: "תנאי שימוש", PRIVACY: "מדיניות פרטיות" };
 const statusLabel: Record<string, string> = { DRAFT: "טיוטה", PUBLISHED: "פעילה", ARCHIVED: "בארכיון" };
 
 interface DraftForm {
@@ -101,13 +100,14 @@ export default function AdminLegalDocumentsView() {
   if (!overview) return <main className="admin-page"><div className="empty-state">טוען מסמכים משפטיים…</div></main>;
 
   return <main className="admin-page legal-documents-page">
-    <section className="page-title"><div><span className="eyebrow">הגדרות מערכת</span><h1>מסמכים משפטיים</h1><p>ניהול גרסאות תנאי השימוש ומדיניות הפרטיות. גרסה שפורסמה אינה ניתנת לעריכה.</p></div></section>
+    <section className="page-title"><div><span className="eyebrow">הגדרות מערכת</span><h1>מסמכים משפטיים</h1><p>ניהול גרסאות תנאי השימוש, מדיניות הפרטיות וה-DPA. גרסה שפורסמה אינה ניתנת לעריכה.</p></div></section>
+    <p className="status-warning">פרטים משפטיים זמניים בשימוש: שם "SynCash", ח.פ./ע.מ. "000000000", דוא״ל "support@syncash.co.il". טלפון וכתובת עדיין לא הוגדרו. <strong>פרט זמני — יש לעדכן לפני השקה מסחרית.</strong></p>
     {message && <p className="form-message success" role="status">{message}</p>}
     {error && <p className="form-message error" role="alert">{error}</p>}
 
     <section className="legal-document-type-grid">
       {overview.map((item) => <article className={`content-card legal-document-type-card${selectedType === item.documentType ? " selected" : ""}`} key={item.documentType} onClick={() => void openType(item.documentType)}>
-        <header><FileText /><h2>{documentTypeLabel[item.documentType]}</h2></header>
+        <header><FileText /><h2>{formatLegalDocumentType(item.documentType)}</h2></header>
         {item.active ? <dl>
           <div><dt>גרסה פעילה</dt><dd>v{item.active.versionNumber}</dd></div>
           <div><dt>עודכן לאחרונה</dt><dd>{item.active.effectiveDate ? formatDate(item.active.effectiveDate) : "לא צוין"}</dd></div>
@@ -118,7 +118,7 @@ export default function AdminLegalDocumentsView() {
     </section>
 
     {selectedType && <section className="content-card legal-document-editor">
-      <header className="section-heading compact"><div><h2>{documentTypeLabel[selectedType]}</h2><p>היסטוריית גרסאות ועריכת טיוטה.</p></div>
+      <header className="section-heading compact"><div><h2>{formatLegalDocumentType(selectedType)}</h2><p>היסטוריית גרסאות ועריכת טיוטה.</p></div>
         {!editing && <button type="button" className="primary-action" disabled={busy} onClick={() => void startDraft()}><Plus size={17} />{versions.some((version) => version.status === "DRAFT") ? "המשך עריכת טיוטה" : "יצירת גרסה חדשה"}</button>}
       </header>
 
@@ -166,6 +166,7 @@ export default function AdminLegalDocumentsView() {
 
     {publishTarget && <div className="modal-backdrop"><section className="modal content-card" role="dialog" aria-modal="true"><header className="modal-heading"><h2>פרסום גרסה חדשה</h2><button type="button" className="icon-action" aria-label="סגירה" onClick={() => setPublishTarget(null)}><X /></button></header>
       <p>פרסום גרסה חדשה לא ישנה אישורים קיימים. משתמשים חדשים יאשרו את הגרסה החדשה.</p>
+      {publishTarget.documentType !== "TERMS" && (!publishTarget.contactPhone || !publishTarget.contactAddress) && <p className="status-warning">שים לב: טלפון ו/או כתובת ליצירת קשר עדיין לא הוגדרו במסמך זה — אלה פרטים זמניים שיש להשלים לפני השקה מסחרית.</p>}
       <dl className="advisor-profile-details"><div><dt>גרסה</dt><dd>v{publishTarget.versionNumber}</dd></div><div><dt>תאריך תוקף</dt><dd>{publishTarget.effectiveDate ? formatDate(publishTarget.effectiveDate) : "לא צוין"}</dd></div></dl>
       <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setPublishTarget(null)}>ביטול</button><button type="button" className="primary-action" disabled={busy} onClick={() => void publish()}>{busy ? "מפרסם…" : "אישור ופרסום"}</button></div>
     </section></div>}

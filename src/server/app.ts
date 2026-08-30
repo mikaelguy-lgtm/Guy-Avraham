@@ -26,6 +26,8 @@ import { sanitizeEmailError, sanitizeSmtpFailure, type EmailService } from "../s
 import { ADVISOR_EMAIL_VERIFICATION_TEMPLATE, EmailVerificationDeliveryError, type EmailVerificationService } from "../services/emailVerification.js";
 import { PasswordResetDeliveryError, type PasswordResetService } from "../services/passwordReset.js";
 import { LEGAL_DOCUMENT_TYPES, legalDocumentDraftSchema, legalDocumentTypeParamSchema } from "../domain/legalDocuments.js";
+import type { LegalDocumentType } from "../domain/legalDocuments.js";
+import { privacyRequestSubmitSchema, privacyRequestUpdateSchema } from "../domain/privacyRequests.js";
 import type { GeminiService } from "../services/gemini.js";
 import { EncryptionService, hashToken } from "../utils/crypto.js";
 import { calculateAge } from "../utils/age.js";
@@ -1323,9 +1325,43 @@ export function createApp(services: AppServices) {
     if (existing.status !== "DRAFT") { response.status(409).json({error: "LEGAL_DOCUMENT_VERSION_NOT_EDITABLE", message: "ניתן לפרסם רק גרסת טיוטה.", requestId: request.requestId}); return; }
     if (!existing.content.trim()) { response.status(422).json({error: "LEGAL_DOCUMENT_CONTENT_REQUIRED", message: "יש להזין תוכן לפני פרסום.", requestId: request.requestId}); return; }
     const published = await services.store.publishLegalDocumentVersion(id, request.user!.id);
-    const action = existing.documentType === "TERMS" ? "TERMS_VERSION_PUBLISHED" : "PRIVACY_VERSION_PUBLISHED";
+    const publishAuditAction: Record<LegalDocumentType, string> = {TERMS: "TERMS_VERSION_PUBLISHED", PRIVACY: "PRIVACY_VERSION_PUBLISHED", DPA: "DPA_VERSION_PUBLISHED"};
+    const action = publishAuditAction[existing.documentType];
     await services.store.addAudit(request.user!.id, action, "legal_document_version", id, {documentType: existing.documentType, versionNumber: existing.versionNumber, contentHash: published?.contentHash}, request.requestId, request.ip, request.header("user-agent"));
     response.json(adminLegalDocumentVersion(published));
+  }));
+
+  const adminPrivacyRequest = (request: Awaited<ReturnType<AppStore["getPrivacyRequest"]>>) => request && {
+    id: request.id, requestType: request.requestType, name: request.name, email: request.email,
+    description: request.description, status: request.status, internalNotes: request.internalNotes,
+    handledByUserId: request.handledByUserId, createdAt: request.createdAt, updatedAt: request.updatedAt
+  };
+
+  app.post("/api/privacy-requests", rateLimit(services.limiter, "privacy-request-minute", 2, 60), rateLimit(services.limiter, "privacy-request-hour", 5, 60 * 60), asyncRoute(async (request, response) => {
+    const input = privacyRequestSubmitSchema.parse(request.body);
+    const created = await services.store.createPrivacyRequest(input);
+    await services.store.addAudit(null, "PRIVACY_REQUEST_CREATED", "privacy_request", created.id, {requestType: created.requestType}, request.requestId, request.ip, request.header("user-agent"));
+    response.status(201).json({success: true});
+  }));
+
+  app.get("/api/admin/privacy-requests", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
+    response.json((await services.store.listPrivacyRequests()).map(adminPrivacyRequest));
+  }));
+
+  app.get("/api/admin/privacy-requests/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const found = await services.store.getPrivacyRequest(Number(request.params.id));
+    if (!found) { response.status(404).json({error: "PRIVACY_REQUEST_NOT_FOUND", requestId: request.requestId}); return; }
+    response.json(adminPrivacyRequest(found));
+  }));
+
+  app.patch("/api/admin/privacy-requests/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const id = Number(request.params.id);
+    const existing = await services.store.getPrivacyRequest(id);
+    if (!existing) { response.status(404).json({error: "PRIVACY_REQUEST_NOT_FOUND", requestId: request.requestId}); return; }
+    const input = privacyRequestUpdateSchema.parse(request.body);
+    const updated = await services.store.updatePrivacyRequestStatus(id, input, request.user!.id);
+    await services.store.addAudit(request.user!.id, "PRIVACY_REQUEST_UPDATED", "privacy_request", id, {status: input.status}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(adminPrivacyRequest(updated));
   }));
 
   app.patch("/api/advisor/profile", ...authenticated, auth.requireRole("ADVISOR"), asyncRoute(async (request, response) => {

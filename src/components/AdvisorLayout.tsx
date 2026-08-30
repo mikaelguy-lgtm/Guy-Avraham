@@ -6,6 +6,7 @@ import { api } from "../utils/apiClient";
 import SynCashLogo from "./SynCashLogo";
 import AdvisorNotificationBell from "./AdvisorNotificationBell";
 import {AdvisorNotificationsProvider} from "./AdvisorNotificationsContext";
+import LegalFooterLinks from "./LegalFooterLinks";
 
 const navigation = [
   {to: "/advisor", label: "לוח בקרה", icon: LayoutDashboard, end: true},
@@ -26,6 +27,7 @@ export default function AdvisorLayout({user}: {user: CurrentUser}) {
     <div className="sidebar-footer">
       <div className="advisor-mini-profile"><span className="avatar">{user.firstName.slice(0, 1)}{user.lastName.slice(0, 1)}</span><span><strong>{user.firstName} {user.lastName}</strong><small>יועץ משכנתאות</small></span></div>
       <button type="button" className="advisor-nav-link logout-action" onClick={() => void api.logout()}><LogOut aria-hidden="true" size={20} /><span>יציאה</span></button>
+      <LegalFooterLinks />
     </div>
   </aside>;
 

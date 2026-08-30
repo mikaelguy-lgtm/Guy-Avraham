@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AdvisorAdminRecord, LegalDocumentAcceptanceRecord, UserAuditEvent } from "../types";
 import { ApiError, api } from "../utils/apiClient";
-import { emailServerAcceptedMessage, formatDate, formatUserStatus } from "../utils/formatters";
+import { emailServerAcceptedMessage, formatDate, formatLegalDocumentType, formatUserStatus } from "../utils/formatters";
 
 const auditActionLabel: Record<string, string> = {
   USER_UPDATED: "פרטי המשתמש עודכנו",
@@ -230,7 +230,7 @@ export default function AdminAdvisorsView() {
 
         <h3>אישורי תנאי שימוש</h3>
         {acceptances.length === 0 ? <p className="empty-inline">לא נמצאו רישומי אישור עבור משתמש זה.</p> : <div className="responsive-table"><table><thead><tr><th>מסמך</th><th>גרסה</th><th>אושר בתאריך</th><th>סטטוס הגרסה כיום</th></tr></thead>
-          <tbody>{acceptances.map((acceptance) => <tr key={`${acceptance.documentType}-${acceptance.versionId}`}><td>{acceptance.documentType === "TERMS" ? "תנאי שימוש" : "מדיניות פרטיות"}</td><td>v{acceptance.versionNumber}</td><td>{formatDate(acceptance.acceptedAt)}</td><td>{acceptance.status === "PUBLISHED" ? "פעילה" : acceptance.status === "ARCHIVED" ? "בארכיון" : "טיוטה"}</td></tr>)}</tbody>
+          <tbody>{acceptances.map((acceptance) => <tr key={`${acceptance.documentType}-${acceptance.versionId}`}><td>{formatLegalDocumentType(acceptance.documentType)}</td><td>v{acceptance.versionNumber}</td><td>{formatDate(acceptance.acceptedAt)}</td><td>{acceptance.status === "PUBLISHED" ? "פעילה" : acceptance.status === "ARCHIVED" ? "בארכיון" : "טיוטה"}</td></tr>)}</tbody>
         </table></div>}
 
         <h3>יומן פעולות</h3>

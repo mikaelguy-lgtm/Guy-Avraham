@@ -39,8 +39,10 @@ export const submissionActorTypeEnum = pgEnum("submission_actor_type", ["ADVISOR
 export const emailProviderEnum = pgEnum("email_provider", ["GMAIL", "BREVO", "CUSTOM"]);
 export const emailSecurityModeEnum = pgEnum("email_security_mode", ["NONE", "STARTTLS", "TLS"]);
 export const emailConfigurationStatusEnum = pgEnum("email_configuration_status", ["DRAFT", "TESTED", "ACTIVE", "FAILED", "SUPERSEDED"]);
-export const legalDocumentTypeEnum = pgEnum("legal_document_type", ["TERMS", "PRIVACY"]);
+export const legalDocumentTypeEnum = pgEnum("legal_document_type", ["TERMS", "PRIVACY", "DPA"]);
 export const legalDocumentStatusEnum = pgEnum("legal_document_status", ["DRAFT", "PUBLISHED", "ARCHIVED"]);
+export const privacyRequestTypeEnum = pgEnum("privacy_request_type", ["VIEW", "CORRECTION", "DELETION", "ACCOUNT_CLOSURE", "OTHER"]);
+export const privacyRequestStatusEnum = pgEnum("privacy_request_status", ["NEW", "IN_REVIEW", "IDENTITY_VERIFICATION_REQUIRED", "APPROVED", "REJECTED", "COMPLETED"]);
 
 const timestamps = {
   createdAt: timestamp("created_at", {withTimezone: true}).notNull().defaultNow(),
@@ -707,4 +709,22 @@ export const legalDocumentAcceptances = pgTable("legal_document_acceptances", {
   index("legal_document_acceptances_user_idx").on(table.userId),
   index("legal_document_acceptances_version_idx").on(table.legalDocumentVersionId),
   uniqueIndex("legal_document_acceptances_user_type_version_uq").on(table.userId, table.documentType, table.legalDocumentVersionId)
+]);
+
+// בקשת נושא מידע (עיון/תיקון/מחיקה/סגירת חשבון/אחר) — נשלחת ללא צורך בהתחברות
+// (הפונה עשוי להיות לקוח קצה שאין לו חשבון SynCash), ומטופלת ב-workflow אדמין.
+// אינה גוררת מחיקה אוטומטית של נתונים — סטטוס ותוכן מנוהלים ידנית.
+export const privacyRequests = pgTable("privacy_requests", {
+  id: serial("id").primaryKey(),
+  requestType: privacyRequestTypeEnum("request_type").notNull(),
+  name: varchar("name", {length: 200}).notNull(),
+  email: varchar("email", {length: 320}).notNull(),
+  description: text("description"),
+  status: privacyRequestStatusEnum("status").notNull().default("NEW"),
+  internalNotes: text("internal_notes"),
+  handledByUserId: integer("handled_by_user_id").references(() => users.id),
+  ...timestamps
+}, (table) => [
+  index("privacy_requests_status_idx").on(table.status),
+  index("privacy_requests_created_idx").on(table.createdAt)
 ]);

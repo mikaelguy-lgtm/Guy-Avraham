@@ -28,6 +28,7 @@ import EmailVerificationScreen from "./components/EmailVerificationScreen";
 import AdminAdvisorsView from "./components/AdminAdvisorsView";
 import ForgotPasswordScreen from "./components/ForgotPasswordScreen";
 import AdminLegalDocumentsView from "./components/AdminLegalDocumentsView";
+import AdminPrivacyRequestsView from "./components/AdminPrivacyRequestsView";
 import {ExternalAccessPage, ExternalPortalPage, ExternalReviewPage} from "./components/ExternalDeliveryPortal";
 import AdminFinancingCompaniesView from "./components/AdminFinancingCompaniesView";
 import AdminBusinessCalendarView from "./components/AdminBusinessCalendarView";
@@ -86,6 +87,7 @@ export default function App() {
       <Route path="settings" element={<SystemSettingsSubView user={user} />} />
       <Route path="settings/smtp" element={canAccessSmtpSettings(user.role) ? <AdminDashboard userEmail={user.email} /> : <Navigate to="/admin/settings" replace />} />
       <Route path="settings/legal" element={user.role === "SUPER_ADMIN" ? <AdminLegalDocumentsView /> : <Navigate to="/admin/settings" replace />} />
+      <Route path="settings/privacy-requests" element={user.role === "SUPER_ADMIN" ? <AdminPrivacyRequestsView /> : <Navigate to="/admin/settings" replace />} />
       <Route path="audit" element={user.role === "SUPER_ADMIN" ? <AdminSectionPage title="יומן פעילות" description="מעקב אחר פעולות מערכת ואירועי אבטחה." /> : <AdminSectionPage title="יומן פעילות" description="אין הרשאה לצפייה ביומן הפעילות." />} />
     </Route>
     <Route path="/advisor" element={user.role === "ADVISOR" ? <AdvisorLayout user={user} /> : <Navigate to={homePath} replace />}>

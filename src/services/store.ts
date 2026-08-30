@@ -25,12 +25,14 @@ import {
   liabilities,
   loanRequests,
   notifications,
+  privacyRequests,
   properties,
   systemSettings,
   users
 } from "../db/schema.js";
 import type { AdvisorAccount, AnonymousSubmissionSnapshot, DatabaseUser, IdentityField, UserStatus } from "../domain/types.js";
 import type { LegalDocumentType, LegalDocumentVersionRecord } from "../domain/legalDocuments.js";
+import type { PrivacyRequestRecord, PrivacyRequestStatus, PrivacyRequestType } from "../domain/privacyRequests.js";
 import type { AuthorizationDirectory } from "../middleware/auth.js";
 import { listMissingRequiredDocuments } from "../domain/requiredDocuments.js";
 
@@ -457,6 +459,10 @@ export interface AppStore extends AuthorizationDirectory {
   countLegalDocumentAcceptances(versionId: number): Promise<number>;
   recordLegalDocumentAcceptance(userId: number, documentType: LegalDocumentType, versionId: number, context: {ip?: string; userAgent?: string}): Promise<void>;
   listLegalDocumentAcceptancesForUser(userId: number): Promise<Array<{documentType: LegalDocumentType; versionId: number; versionNumber: number; title: string; acceptedAt: Date; contentHash: string | null; status: string}>>;
+  createPrivacyRequest(values: {requestType: PrivacyRequestType; name: string; email: string; description: string | null}): Promise<PrivacyRequestRecord>;
+  listPrivacyRequests(): Promise<PrivacyRequestRecord[]>;
+  getPrivacyRequest(id: number): Promise<PrivacyRequestRecord | null>;
+  updatePrivacyRequestStatus(id: number, values: {status: PrivacyRequestStatus; internalNotes: string | null}, handledByUserId: number): Promise<PrivacyRequestRecord | null>;
 }
 
 export class PostgresStore implements AppStore {
@@ -1557,7 +1563,7 @@ export class PostgresStore implements AppStore {
     const versionNumber = (maxVersion ?? 0) + 1;
     const [row] = await db.insert(legalDocumentVersions).values({
       documentType, versionNumber, status: "DRAFT",
-      title: active?.title ?? (documentType === "TERMS" ? "תנאי שימוש SynCash" : "מדיניות פרטיות SynCash"),
+      title: active?.title ?? {TERMS: "תנאי שימוש SynCash", PRIVACY: "מדיניות פרטיות SynCash", DPA: "נספח עיבוד מידע ואבטחת מידע (DPA) — SynCash"}[documentType],
       content: active?.content ?? "",
       contactEmail: active?.contactEmail ?? null, contactPhone: active?.contactPhone ?? null, contactAddress: active?.contactAddress ?? null,
       effectiveDate: active?.effectiveDate ?? null,
@@ -1611,5 +1617,25 @@ export class PostgresStore implements AppStore {
       status: legalDocumentVersions.status
     }).from(legalDocumentAcceptances).innerJoin(legalDocumentVersions, eq(legalDocumentVersions.id, legalDocumentAcceptances.legalDocumentVersionId))
       .where(eq(legalDocumentAcceptances.userId, userId)).orderBy(desc(legalDocumentAcceptances.acceptedAt));
+  }
+
+  async createPrivacyRequest(values: {requestType: PrivacyRequestType; name: string; email: string; description: string | null}): Promise<PrivacyRequestRecord> {
+    const [row] = await db.insert(privacyRequests).values(values).returning();
+    return row as PrivacyRequestRecord;
+  }
+
+  async listPrivacyRequests(): Promise<PrivacyRequestRecord[]> {
+    return db.select().from(privacyRequests).orderBy(desc(privacyRequests.createdAt)) as unknown as Promise<PrivacyRequestRecord[]>;
+  }
+
+  async getPrivacyRequest(id: number): Promise<PrivacyRequestRecord | null> {
+    const [row] = await db.select().from(privacyRequests).where(eq(privacyRequests.id, id)).limit(1);
+    return (row as PrivacyRequestRecord) ?? null;
+  }
+
+  async updatePrivacyRequestStatus(id: number, values: {status: PrivacyRequestStatus; internalNotes: string | null}, handledByUserId: number): Promise<PrivacyRequestRecord | null> {
+    const [row] = await db.update(privacyRequests).set({...values, handledByUserId, updatedAt: new Date()})
+      .where(eq(privacyRequests.id, id)).returning();
+    return (row as PrivacyRequestRecord) ?? null;
   }
 }

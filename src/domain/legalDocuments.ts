@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const LEGAL_DOCUMENT_TYPES = ["TERMS", "PRIVACY"] as const;
+export const LEGAL_DOCUMENT_TYPES = ["TERMS", "PRIVACY", "DPA"] as const;
 export type LegalDocumentType = typeof LEGAL_DOCUMENT_TYPES[number];
 export type LegalDocumentStatus = "DRAFT" | "PUBLISHED" | "ARCHIVED";
 

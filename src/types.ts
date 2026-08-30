@@ -30,7 +30,7 @@ export interface UserAuditEvent {
   actorUserId: number | null;
 }
 
-export type LegalDocumentType = "TERMS" | "PRIVACY";
+export type LegalDocumentType = "TERMS" | "PRIVACY" | "DPA";
 
 export interface LegalDocumentVersion {
   id: number;
@@ -70,6 +70,22 @@ export interface LegalDocumentAcceptanceRecord {
   acceptedAt: string;
   contentHash: string | null;
   status: string;
+}
+
+export type PrivacyRequestType = "VIEW" | "CORRECTION" | "DELETION" | "ACCOUNT_CLOSURE" | "OTHER";
+export type PrivacyRequestStatus = "NEW" | "IN_REVIEW" | "IDENTITY_VERIFICATION_REQUIRED" | "APPROVED" | "REJECTED" | "COMPLETED";
+
+export interface AdminPrivacyRequest {
+  id: number;
+  requestType: PrivacyRequestType;
+  name: string;
+  email: string;
+  description: string | null;
+  status: PrivacyRequestStatus;
+  internalNotes: string | null;
+  handledByUserId: number | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface AdvisorProfile {

@@ -1,30 +1,11 @@
-import { CheckCircle2, Circle, Eye, EyeOff, ShieldCheck, X, XCircle } from "lucide-react";
+import { CheckCircle2, Circle, Eye, EyeOff, ShieldCheck, XCircle } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { advisorRegistrationFormSchema, passwordRequirements, passwordStrength } from "../domain/advisorRegistration";
-import type { LegalDocumentType, LegalDocumentVersion } from "../types";
+import type { LegalDocumentType } from "../types";
 import { ApiError, api } from "../utils/apiClient";
-import { formatDate } from "../utils/formatters";
+import LegalCenter from "./LegalCenter";
 import SynCashLogo from "./SynCashLogo";
-
-function LegalDocumentLink({type, label}: {type: LegalDocumentType; label: string}) {
-  const [document, setDocument] = useState<LegalDocumentVersion | null | "unavailable">(null);
-  const open = async (event: React.MouseEvent) => {
-    event.preventDefault();
-    try { setDocument(await api.legalDocument(type)); }
-    catch { setDocument("unavailable"); }
-  };
-  return <>
-    <button type="button" className="link-action" onClick={(event) => void open(event)}>{label}</button>
-    {document && <div className="modal-backdrop" role="presentation"><section className="modal content-card legal-document-preview-modal" role="dialog" aria-modal="true">
-      <header className="modal-heading"><div><span className="eyebrow">{label}</span>{document !== "unavailable" && <h2>{document.title}</h2>}</div><button type="button" className="icon-action" aria-label="סגירה" onClick={() => setDocument(null)}><X /></button></header>
-      {document === "unavailable" ? <p className="empty-inline">המסמך אינו זמין כרגע.</p> : <>
-        <p className="legal-document-updated-label">עודכן לאחרונה: {document.effectiveDate ? formatDate(document.effectiveDate) : "לא צוין"}</p>
-        <div className="legal-document-content-view">{document.content}</div>
-      </>}
-    </section></div>}
-  </>;
-}
 
 type FormState = {firstName: string; lastName: string; email: string; phone: string; businessName: string; password: string; confirmPassword: string; acceptTerms: boolean};
 const emptyForm: FormState = {firstName: "", lastName: "", email: "", phone: "", businessName: "", password: "", confirmPassword: "", acceptTerms: false};
@@ -38,6 +19,7 @@ export default function AdvisorRegistrationScreen() {
   const [accountCreated, setAccountCreated] = useState(false);
   const [busy, setBusy] = useState<"create" | "resend" | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [legalCenterTab, setLegalCenterTab] = useState<LegalDocumentType | null>(null);
   const navigate = useNavigate();
   const requirements = passwordRequirements(form.password, form.confirmPassword);
   const strength = passwordStrength(form.password, form.confirmPassword);
@@ -136,7 +118,8 @@ export default function AdvisorRegistrationScreen() {
         })}</ul>
         <div className={`password-strength strength-${strength.score}`}><span className="strength-track"><i style={{inlineSize: `${(strength.score / requirements.length) * 100}%`}} /></span><strong>חוזק סיסמה: {strength.label}</strong></div>
       </section>
-      <label className="terms-field"><input type="checkbox" checked={form.acceptTerms} onChange={(event) => change("acceptTerms", event.target.checked)} onBlur={() => touch("acceptTerms")} disabled={busy !== null || accountCreated} /><span>קראתי ואני מאשר/ת את <LegalDocumentLink type="TERMS" label="תנאי השימוש" /> ואת <LegalDocumentLink type="PRIVACY" label="מדיניות הפרטיות" /> <b aria-hidden="true">*</b></span></label>
+      <label className="terms-field"><input type="checkbox" checked={form.acceptTerms} onChange={(event) => change("acceptTerms", event.target.checked)} onBlur={() => touch("acceptTerms")} disabled={busy !== null || accountCreated} /><span>קראתי ואני מסכים/ה ל<button type="button" className="link-action" onClick={(event) => { event.preventDefault(); setLegalCenterTab("TERMS"); }}>תנאי השימוש</button> ול<button type="button" className="link-action" onClick={(event) => { event.preventDefault(); setLegalCenterTab("PRIVACY"); }}>מדיניות הפרטיות</button> <b aria-hidden="true">*</b></span></label>
+      {legalCenterTab && <LegalCenter initialTab={legalCenterTab} onClose={() => setLegalCenterTab(null)} onAcceptTerms={() => change("acceptTerms", true)} />}
       {errors.acceptTerms && <small className="field-error" role="alert">{errors.acceptTerms}</small>}
       {serverError && <div className="toast error registration-toast" role="alert"><strong>{serverError}</strong>{requestId && <small>מזהה בקשה: {requestId}</small>}{accountCreated && <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => void retryVerification()}>{busy === "resend" ? "שולח מייל…" : "ניסיון חוזר לשליחת מייל"}</button>}</div>}
       <button className="primary-action large" disabled={busy !== null || accountCreated || !formIsValid}>{busy === "create" ? "יוצר חשבון ושולח מייל…" : "יצירת חשבון"}</button>

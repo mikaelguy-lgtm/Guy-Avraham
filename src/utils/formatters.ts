@@ -133,11 +133,17 @@ const deliveryStatusLabels: Record<string, string> = {PENDING: "ממתין", QUE
 const decisionStatusLabels: Record<string, string> = {PENDING: "ממתינה לתגובה", PENDING_VERIFICATION: "ממתינה לאימות", INTERESTED: "מעוניינת", NOT_INTERESTED: "לא מעוניינת", EXPIRED: "פג תוקף", CANCELLED: "בוטלה"};
 const accessStatusLabels: Record<string, string> = {NONE: "ללא גישה", ACTIVE: "גישה מלאה פעילה", EXPIRED: "הגישה פגה", REVOKED: "הגישה בוטלה"};
 const invitationStatusLabels: Record<string, string> = {QUEUED: "בתור לשליחה", SENT: "נשלח לשרת הדואר", FAILED: "נכשל", OPENED: "נפתח", CLOSED: "נסגר", EXPIRED: "פג תוקף"};
+export const legalDocumentTypeLabels: Record<string, string> = {TERMS: "תנאי שימוש", PRIVACY: "מדיניות פרטיות", DPA: "נספח עיבוד מידע (DPA)"};
+const privacyRequestTypeLabels: Record<string, string> = {VIEW: "עיון", CORRECTION: "תיקון", DELETION: "מחיקה", ACCOUNT_CLOSURE: "סגירת חשבון", OTHER: "אחר"};
+const privacyRequestStatusLabels: Record<string, string> = {NEW: "חדשה", IN_REVIEW: "בבדיקה", IDENTITY_VERIFICATION_REQUIRED: "נדרש אימות זהות", APPROVED: "אושרה", REJECTED: "נדחתה", COMPLETED: "הושלמה"};
 export const formatDeliveryStatus = (value: string) => deliveryStatusLabels[value] ?? "מצב לא ידוע";
 export const formatDecisionStatus = (value: string) => decisionStatusLabels[value] ?? "מצב לא ידוע";
 export const formatAccessStatus = (value: string) => accessStatusLabels[value] ?? "מצב לא ידוע";
 export const formatInvitationStatus = (value: string) => invitationStatusLabels[value] ?? "מצב לא ידוע";
 export const formatDeliveryEvent = (value: string) => deliveryEventLabels[value] ?? "אירוע מערכת";
+export const formatLegalDocumentType = (value: string) => legalDocumentTypeLabels[value] ?? "מסמך משפטי";
+export const formatPrivacyRequestType = (value: string) => privacyRequestTypeLabels[value] ?? "בקשה";
+export const formatPrivacyRequestStatus = (value: string) => privacyRequestStatusLabels[value] ?? "לא ידוע";
 
 export const formatUserRole = (value: UserRole | string) => labels[value] ?? "משתמש מערכת";
 export const formatUserStatus = (value: string) => labels[value] ?? "לא ידוע";
