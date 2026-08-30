@@ -1,9 +1,10 @@
 # SynCash — Open Items
 
-Last synced 2026-08-29 after the Production deployment of `0af63f4`
-(migrations `0014` and `0015` applied — the SynCash product rebuild),
-which superseded the earlier same-day `3f5685e` deploy (migration `0013`,
-CRLF release-artifact hardening). Only
+Last synced 2026-08-30 after the Production deployment of `b419eed`
+(migration `0016` applied — forgot-password, SUPER_ADMIN user management,
+and versioned legal documents), which superseded the earlier `75df210`
+deploy (no schema change). See `docs/PRODUCTION_HANDOFF.md` section 4/5 for
+the live-verified operational state. Only
 real, unresolved items — nothing here is a suggestion to refactor or a style
 preference. Resolved items are removed rather than archived here; see
 `docs/DECISIONS.md` and `docs/PRODUCTION_HANDOFF.md` for the historical record
@@ -122,3 +123,25 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
     generation) was fixed and passes. The other six need a dedicated pass to
     update their selectors/assertions to the current UI before they can be
     trusted again.
+
+## Open from the 2026-08-30 forgot-password / SUPER_ADMIN / legal-documents phase
+
+15. **Privacy Policy has no real content yet** — per the explicit instruction
+    not to invent content, only a placeholder `DRAFT` was created
+    (`scripts/seed-legal-terms.ts`'s Privacy branch) and it was
+    deliberately left unpublished. `GET /api/legal-documents/PRIVACY`
+    correctly 404s in Production today. Needs the user to supply the real
+    privacy policy text (mirroring how the real Terms of Service PDF was
+    supplied this phase) before a SUPER_ADMIN can publish it from
+    Settings → Legal Documents.
+16. **Local Docker dev containers (`newproject-api-1`, `newproject-frontend-1`)
+    needed a manual `docker compose restart` during this phase** before newly
+    added routes/UI were reachable, despite the bind-mounted source already
+    being current and `tsx watch`/Vite HMR normally picking up changes live —
+    observed only after the containers had been running ~19 hours across many
+    file edits. Not a code bug (confirmed: the exact same code worked
+    immediately after the restart, and this class of container never affects
+    Production, which always starts fresh containers on deploy). Worth
+    remembering for future long-running local sessions: if a brand-new route
+    or component 404s/fails to load locally despite the source looking
+    correct, restart the dev containers before assuming a code defect.

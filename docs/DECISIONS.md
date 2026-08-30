@@ -418,3 +418,93 @@ for actual downloads.
 **How to apply**: any new PDF/document "view in a new tab" call site must
 pass a filename to `openFreshPdfBlob`, not just a bare `Blob` — otherwise
 it silently reintroduces the UUID-filename regression.
+
+## "Disable" and "archive" are two independent user-management concepts (2026-08-30)
+
+**Decision**: A SUPER_ADMIN can `PATCH /api/admin/advisors/:id/status`
+(toggle `ACTIVE`/`SUSPENDED`/`DISABLED`, an optional reason recorded) and,
+separately, `POST /api/admin/advisors/:id/archive` (sets `users.deletedAt`,
+reversible via `/restore`). Both are enforced by the same existing
+`requireActiveUser` middleware check (`status !== "ACTIVE"` OR
+`deletedAt !== null` blocks access), but they are exposed as two distinct,
+independently actionable buttons in the admin UI rather than one merged
+"remove user" action. The pre-existing `softDeleteAdvisorAccount` store
+method (which sets status to `DISABLED` *and* hard-deletes the Firebase
+user) was deliberately **not** reused for archive — it stays scoped to its
+existing `@syncash-e2e.local`-only, non-production test-cleanup route.
+
+**Why**: the business requirement distinguished "temporarily block a user"
+(reversible, keeps the Firebase account, e.g. suspected misuse under
+review) from "remove a user from the roster" (soft-delete only — cases,
+documents, and audit records are never deleted, per the required warning
+text shown before archiving). Collapsing them into one action would have
+made it impossible to archive a user without also deciding to touch their
+Firebase account, and vice versa.
+
+**How to apply**: never wire a new "delete user" UI action to
+`softDeleteAdvisorAccount` — use `archiveAdvisorAccount`/
+`restoreAdvisorAccount` for the real, reversible, data-preserving flow.
+
+## Legal document content is plain text only, never HTML (2026-08-30)
+
+**Decision**: `legal_document_versions.content` is stored and rendered as
+plain text (`white-space: pre-wrap`), never HTML. There is no HTML
+sanitizer anywhere in the legal-documents feature.
+
+**Why**: the requirement was to prevent script/iframe/unsafe-HTML injection
+in SUPER_ADMIN-edited legal content. Storing HTML and sanitizing it is one
+way to satisfy that; storing plain text and letting React's normal text
+escaping handle rendering satisfies it by construction, with strictly less
+surface area (no sanitizer library, no allow-list to maintain, no risk of a
+sanitizer bypass). Since no legal document in this product needs rich
+formatting beyond numbered sections and paragraphs, plain text loses
+nothing in practice.
+
+**How to apply**: if a future requirement genuinely needs rich text (bold,
+links) in a legal document, that is a deliberate scope change requiring a
+sanitizer to be introduced and reviewed — do not casually switch the
+content field to HTML rendering without that review.
+
+## SUPER_ADMIN never sets a new password directly (2026-08-30)
+
+**Decision**: There is no admin endpoint that sets or displays a user's
+password. The only admin action is `POST /api/admin/advisors/:id/
+send-password-reset`, which triggers the same Firebase Admin
+`generatePasswordResetLink` flow as the self-service forgot-password route
+and emails the link to the user. Passwords are never stored in PostgreSQL;
+Firebase Authentication remains the sole source of truth for credentials.
+
+**Why**: explicit business requirement — an admin who can set or view a
+password is a standing security liability (impersonation risk, password
+reuse across the admin's own knowledge of it, no audit trail of what the
+user's actual password is). Routing every password change through
+Firebase's own reset-link mechanism means SynCash's backend never
+possesses a plaintext or hashable password at any point.
+
+**How to apply**: never add a "set password" field to any admin form or
+API endpoint. Any future "I need to help a locked-out user" feature must
+go through `sendPasswordResetEmail`, not a new set-password code path.
+
+## Terms of Service seeded via real application code paths, not raw SQL (2026-08-30)
+
+**Decision**: The real Terms of Service content (supplied by the business
+as a PDF, imported verbatim) was published in Production by running
+`scripts/seed-legal-terms.ts` — which calls the same
+`createLegalDocumentDraft` → `updateLegalDocumentDraft` →
+`publishLegalDocumentVersion` store methods the admin UI itself calls,
+authored by the real Production SUPER_ADMIN user — rather than a
+hand-written `INSERT` migration or SQL script. The Privacy Policy was
+seeded the same way but left as an unpublished `DRAFT` placeholder, since
+no real privacy-policy content was supplied.
+
+**Why**: going through the real store methods guarantees the seeded row
+satisfies every invariant the application itself enforces (version
+numbering, the one-published/one-draft-per-type unique indexes, content-hash
+computation on publish) with no risk of an ad-hoc SQL script drifting from
+that logic. It also means the exact same code path used here is exercised
+by the integration test suite, so seeding Production is not a
+never-tested code path.
+
+**How to apply**: if the Privacy Policy (or any future legal document
+type) needs real content published later, run the same script pattern
+(or the admin UI directly) rather than writing a new migration for it.

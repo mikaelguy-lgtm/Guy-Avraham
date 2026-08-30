@@ -11,7 +11,11 @@ is ahead of both GitHub and the last known Production release — see
 (`src/db/schema.ts:19`, `src/domain/types.ts:1`).
 
 - `SUPER_ADMIN`: system settings, SMTP configuration, users, DB/security
-  status, sensitive audit access.
+  status, sensitive audit access. Also the only role that can edit another
+  user's profile/email, disable/enable, archive/restore, trigger an
+  admin-initiated password-reset email, resend email verification, and
+  create/edit/publish/archive legal document versions (Terms of Service,
+  Privacy Policy) — see the 2026-08-30 section below.
 - `ADMIN`: general business administration; no SMTP secret, DB, encryption,
   or sensitive audit access.
 - `ADVISOR`: only their own assigned clients, documents, submissions,
@@ -278,3 +282,37 @@ This entire rebuild — including the completion pass above — was deployed
 to Production at commit `0af63f4` on 2026-08-29, with migrations `0014`
 and `0015` both applied. See `docs/PRODUCTION_HANDOFF.md` section 4 for
 the live-verified post-deploy state.
+
+## 2026-08-30 Forgot password, SUPER_ADMIN user management, legal documents
+
+- **Forgot password** (`POST /api/auth/forgot-password`, public,
+  rate-limited 2/minute and 5/hour): always returns the identical generic
+  message regardless of whether the email belongs to a real, unknown, or
+  archived account — the response and timing must never let a caller infer
+  account existence. Firebase Authentication generates the actual
+  reset link; PostgreSQL never stores a password of any kind.
+- **SUPER_ADMIN user management**: edit profile fields (name, phone,
+  business name), change email (updates Firebase and Postgres in the same
+  operation, resets `emailVerified` to force re-verification), disable/
+  enable with an optional recorded reason, archive/restore (soft-delete via
+  `users.deletedAt`, never a hard delete, never touches cases/documents/
+  audit records), resend verification, and admin-triggered password-reset
+  email. No admin action ever sets, displays, or logs a password.
+- **Audit events** for all of the above: `USER_UPDATED`,
+  `PASSWORD_RESET_REQUESTED_BY_ADMIN`, `EMAIL_VERIFICATION_RESENT`,
+  `USER_DISABLED`, `USER_ENABLED`, `USER_SUSPENDED`, `USER_ARCHIVED`,
+  `USER_RESTORED` — each with actor, target user, UTC timestamp, and
+  request id; never a password or token value.
+- **Legal documents** (Terms of Service, Privacy Policy): versioned
+  (`DRAFT` → `PUBLISHED` → `ARCHIVED`), SUPER_ADMIN-only to create/edit/
+  publish. A published version is immutable — editing always creates a new
+  `DRAFT` copied from the currently active version; publishing archives the
+  previous active version and computes a SHA-256 content hash. A user's
+  historical acceptance always points to the exact version they accepted,
+  even after a newer version is published — publishing never retroactively
+  affects existing acceptances, and existing users are never forced to
+  re-accept (no `require_reacceptance` flag exists yet; a future one could
+  be added without a schema change to the acceptance table itself).
+  Registration records an acceptance only for a document type that
+  currently has a published version, so an unpublished Privacy Policy never
+  gets a fabricated acceptance record.

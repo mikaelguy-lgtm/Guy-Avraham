@@ -60,7 +60,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `75df21008189532e54a61cf73b25131524d46999` |
+| Active release | `/opt/syncash/current` (symlink) → `b419eeda5d9417e1ecf31768cc6e07f1d18e5683` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -135,27 +135,28 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-08-30 (post `75df210` deploy)
+## 4. Operational state — live-verified 2026-08-30 (post `b419eed` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/75df21008189532e54a61cf73b25131524d46999` |
-| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `75df210...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
-| Public site (`https://app.syncash.co.il`) | `200` externally; served CSS bundle hash matches this build (`index-BAZe6L1b.css`) |
-| Migrations | No new migration beyond `0015` — `migrate-production.sh` ran as a no-op (app-code-only release) |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/b419eeda5d9417e1ecf31768cc6e07f1d18e5683` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `b419eed...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
+| Public site (`https://app.syncash.co.il`) | `200` externally |
+| Migrations | `0016` applied (`legal_document_versions`, `legal_document_acceptances` — purely additive, no existing table touched); `migrate-production.sh` ran it exactly once during deploy |
 | API/Worker error logs (post-deploy) | Zero error markers in either |
-| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release |
-| PDF generation verified against live Production code | Ran a one-off diagnostic inside `syncash-prod-api-1` importing the compiled `dist-server/src/services/pdf.js` directly (no client/business data touched) and rendered both the masked and full PDF from a synthetic snapshot; confirmed with `pdfjs-dist` text extraction that both contain the new "חיווי אשראי" section with correct values, and that `PDF_RENDERER_VERSION` is `4` |
-| Scope of this release | Credit-indication tab redesigned into a compact row list; credit indication now shown in the masked/initial PDF and lender review (previously full-portal/PDF only); `PDF_RENDERER_VERSION` bumped 3→4; PDF/ZIP download filenames normalized to `SynCash_תיק_מימון_<ראשוני\|מלא>_<CASE>`. No schema change, no data migration |
+| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release (`syncash-20260830T155113Z-b419eeda5d9417e1ecf31768cc6e07f1d18e5683.tar.gz.gpg`) |
+| Legal documents seeded | Real Terms of Service (21 sections, from the business-provided PDF) published as `TERMS` v1 via `scripts/seed-legal-terms.ts` run against the live API's compiled code (not hand-written SQL) — effective date `2026-08-01`, contact `syncash.support@gmail.com`, no phone; confirmed live at `GET /api/legal-documents/TERMS`. Privacy Policy has no real content yet, so a placeholder `DRAFT` was created and deliberately left **unpublished** — `GET /api/legal-documents/PRIVACY` correctly still 404s |
+| Forgot-password verified against live Production | `POST /api/auth/forgot-password` confirmed returning the generic message for both a real account and an unknown address, without hitting the database differently in either response |
+| Scope of this release | Self-service forgot-password (Firebase Admin reset-link generation, generic response, rate-limited); SUPER_ADMIN advisor management (edit profile, change email, disable/enable, archive/restore, resend verification, admin-triggered password reset), all audited; full legal-documents subsystem (draft/publish versioning, immutable published versions, content-hash, per-user acceptance history, registration-time acceptance recording) |
 | Rollback required | No |
 
 ## 5. Git / release state — in sync as of 2026-08-30
 
-Production active release: `75df21008189532e54a61cf73b25131524d46999`.
+Production active release: `b419eeda5d9417e1ecf31768cc6e07f1d18e5683`.
 Local HEAD and `origin/codex-syncash-production-rebuild`: same SHA
-(`75df21008189532e54a61cf73b25131524d46999`) — fully in sync as of this deploy.
-Prior release `8bf3d2020d7d2addbccbb91677e0c52ab3bce36f` remains on disk at
-`/opt/syncash/releases/8bf3d2020d7d2addbccbb91677e0c52ab3bce36f` for rollback
+(`b419eeda5d9417e1ecf31768cc6e07f1d18e5683`) — fully in sync as of this deploy.
+Prior release `75df21008189532e54a61cf73b25131524d46999` remains on disk at
+`/opt/syncash/releases/75df21008189532e54a61cf73b25131524d46999` for rollback
 if needed. See the "Before starting any task"
 checklist in `CLAUDE.md` for how to reason about a HEAD/Production gap in
 future sessions; always confirm the exact current HEAD with `git log`
