@@ -1,10 +1,11 @@
 # SynCash — Open Items
 
-Last synced 2026-08-30 after the Production deployment of `9756fac`
-(migration `0017` applied — DPA document type, privacy-requests entity,
-Legal Center UI), which superseded the earlier `b419eed` deploy (migration
-`0016` — forgot-password, SUPER_ADMIN user management, versioned legal
-documents). See `docs/PRODUCTION_HANDOFF.md` section 4/5 for the
+Last synced 2026-08-31 after the Production deployment of `fa885d4`
+(migration `0018` applied — housing status, loan-purpose OTHER, optional
+property address, title deed no longer required, and the lender-reminder
+duplication root-cause fix), which superseded the earlier `9756fac` deploy
+(migration `0017` — DPA document type, privacy-requests entity, Legal
+Center UI). See `docs/PRODUCTION_HANDOFF.md` section 4/5 for the
 live-verified operational state. Only
 real, unresolved items — nothing here is a suggestion to refactor or a style
 preference. Resolved items are removed rather than archived here; see
@@ -123,7 +124,13 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
     `full-flow.spec.ts` (the spec most relevant to credit indication and PDF
     generation) was fixed and passes. The other six need a dedicated pass to
     update their selectors/assertions to the current UI before they can be
-    trusted again.
+    trusted again. Update 2026-08-31: `full-flow.spec.ts`'s raw API fixture
+    needed a second fix (missing `housingStatus`/`housingStatusOther`/
+    `loanPurposeOther` after the `0018` schema change) and now passes again,
+    confirmed with a real run against the local Docker stack. The other six
+    were not touched this phase — same pre-existing "כתובת מגורים" staleness,
+    out of scope per the explicit instruction not to expand E2E cleanup
+    beyond what a given phase's changes actually touch.
 
 ## Open from the 2026-08-30 forgot-password / SUPER_ADMIN / legal-documents phase
 
@@ -164,3 +171,30 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
     מסחרית") but not shown to end users in the document itself, per the
     explicit instruction. Needs a real company number before any of the
     three drafts (Terms v2, Privacy, DPA) are published commercially.
+
+## Open from the 2026-08-31 pilot-fixes / reminder-duplication phase
+
+19. **Six pre-existing `company_submissions` rows carry historical duplicate
+    `LENDER_REMINDER` outbox rows** (ids 11, 13, 15, 16, 17, 18 — 2 rows
+    each, from the old two-reminders-per-day bug). Left untouched
+    deliberately (immutable history, same principle as `case_versions`) —
+    they are evidence of the bug this phase fixed, not something to clean up
+    retroactively. No lender was re-sent anything because of this; it's a
+    read of already-sent history.
+20. **Reminder recipient choice when a submission has multiple active
+    contacts**: the fix picks the primary contact if one exists, else the
+    contact with the lowest `submission_contact_invitations.id` (oldest
+    invitation) — a judgment call, not stated explicitly in the original bug
+    report. Confirm with the user this is the right recipient policy; it was
+    chosen to mirror how `getAdminSubmission()` already orders contacts
+    (`lc.is_primary desc, lc.id`).
+21. **Scenarios A (initial send) and C/D (advisor decision notifications) in
+    the "exactly once" email regression suite were verified by direct code
+    reading, not a new dedicated automated test** — both code paths were
+    already correct and unchanged this phase (confirmed: `queueDecisionMessages`
+    already used a purely submission-scoped idempotency key before this
+    phase started). New tests were written specifically for Scenarios B, E,
+    and F (`tests/unit/lenderReminderIdempotency.test.ts`), which is what
+    this phase's code changes actually touched. Worth a dedicated pass later
+    if the team wants full automated coverage of the untouched-but-already-
+    correct paths too.

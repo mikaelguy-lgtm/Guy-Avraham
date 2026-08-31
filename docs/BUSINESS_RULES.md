@@ -316,3 +316,58 @@ the live-verified post-deploy state.
   Registration records an acceptance only for a document type that
   currently has a published version, so an unpublished Privacy Policy never
   gets a fabricated acceptance record.
+
+## 2026-08-31 Housing status, loan-purpose OTHER, optional property address, title deed optional, reminder dedup
+
+- **Housing status** (`borrowers.housing_status`: `OWNED`/`RENTED`/`OTHER`,
+  plus `housingStatusOther` free text required only when `OTHER`): required
+  per borrower for every borrower whose own address is required. For a
+  `MARRIED` relationship, only borrower 1 is asked — borrower 2's value is
+  copied from borrower 1 server-side before validation runs
+  (`canonicalizeMarriedBorrowers`, the same mechanism already used for
+  `city`/`streetAddress`), never asked twice in the UI, never required
+  independently for borrower 2 via the API. Partners/siblings/other
+  relationships keep independent housing status per borrower. Existing
+  rows have `housing_status IS NULL` and display as "לא צוין" everywhere
+  (PDF, portal, admin) — never blocked from delivery for missing it.
+- **Additional-income legacy cleanup**: "שעות נוספות קבועות",
+  "בונוסים קבועים", "הכנסה מעצמאות קטנה", "תמיכה משפחתית קבועה" can no
+  longer be *selected* for a new case (`SELECTABLE_ADDITIONAL_INCOME_TYPES`
+  in `src/domain/clientFields.ts`, enforced server-side only in
+  `newClientInputSchema`, the same precedent as the marital-status/
+  employment-type legacy cleanup). Existing records keep the value, display
+  it, and can still be edited without being forced to change it — the
+  per-section `PATCH` schemas were deliberately left unrestricted.
+- **Loan purpose OTHER**: `loanPurpose`/`loanPurposeOther` mirror the
+  existing `propertyType`/`propertyTypeOtherDescription` OTHER+detail
+  pattern exactly — required only when `loanPurpose === "OTHER"`, rejected
+  otherwise, shown everywhere the purpose itself is shown.
+- **Property street address is optional**: `properties.address_encrypted`
+  was already nullable at the DB level; the Zod schemas
+  (`clientInputObjectSchema`, `clientPropertyInputSchema`) now accept
+  `null`/blank, and `collectDeliveryBlockers()` no longer blocks sending a
+  case to lenders over a missing address. Label renamed from "כתובת הנכס"
+  to "רחוב ומספר בית" everywhere (form, PDF, portal, admin, the lender
+  field-reveal-request label).
+- **Title deed (`PROPERTY_RIGHTS`) is no longer a required document**:
+  moved from `REQUIRED_CLIENT_DOCUMENT_TYPES` to a new
+  `OPTIONAL_CLIENT_DOCUMENT_TYPES` in `src/domain/clientFields.ts` — still
+  uploadable, still shown in the document list (as "לא הועלה (אופציונלי)"
+  rather than "חסר"), no longer counted in case-completeness or
+  send-to-lenders validation. Already-uploaded title deeds are unaffected.
+- **Married household data is entered once, after both borrowers**: for a
+  `MARRIED` relationship, "נתוני משק הבית" (children count/ages) now renders
+  after the borrower-details stack instead of before it, matching how
+  partner/other relationships already render it. It was already
+  household-level (not duplicated per borrower) before this change — only
+  the visual placement moved; the underlying data model was not touched.
+- **Lender reminders are exactly one per submission** — see
+  `docs/DECISIONS.md` ("Lender reminders made submission-scoped instead of
+  per-invitation") for the full root cause and fix. One reminder, one
+  recipient (the primary contact, else the oldest open invitation), sent
+  once, on Israeli business day 2 at 09:00, gated by
+  `company_submissions.reminder_sent_at`.
+- **The "Interested" advisor email** now includes: "חברת המימון הביעה
+  עניין בתיק. נציג החברה או איש הקשר מטעמה צפוי ליצור איתך קשר בתוך 48
+  שעות לצורך המשך הטיפול." — only on the `interested: true` branch, never
+  committing the lender to closing the deal, only to making contact.

@@ -508,3 +508,43 @@ never-tested code path.
 **How to apply**: if the Privacy Policy (or any future legal document
 type) needs real content published later, run the same script pattern
 (or the admin UI directly) rather than writing a new migration for it.
+
+## Lender reminders made submission-scoped instead of per-invitation (2026-08-31)
+
+**Decision**: a real pilot lender reported receiving 3 identical reminder
+emails at once. Root-caused (not patched blind) to `LenderDeliveryService
+.processSchedules()` sending a reminder to *every open contact invitation*
+on a `company_submissions` row, at *two* time slots (09:00 and 15:00 on the
+deadline day) — N active contacts × 2 slots identical emails, using
+idempotency keys scoped to the invitation (`reminder1:<id>`/`reminder2:<id>`)
+rather than the submission, so the DB's own unique constraint on
+`email_outbox.idempotency_key` could not catch the duplication. The same bug
+existed independently in the admin "send-reminder" action, which additionally
+had no real idempotency at all (its key included `randomUUID()`). Fixed by:
+picking exactly one recipient per submission (primary contact, else the
+oldest open invitation), gating on a new `company_submissions
+.reminder_sent_at` column via an atomic `UPDATE ... WHERE reminder_sent_at
+IS NULL RETURNING id` (so even a worker race can't double-send), using one
+idempotency key per submission (`LENDER_REMINDER:<submission-id>`), and
+collapsing `israelBusinessCalendar.ts`'s `calculateReminderSchedule` from
+`[09:00, 15:00]` down to a single 09:00 reminder on business day 2 (the
+send day doesn't count, Friday/Saturday aren't business days).
+
+**Why**: the advisory lock (`pg_try_advisory_lock`) that already prevents
+two worker ticks from running `processSchedules()` concurrently was never
+the gap — the gap was business logic sending N emails *within one tick*.
+An advisory lock alone can't fix a bug where the correct code, running
+once, deliberately loops over every contact. The fix had to change *what*
+gets inserted, not just *how many workers* can insert it.
+
+**How to apply**: any future "notify the lender company" email must be
+scoped and keyed per `company_submissions.id`, never per
+`submission_contact_invitations.id`, unless the business rule explicitly
+calls for one email per contact (the initial `LENDER_INITIAL` invitation
+intentionally remains per-contact — that's the existing, correct, personal
+invitation flow). The `resend-failed` admin action also intentionally
+stays per-invitation (it retries one contact's failed initial send). Six
+pre-existing duplicate-reminder rows from before this fix were left in
+`email_outbox` untouched, as historical evidence, not retroactively
+cleaned up — see `docs/PRODUCTION_HANDOFF.md` section 4 and
+`docs/TODO.md` item 19.
