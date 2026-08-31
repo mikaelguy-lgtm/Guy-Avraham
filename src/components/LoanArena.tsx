@@ -1,15 +1,23 @@
 import {useEffect, useMemo, useState} from "react";
-import {CheckCircle2, ChevronLeft, ChevronRight, Eye, Send, Sparkles, X} from "lucide-react";
+import {CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, Send, Sparkles, X} from "lucide-react";
 import type {Client, DeliveryBlocker, DeliveryPreview} from "../types";
 import {ApiError, api} from "../utils/apiClient";
 import {formatCurrency, formatDate} from "../utils/formatters";
-import {openFreshPdfBlob, revokeActivePdfBlob} from "../utils/pdfBlob";
+import {downloadPdfBlob, openFreshPdfBlob, revokeActivePdfBlob} from "../utils/pdfBlob";
 
 type Stage = "companies" | "preview" | "confirm" | "complete";
 
-function openPdf(base64: string, filename?: string) {
+function base64ToPdfBlob(base64: string): Blob {
   const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
-  openFreshPdfBlob(new Blob([bytes], {type: "application/pdf"}), filename);
+  return new Blob([bytes], {type: "application/pdf"});
+}
+
+function openPdf(base64: string, filename?: string) {
+  openFreshPdfBlob(base64ToPdfBlob(base64), filename);
+}
+
+function downloadPdf(base64: string, filename: string) {
+  downloadPdfBlob(base64ToPdfBlob(base64), filename);
 }
 
 function MaskedSummary({preview}: {preview: DeliveryPreview}) {
@@ -104,7 +112,7 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
     </>}
 
     {stage === "preview" && preview && <>
-      <header className="section-heading compact"><div><h2>תצוגה מקדימה</h2><p>בדוק שהמידע העסקי מלא ושאין בו פרטים מזהים.</p></div><button type="button" className="secondary-action" onClick={() => openPdf(preview.maskedPdfBase64, `SynCash_תיק_מימון_ראשוני_${client?.publicCaseNumber ?? ""}.pdf`)}><Eye size={18} />צפייה ב-PDF</button></header>
+      <header className="section-heading compact"><div><h2>תצוגה מקדימה</h2><p>בדוק שהמידע העסקי מלא ושאין בו פרטים מזהים.</p></div><div className="header-actions"><button type="button" className="secondary-action" onClick={() => openPdf(preview.maskedPdfBase64, `SynCash_תיק_מימון_ראשוני_${client?.publicCaseNumber ?? ""}.pdf`)}><Eye size={18} />צפייה ב-PDF</button><button type="button" className="secondary-action" onClick={() => downloadPdf(preview.maskedPdfBase64, `SynCash_תיק_מימון_ראשוני_${client?.publicCaseNumber ?? ""}.pdf`)}><Download size={18} />הורדת PDF</button></div></header>
       <MaskedSummary preview={preview} />
       <div className="arena-actions split"><button type="button" className="secondary-action" onClick={() => setStage("companies")}><ChevronRight />חזרה</button><button type="button" className="primary-action" onClick={() => setStage("confirm")}>המשך לאישור<ChevronLeft /></button></div>
     </>}

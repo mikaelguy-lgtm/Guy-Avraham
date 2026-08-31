@@ -1,5 +1,18 @@
 let activePdfObjectUrl: string | undefined;
 
+// שם קובץ לא תקין בהורדה — root cause: openFreshPdfBlob() עוטף את ה-Blob באובייקט File עם שם
+// קריא, אבל window.open() על blob: URL אינו שומר את המטא-דאטה הזו כלל — מאומת ישירות (בדיקת
+// Playwright שהורידה PDF אמיתי מהאפליקציה קיבלה UUID גולמי, בדיוק כמו התקלה שדווחה). שם קובץ
+// אמין ב-100% מתקבל רק דרך תג <a download="..."> אמיתי, ולכן זו הדרך היחידה שנתמכת כאן להורדה.
+export function downloadPdfBlob(blob: Blob, filename: string): void {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
 export function openFreshPdfBlob(blob: Blob, filename?: string): void {
   if (activePdfObjectUrl) URL.revokeObjectURL(activePdfObjectUrl);
   // עטיפת ה-Blob כ-File עם שם קריא: כך דפדפנים שמציעים "שמירה בשם" מתוך תצוגת ה-PDF המוטמעת

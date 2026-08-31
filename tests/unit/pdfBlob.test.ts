@@ -1,5 +1,5 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from "vitest";
-import {openFreshPdfBlob, revokeActivePdfBlob} from "../../src/utils/pdfBlob";
+import {downloadPdfBlob, openFreshPdfBlob, revokeActivePdfBlob} from "../../src/utils/pdfBlob";
 
 // pdfBlob.ts runs in the browser only; this project's default test
 // environment is plain Node (see tests/unit/externalBorrowerDetails.test.tsx,
@@ -10,6 +10,7 @@ describe("pdfBlob (preview-expired root-cause fix)", () => {
   let createObjectURL: ReturnType<typeof vi.fn>;
   let revokeObjectURL: ReturnType<typeof vi.fn>;
   let windowOpen: ReturnType<typeof vi.fn>;
+  let createdAnchors: Array<{href: string; download: string; click: ReturnType<typeof vi.fn>}>;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -17,10 +18,18 @@ describe("pdfBlob (preview-expired root-cause fix)", () => {
     createObjectURL = vi.fn(() => `blob:mock-${++counter}`);
     revokeObjectURL = vi.fn();
     windowOpen = vi.fn(() => ({opener: null}));
+    createdAnchors = [];
     vi.stubGlobal("URL", {createObjectURL, revokeObjectURL});
     vi.stubGlobal("window", {open: windowOpen, setTimeout, clearTimeout});
     vi.stubGlobal("File", class {
       constructor(public parts: unknown[], public name: string, public options: {type?: string}) {}
+    });
+    vi.stubGlobal("document", {
+      createElement: vi.fn(() => {
+        const anchor = {href: "", download: "", click: vi.fn()};
+        createdAnchors.push(anchor);
+        return anchor;
+      })
     });
   });
 
@@ -59,6 +68,57 @@ describe("pdfBlob (preview-expired root-cause fix)", () => {
     openFreshPdfBlob(new Blob(["%PDF-fake"]), "a.pdf");
     const url = createObjectURL.mock.results[0].value as string;
     revokeActivePdfBlob();
+    expect(revokeObjectURL).toHaveBeenCalledWith(url);
+  });
+});
+
+// Root cause of the reported "UUID filename" bug, confirmed by direct
+// reproduction (a real Playwright download event against the running app):
+// window.open()-ing a blob: URL — even one created from a named File, as
+// openFreshPdfBlob() above does — does not carry that name over to the
+// browser's downloaded-file name; only an <a download="..."> element does.
+// downloadPdfBlob() is the guaranteed-correct path for an explicit "download"
+// action; openFreshPdfBlob() remains for inline "view" only.
+describe("downloadPdfBlob (UUID-filename root-cause fix)", () => {
+  let createObjectURL: ReturnType<typeof vi.fn>;
+  let revokeObjectURL: ReturnType<typeof vi.fn>;
+  let createdAnchors: Array<{href: string; download: string; click: ReturnType<typeof vi.fn>}>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    let counter = 0;
+    createObjectURL = vi.fn(() => `blob:mock-${++counter}`);
+    revokeObjectURL = vi.fn();
+    createdAnchors = [];
+    vi.stubGlobal("URL", {createObjectURL, revokeObjectURL});
+    vi.stubGlobal("window", {setTimeout, clearTimeout});
+    vi.stubGlobal("document", {
+      createElement: vi.fn(() => {
+        const anchor = {href: "", download: "", click: vi.fn()};
+        createdAnchors.push(anchor);
+        return anchor;
+      })
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("triggers a real <a download> click with the exact human-readable filename", () => {
+    downloadPdfBlob(new Blob(["%PDF-fake"]), "SynCash_תיק_מימון_ראשוני_SC-1.pdf");
+    expect(createdAnchors).toHaveLength(1);
+    expect(createdAnchors[0].download).toBe("SynCash_תיק_מימון_ראשוני_SC-1.pdf");
+    expect(createdAnchors[0].href).toBe(createObjectURL.mock.results[0].value);
+    expect(createdAnchors[0].click).toHaveBeenCalledOnce();
+  });
+
+  it("revokes the object URL afterward without needing the caller to do it", () => {
+    downloadPdfBlob(new Blob(["%PDF-fake"]), "a.pdf");
+    const url = createObjectURL.mock.results[0].value as string;
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60_000);
     expect(revokeObjectURL).toHaveBeenCalledWith(url);
   });
 });

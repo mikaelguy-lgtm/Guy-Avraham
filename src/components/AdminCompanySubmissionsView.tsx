@@ -1,9 +1,9 @@
 import {useCallback, useEffect, useMemo, useState} from "react";
-import {Clock3, Eye, FileText, MailCheck, RefreshCw, ShieldOff, ShieldPlus, X} from "lucide-react";
+import {Clock3, Download, Eye, FileText, MailCheck, RefreshCw, ShieldOff, ShieldPlus, X} from "lucide-react";
 import type {CompanyResponse} from "../types";
 import {api, subscribeDeliveryEvents} from "../utils/apiClient";
 import {formatAccessStatus, formatDate, formatDecisionStatus, formatDeliveryEvent, formatDeliveryStatus, formatInvitationStatus} from "../utils/formatters";
-import {openFreshPdfBlob} from "../utils/pdfBlob";
+import {downloadPdfBlob, openFreshPdfBlob} from "../utils/pdfBlob";
 
 const smtpStatusLabel = (status: string) => ({NOT_CREATED: "לא נוצרה הודעה", PENDING: "ממתין לשליחה", PROCESSING: "בתהליך שליחה", SENT: "נשלח לשרת הדואר", FAILED: "השליחה נכשלה", CANCELLED: "בוטל"})[status] ?? "מצב לא ידוע";
 
@@ -30,6 +30,12 @@ export default function AdminCompanySubmissionsView() {
     try { openFreshPdfBlob(await api.adminCompanySubmissionPdf(selected.publicId, kind), filename); }
     catch { setError("לא ניתן לפתוח את קובץ ה־PDF."); }
   };
+  const downloadPdf = async (kind: "masked-pdf" | "full-pdf") => {
+    if (!selected) return;
+    const filename = `SynCash_תיק_מימון_${kind === "masked-pdf" ? "ראשוני" : "מלא"}_${selected.publicCaseNumber}.pdf`;
+    try { downloadPdfBlob(await api.adminCompanySubmissionPdf(selected.publicId, kind), filename); }
+    catch { setError("לא ניתן להוריד את קובץ ה־PDF."); }
+  };
   const action = async (name: string, values: Record<string, unknown> = {}) => {
     if (!selected || !window.confirm("לאשר את הפעולה? הפעולה תירשם ביומן הביקורת.")) return;
     try { setSelected(await api.adminCompanySubmissionAction(selected.publicId, name, values)); await load(); }
@@ -44,7 +50,7 @@ export default function AdminCompanySubmissionsView() {
     {selected && <div className="modal-backdrop"><section className="modal content-card submission-admin-modal"><header className="modal-heading"><div><span className="eyebrow">{selected.companyName}</span><h2>תיק {selected.publicCaseNumber} · גרסה {selected.versionNumber}</h2></div><button type="button" className="icon-action" aria-label="סגירה" onClick={() => setSelected(null)}><X /></button></header>
       <div className="company-stat-row"><span><strong>{formatDeliveryStatus(selected.deliveryStatus)}</strong> שליחה</span><span><strong>{formatDecisionStatus(selected.decisionStatus)}</strong> החלטה</span><span><strong>{formatAccessStatus(selected.accessStatus)}</strong> גישה</span></div>
       <p className="security-note">סטטוס “נשלח לשרת הדואר” מאשר קבלת SMTP בלבד, ולא מסירה לתיבת הנמען. מומלץ לבדוק גם ספאם, דואר זבל וקידומי מכירות.</p>
-      <div className="modal-actions wrap"><button type="button" className="secondary-action" onClick={() => void openPdf("masked-pdf")}><Eye />צפייה ב־PDF הראשוני</button><button type="button" className="secondary-action" onClick={() => void openPdf("full-pdf")}><FileText />צפייה ב־PDF המלא</button></div>
+      <div className="modal-actions wrap"><button type="button" className="secondary-action" onClick={() => void openPdf("masked-pdf")}><Eye />צפייה ב־PDF הראשוני</button><button type="button" className="secondary-action" onClick={() => void downloadPdf("masked-pdf")}><Download />הורדת PDF הראשוני</button><button type="button" className="secondary-action" onClick={() => void openPdf("full-pdf")}><FileText />צפייה ב־PDF המלא</button><button type="button" className="secondary-action" onClick={() => void downloadPdf("full-pdf")}><Download />הורדת PDF המלא</button></div>
       <h3>אנשי קשר והזמנות</h3><div className="invitation-list detailed">{selected.invitations?.map((invitation) => <article key={invitation.publicId}><MailCheck /><div><strong>{invitation.contactName}</strong><small>{invitation.contactRole} · {invitation.recipientMasked}</small><small>נוצר: {formatDate(invitation.createdAt)} · ניסיון אחרון: {invitation.lastAttemptAt ? formatDate(invitation.lastAttemptAt) : "טרם בוצע"}</small><small>SMTP: {smtpStatusLabel(invitation.smtpStatus)} · ניסיונות: {invitation.attempts} · שליחה מחדש: {invitation.resent ? "כן" : "לא"}</small>{invitation.safeFailureReason && <small>סיבת כשל: {invitation.safeFailureReason}</small>}{invitation.requestId && <small>מזהה בקשה: {invitation.requestId}</small>}</div><span>{formatInvitationStatus(invitation.status)}</span></article>)}</div>
       <h3>ציר זמן</h3><ol className="submission-timeline">{selected.timeline?.map((event, index) => <li key={`${event.createdAt}-${index}`}><span /><div><strong>{formatDeliveryEvent(event.type)}</strong><time>{formatDate(event.createdAt)}</time>{event.requestId && <small>מזהה בקשה: {event.requestId}</small>}</div></li>)}</ol>
       <div className="modal-actions wrap"><button type="button" className="secondary-action" disabled={!canResend} title={!canResend ? "שליחה מחדש זמינה רק לכשל ללא Message ID מוצלח" : undefined} onClick={() => void action("resend-failed")}><RefreshCw />שליחה מחדש לכשלים</button><button type="button" className="secondary-action" onClick={() => void action("send-reminder")}><Clock3 />תזכורת ידנית</button><button type="button" className="secondary-action" onClick={() => void action("reissue")}><MailCheck />הזמנה חדשה</button><button type="button" className="secondary-action" onClick={() => void action("extend-access", {days: 7})}><ShieldPlus />הארכת גישה</button><button type="button" className="danger-action" onClick={() => void action("revoke-access")}><ShieldOff />ביטול גישה</button><button type="button" className="danger-action" onClick={() => void action("cancel-invitation", {reason: "בוטל על ידי מנהל"})}>ביטול הזמנה</button></div>

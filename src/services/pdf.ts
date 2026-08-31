@@ -235,13 +235,31 @@ function keepTogether(document: PDFKit.PDFDocument, height: number, title: strin
   render();
 }
 
-// A titled field grid, reserved as one page-break unit (heading + every
-// row). Use this instead of a bare sectionTitle()+fieldRows() pair whenever
-// the grid is a small, self-contained block (one borrower's details, one
-// borrower's income) — see the root-cause note above SECTION_TITLE_RESERVED_HEIGHT
-// for why an unprotected pair can strand a lone field on the next page.
+// The minimum number of field rows a titled grid must show alongside its
+// own heading before it's allowed to spill onto a following page. Reserving
+// the FULL grid height (heading-to-last-row) fixes the "orphaned field"
+// defect but overcorrects into large blank gaps whenever a grid is a little
+// too tall for the room left on the page — the entire grid then jumps to a
+// fresh page even though most of it would have fit fine. Reserving only a
+// meaningful minimum (2 rows, or the whole grid if it's smaller) alongside
+// the heading gives every section a coherent first impression without ever
+// forcing a short block to abandon a mostly-empty page.
+const MIN_ROWS_WITH_HEADING = 2;
+
+function minRowsHeight(fields: PdfField[]): number {
+  return Math.min(MIN_ROWS_WITH_HEADING, Math.ceil(fields.length / 2)) * 53;
+}
+
+// A titled field grid, reserved as one page-break unit for its heading plus
+// a meaningful minimum of content (see MIN_ROWS_WITH_HEADING) — the
+// remaining rows, if any, still flow with their own per-row page-break
+// check in fieldRows(), exactly like a long list legitimately spanning
+// pages. Use this instead of a bare sectionTitle()+fieldRows() pair for any
+// self-contained titled grid — see the root-cause note above
+// SECTION_TITLE_RESERVED_HEIGHT for why an unprotected pair can strand a
+// lone field on the next page with no heading in sight.
 function sectionWithFields(document: PDFKit.PDFDocument, label: string, fields: PdfField[], title: string, subtitle: string): void {
-  keepTogether(document, SECTION_HEADING_HEIGHT + fieldRowsHeight(fields), title, subtitle, () => {
+  keepTogether(document, SECTION_HEADING_HEIGHT + minRowsHeight(fields), title, subtitle, () => {
     sectionTitle(document, label, title, subtitle);
     fieldRows(document, fields, title, subtitle);
   });
@@ -449,8 +467,7 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
     drawPageHeader(document, title, subtitle);
 
     // 1. תקציר העסקה
-    sectionTitle(document, "תקציר העסקה", title, subtitle);
-    fieldRows(document, [
+    sectionWithFields(document, "תקציר העסקה", [
       {label: "מספר תיק", value: snapshot.publicCaseNumber, ltr: true}, {label: "סטטוס", value: formatClientStatus(snapshot.status ?? "ACTIVE")},
       {label: "מספר לווים", value: snapshot.numberOfBorrowers},
       {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)},
@@ -458,8 +475,7 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
     ], title, subtitle);
 
     // 2. סיכום פיננסי ומשפחתי
-    sectionTitle(document, "סיכום פיננסי ומשפחתי", title, subtitle);
-    fieldRows(document, [
+    sectionWithFields(document, "סיכום פיננסי ומשפחתי", [
       {label: "סך הכנסה חודשית", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
       {label: "סך החזרים חודשיים", value: formatCurrency(snapshot.totals.monthlyPayments)}, {label: "מספר לווים", value: snapshot.numberOfBorrowers},
       {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)},
@@ -468,9 +484,13 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
 
     // 3. חיווי אשראי
     if (snapshot.creditIndication) {
-      sectionTitle(document, "חיווי אשראי", title, subtitle);
-      paragraph(document, "האם היו ב-3 השנים האחרונות:", title, subtitle);
-      fieldRows(document, creditIndicationFields(snapshot.creditIndication), title, subtitle);
+      const creditFields = creditIndicationFields(snapshot.creditIndication);
+      const {height: noticeHeight} = measureParagraph(document, "האם היו ב-3 השנים האחרונות:");
+      keepTogether(document, SECTION_HEADING_HEIGHT + noticeHeight + 8 + minRowsHeight(creditFields), title, subtitle, () => {
+        sectionTitle(document, "חיווי אשראי", title, subtitle);
+        paragraph(document, "האם היו ב-3 השנים האחרונות:", title, subtitle);
+        fieldRows(document, creditFields, title, subtitle);
+      });
     }
 
     // 4. פרטי לווים מוגבלים
@@ -500,14 +520,26 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
     }
 
     // 6. התחייבויות
-    sectionTitle(document, "התחייבויות", title, subtitle);
+    // The heading and the FIRST liability card are reserved together (not
+    // just the heading alone) — a liability card is taller than the
+    // heading's own one-row minimum buffer, so without this a heading could
+    // still render with its single card stranded on the next page.
+    // Every subsequent card already protects itself via drawLiabilityCard()'s
+    // own keepTogether() and is free to flow normally after the first.
     const liabilities = [...snapshot.borrowers.flatMap((borrower) => borrower.liabilities), ...snapshot.householdLiabilities];
-    if (liabilities.length) liabilities.forEach((liability, index) => drawLiabilityCard(document, liability, index, title, subtitle));
-    else paragraph(document, "לא דווחו התחייבויות פעילות.", title, subtitle);
+    if (liabilities.length) {
+      keepTogether(document, SECTION_HEADING_HEIGHT + 27 + fieldRowsHeight(liabilityFields(liabilities[0])), title, subtitle, () => {
+        sectionTitle(document, "התחייבויות", title, subtitle);
+        drawLiabilityCard(document, liabilities[0], 0, title, subtitle);
+      });
+      liabilities.slice(1).forEach((liability, index) => drawLiabilityCard(document, liability, index + 1, title, subtitle));
+    } else {
+      sectionTitle(document, "התחייבויות", title, subtitle);
+      paragraph(document, "לא דווחו התחייבויות פעילות.", title, subtitle);
+    }
 
     // 7. נכס ובקשת מימון
-    sectionTitle(document, "נכס ובקשת מימון", title, subtitle);
-    fieldRows(document, [
+    sectionWithFields(document, "נכס ובקשת מימון", [
       {label: "סוג נכס", value: formatPropertyType(snapshot.property.propertyType)}, {label: "עיר הנכס", value: snapshot.property.city},
       {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)}, {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)},
       {label: "תקופה מבוקשת", value: `${snapshot.loanRequest.requestedTermMonths} חודשים`}, {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}
@@ -534,8 +566,7 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     drawPageHeader(document, title, subtitle);
 
     // 1. תקציר בקשת המימון
-    sectionTitle(document, "תקציר בקשת המימון", title, subtitle);
-    fieldRows(document, [
+    sectionWithFields(document, "תקציר בקשת המימון", [
       {label: "מספר תיק", value: snapshot.publicCaseNumber, ltr: true}, {label: "סטטוס", value: formatClientStatus(snapshot.status ?? "ACTIVE")},
       {label: "מספר לווים", value: snapshot.numberOfBorrowers},
       {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)}, {label: "מטרת ההלוואה", value: loanPurposeDisplay(snapshot.loanRequest)},
@@ -543,8 +574,7 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     ], title, subtitle);
 
     // 2. סיכום פיננסי ומשפחתי
-    sectionTitle(document, "סיכום פיננסי ומשפחתי", title, subtitle);
-    fieldRows(document, [
+    sectionWithFields(document, "סיכום פיננסי ומשפחתי", [
       {label: "סך הכנסה", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
       {label: "סך החזרים", value: formatCurrency(snapshot.totals.monthlyPayments)}, {label: "מספר לווים", value: snapshot.numberOfBorrowers},
       {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)},
@@ -553,9 +583,13 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
 
     // 3. חיווי אשראי (full PDF only)
     if (snapshot.creditIndication) {
-      sectionTitle(document, "חיווי אשראי", title, subtitle);
-      paragraph(document, "האם היו ב-3 השנים האחרונות:", title, subtitle);
-      fieldRows(document, creditIndicationFields(snapshot.creditIndication), title, subtitle);
+      const creditFields = creditIndicationFields(snapshot.creditIndication);
+      const {height: noticeHeight} = measureParagraph(document, "האם היו ב-3 השנים האחרונות:");
+      keepTogether(document, SECTION_HEADING_HEIGHT + noticeHeight + 8 + minRowsHeight(creditFields), title, subtitle, () => {
+        sectionTitle(document, "חיווי אשראי", title, subtitle);
+        paragraph(document, "האם היו ב-3 השנים האחרונות:", title, subtitle);
+        fieldRows(document, creditFields, title, subtitle);
+      });
     }
 
     // 4/7. פרטי לווה N, 5/8. הכנסות לווה N, 6. הכנסות נוספות לווה N
@@ -577,34 +611,34 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
         {label: "רחוב ומספר בית", value: borrower.streetAddress}, {label: "סטטוס מגורים", value: housingStatusDisplay(borrower)}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
         {label: "מספר ילדים", value: borrower.numberOfChildren}, {label: "גילאי ילדים", value: borrower.childrenAges.length ? borrower.childrenAges.join(", ") : "אין"}
       ];
-      keepTogether(document, SECTION_TITLE_RESERVED_HEIGHT + fieldRowsHeight(personalFields) - 55, title, subtitle, () => {
-        sectionTitle(document, `פרטי לווה ${borrower.order} — ${borrowerHeading(borrower)}`, title, subtitle);
-        fieldRows(document, personalFields, title, subtitle);
-      });
+      sectionWithFields(document, `פרטי לווה ${borrower.order} — ${borrowerHeading(borrower)}`, personalFields, title, subtitle);
 
       const incomeFields = primaryIncomeFields(borrower, false);
-      keepTogether(document, SECTION_TITLE_RESERVED_HEIGHT + fieldRowsHeight(incomeFields) - 55, title, subtitle, () => {
-        sectionTitle(document, `הכנסות — לווה ${borrower.order}`, title, subtitle);
-        fieldRows(document, incomeFields, title, subtitle);
-      });
+      sectionWithFields(document, `הכנסות — לווה ${borrower.order}`, incomeFields, title, subtitle);
 
       const additionalText = additionalIncomesText(additionalIncomesOf(borrower));
       const {height: additionalHeight} = measureParagraph(document, additionalText);
-      keepTogether(document, SECTION_TITLE_RESERVED_HEIGHT + additionalHeight - 55, title, subtitle, () => {
+      keepTogether(document, SECTION_HEADING_HEIGHT + additionalHeight + 8, title, subtitle, () => {
         sectionTitle(document, `הכנסות נוספות — לווה ${borrower.order}`, title, subtitle);
         paragraph(document, additionalText, title, subtitle);
       });
     }
 
     // 9. התחייבויות
-    sectionTitle(document, "התחייבויות", title, subtitle);
     const liabilities = [...snapshot.borrowers.flatMap((borrower) => borrower.liabilities), ...snapshot.householdLiabilities];
-    if (liabilities.length) liabilities.forEach((liability, index) => drawLiabilityCard(document, liability, index, title, subtitle));
-    else paragraph(document, "לא דווחו התחייבויות פעילות.", title, subtitle);
+    if (liabilities.length) {
+      keepTogether(document, SECTION_HEADING_HEIGHT + 27 + fieldRowsHeight(liabilityFields(liabilities[0])), title, subtitle, () => {
+        sectionTitle(document, "התחייבויות", title, subtitle);
+        drawLiabilityCard(document, liabilities[0], 0, title, subtitle);
+      });
+      liabilities.slice(1).forEach((liability, index) => drawLiabilityCard(document, liability, index + 1, title, subtitle));
+    } else {
+      sectionTitle(document, "התחייבויות", title, subtitle);
+      paragraph(document, "לא דווחו התחייבויות פעילות.", title, subtitle);
+    }
 
     // 10. נכס
-    sectionTitle(document, "נכס ובקשת מימון", title, subtitle);
-    fieldRows(document, [
+    sectionWithFields(document, "נכס ובקשת מימון", [
       {label: "סוג נכס", value: formatPropertyType(snapshot.property.propertyType)}, {label: "עיר", value: snapshot.property.city},
       {label: "רחוב ומספר בית", value: snapshot.property.address}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)},
       {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "תקופה מבוקשת", value: `${snapshot.loanRequest.requestedTermMonths} חודשים`},
@@ -616,23 +650,31 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     paragraph(document, snapshot.dealDetails, title, subtitle);
 
     // 12. מסמכי התיק
-    sectionTitle(document, "סטטוס מסמכי חובה", title, subtitle);
     const requiredDocuments = documentStatusFields(snapshot.documents, snapshot.borrowers);
-    paragraph(document, requiredDocuments.every((field) => field.value === "קיים בתיק") ? "כל מסמכי החובה קיימים בתיק." : "חסרים מסמכי חובה בתיק.", title, subtitle);
-    fieldRows(document, requiredDocuments, title, subtitle);
+    const documentStatusText = requiredDocuments.every((field) => field.value === "קיים בתיק") ? "כל מסמכי החובה קיימים בתיק." : "חסרים מסמכי חובה בתיק.";
+    const {height: documentStatusHeight} = measureParagraph(document, documentStatusText);
+    keepTogether(document, SECTION_HEADING_HEIGHT + documentStatusHeight + 8 + minRowsHeight(requiredDocuments), title, subtitle, () => {
+      sectionTitle(document, "סטטוס מסמכי חובה", title, subtitle);
+      paragraph(document, documentStatusText, title, subtitle);
+      fieldRows(document, requiredDocuments, title, subtitle);
+    });
     if (snapshot.documents.length) {
-      sectionTitle(document, "מסמכים בתיק", title, subtitle);
-      fieldRows(document, snapshot.documents.flatMap((item, index) => [
+      sectionWithFields(document, "מסמכים בתיק", snapshot.documents.flatMap((item, index) => [
         {label: `מסמך ${index + 1}`, value: getDocumentDisplayName(item, item.borrowerOrder)},
         {label: "תאריך העלאה", value: formatDate(item.createdAt)}
       ]), title, subtitle);
     }
 
-    sectionTitle(document, "פרטי היועץ", title, subtitle);
-    fieldRows(document, [
+    sectionWithFields(document, "פרטי היועץ", [
       {label: "שם", value: snapshot.advisor.fullName}, {label: "שם העסק", value: snapshot.advisor.businessName},
       {label: "טלפון", value: snapshot.advisor.phone, ltr: true}, {label: "דוא״ל", value: snapshot.advisor.email, ltr: true},
-      {label: "אתר", value: snapshot.advisor.website ?? "לא צוין", ltr: true}
+      // Bug found during layout QA: substituting the Hebrew "לא צוין" fallback
+      // here (instead of passing null) bypassed pdfText()'s own RTL-safe
+      // fallback rendering, since that guard only activates for a genuinely
+      // missing (null/undefined/"") value — a caller-supplied Hebrew string
+      // marked ltr:true rendered backwards ("צוילא"). Passing null lets
+      // pdfText() apply the same fallback the correct (RTL) way.
+      {label: "אתר", value: snapshot.advisor.website, ltr: true}
     ], title, subtitle);
     finish(document, metadata.createdAt);
   });
