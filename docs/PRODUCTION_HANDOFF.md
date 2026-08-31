@@ -1,15 +1,16 @@
 # SynCash — Production Handoff
 
 Compiled 2026-08-28, updated through the 2026-08-31 Production deployment of
-`fa885d4` (migration `0018` applied — pilot-feedback fixes: per-borrower
-housing status with married-couple inheritance, loan-purpose OTHER,
-optional property street address, title deed no longer required, three
-legacy additional-income options dropped for new cases, and the reminder-
-duplication root-cause fix — see section 4 below). This supersedes the
-earlier 2026-08-30 `9756fac` deploy (migration `0017`, Legal Center/DPA/
-privacy-requests), whose section below is kept for its history but no
-longer reflects the live active release. Everything below reflects
-live-verified state as of the `fa885d4` deployment unless marked otherwise.
+`92b4ba3` (no migration — PDF layout redesign, download-filename root-cause
+fix, and the preview-expired blob-URL fix; see section 4 below). This
+supersedes the earlier same-day `fa885d4` deploy (migration `0018`,
+pilot-feedback fixes: per-borrower housing status with married-couple
+inheritance, loan-purpose OTHER, optional property street address, title
+deed no longer required, three legacy additional-income options dropped
+for new cases, and the reminder-duplication root-cause fix), whose section
+below is kept for its history but no longer reflects the live active
+release. Everything below reflects live-verified state as of the
+`92b4ba3` deployment unless marked otherwise.
 
 ## 1. Architecture
 
@@ -60,7 +61,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `fa885d467308f2c4d0b4ee46c196eb44c43c8252` |
+| Active release | `/opt/syncash/current` (symlink) → `92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -135,33 +136,31 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-08-31 (post `fa885d4` deploy)
+## 4. Operational state — live-verified 2026-08-31 (post `92b4ba3` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/fa885d467308f2c4d0b4ee46c196eb44c43c8252` |
-| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker` (0 restarts), `api` (image tag `fa885d4...`), `postgres:17-alpine`, `redis:7-alpine`, `minio` |
-| Public site (`https://app.syncash.co.il/api/health`) | `200` externally; `{"status":"ok"}` from inside the Docker network too |
-| Migrations | `0018` applied (`borrowers.housing_status` + `housing_status_other_encrypted`, `loan_requests.purpose_other_encrypted`, `company_submissions.reminder_sent_at` — all nullable additive columns; `loan_requests_purpose_check` widened to include `OTHER` — no existing rows touched); confirmed exactly one new row (`id=19`) in `drizzle.__drizzle_migrations`; `migrate-production.sh` ran it exactly once during deploy |
-| Row-count integrity | `users`, `clients`, `borrowers`, `documents`, `lenders`, `lender_contacts`, `company_submissions`, `case_versions`, `case_version_documents`, `email_outbox`, `loan_requests`, `submission_contact_invitations` — every count identical before and after (9 users, 5 clients, 7 borrowers, 35 documents, 2 lenders, 2 lender_contacts, 13 company_submissions, 7 case_versions, 61 case_version_documents, 52 email_outbox, 5 loan_requests, 13 submission_contact_invitations) |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `92b4ba3...`), `postgres:17-alpine`, `redis:7-alpine`, `minio` |
+| Public site (`https://app.syncash.co.il/api/health`) | `200` externally |
+| Migrations | None — this release has no schema changes |
 | API/Worker error logs (post-deploy) | Zero error markers in either |
-| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release (`syncash-20260831T155709Z-fa885d467308f2c4d0b4ee46c196eb44c43c8252.tar.gz.gpg`) |
-| Email outbox — reminder root cause, live evidence | `email_outbox` has 6 pre-existing `company_submissions` rows with exactly 2 `LENDER_REMINDER` rows each (ids 11, 13, 15, 16, 17, 18) — the historical footprint of the two-reminders-per-day (09:00 **and** 15:00) bug for a single-contact submission; these rows predate this deploy and were left untouched (immutable history, same principle as `case_versions`). `idempotency_key` has zero duplicate values across the whole table (the unique constraint itself was never the gap — the gap was per-invitation key scoping, now fixed). No new `LENDER_REMINDER` row was produced by this deploy itself (no submission was due for a reminder at deploy time); the newly added `company_submissions.reminder_sent_at` column is the atomic per-submission gate going forward, verified with a real docker-compose Postgres locally (see `docs/DECISIONS.md`) |
-| Scope of this release | Spam/promotions-folder hints on registration/verify-email/forgot-password; removed the "stored in Firebase Authentication only" technical line from the UI; per-borrower housing status (owned/rented/other+detail), inherited automatically for a married borrower 2, never duplicated in the UI; three legacy additional-income options removed from the *new*-case dropdown only (old cases unaffected, still readable/editable); loan-purpose "אחר" with a required free-text detail; property street address is now optional everywhere (label renamed to "רחוב ומספר בית"); title deed (`PROPERTY_RIGHTS`) removed from required documents, still uploadable; the lender "Interested" email to the advisor now states a 48-hour contact window; reminder scheduler rewritten to send exactly one reminder per submission (primary contact, else earliest), gated by `reminder_sent_at`, instead of one-per-contact times two time slots |
+| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release (`syncash-20260831T183157Z-92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423.tar.gz.gpg`) |
+| Scope of this release | PDF layout redesign (field grids reserved as a heading-plus-minimum unit before rendering, instead of breaking row-by-row with no page-break awareness — fixes orphaned fields with no heading in sight and the oversized blank gaps that followed on the previous page); a real RTL/bidi bug fix (a missing advisor website rendered as reversed Hebrew "צוילא" because a caller substituted the Hebrew fallback text before the RTL-safe renderer could apply its own protection); root-caused and fixed the PDF download-filename bug (`window.open()` on a blob: URL never carries over a wrapped `File`'s name — confirmed via a real Playwright download-event reproduction; added a real `<a download>`-based `downloadPdfBlob()` and a matching "הורדת PDF" button next to every PDF "view" button that lacked one); removed the hardcoded 60-second blob-URL revoke timer that caused "התצוגה המקדימה פגה" regardless of whether the tab was still open. `PDF_RENDERER_VERSION` bumped 4→6 across this and the prior release to invalidate cached PDFs. The advisor "Interested" email no longer appending a lender-contact signature line was already live from the `fa885d4` deploy (verified, not changed again here) |
 | Rollback required | No |
 
-Previous release, `9756facdac3476b98bf1cc38df380c13eb09c04d` (2026-08-30,
-Legal Center/DPA/privacy-requests, migration `0017`): remains on disk for
-rollback; its own operational-state evidence is preserved in this file's
-Git history rather than duplicated here.
+Previous release, `fa885d467308f2c4d0b4ee46c196eb44c43c8252` (2026-08-31,
+pilot-feedback fixes, migration `0018`): remains on disk for rollback; its
+own operational-state evidence is preserved in this file's Git history
+rather than duplicated here.
 
 ## 5. Git / release state — in sync as of 2026-08-31
 
-Production active release: `fa885d467308f2c4d0b4ee46c196eb44c43c8252`.
+Production active release: `92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423`.
 Local HEAD and `origin/codex-syncash-production-rebuild`: same SHA
-(`fa885d467308f2c4d0b4ee46c196eb44c43c8252`) — fully in sync as of this deploy.
-Prior release `9756facdac3476b98bf1cc38df380c13eb09c04d` remains on disk at
-`/opt/syncash/releases/9756facdac3476b98bf1cc38df380c13eb09c04d` for rollback
+(`92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423`) — fully in sync as of this deploy.
+Prior release `fa885d467308f2c4d0b4ee46c196eb44c43c8252` remains on disk at
+`/opt/syncash/releases/fa885d467308f2c4d0b4ee46c196eb44c43c8252` for rollback
 if needed. See the "Before starting any task"
 checklist in `CLAUDE.md` for how to reason about a HEAD/Production gap in
 future sessions; always confirm the exact current HEAD with `git log`
