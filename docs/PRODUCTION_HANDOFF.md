@@ -1,16 +1,18 @@
 # SynCash — Production Handoff
 
 Compiled 2026-08-28, updated through the 2026-08-31 Production deployment of
-`92b4ba3` (no migration — PDF layout redesign, download-filename root-cause
-fix, and the preview-expired blob-URL fix; see section 4 below). This
-supersedes the earlier same-day `fa885d4` deploy (migration `0018`,
-pilot-feedback fixes: per-borrower housing status with married-couple
-inheritance, loan-purpose OTHER, optional property street address, title
-deed no longer required, three legacy additional-income options dropped
-for new cases, and the reminder-duplication root-cause fix), whose section
-below is kept for its history but no longer reflects the live active
-release. Everything below reflects live-verified state as of the
-`92b4ba3` deployment unless marked otherwise.
+`c2c2fac` (no migration — fixes the remaining PDF section-title orphans that
+survived the `92b4ba3` layout redesign; see section 4 below). This supersedes
+the earlier same-day `92b4ba3` deploy (PDF layout redesign, download-filename
+root-cause fix, and the preview-expired blob-URL fix) and the `fa885d4`
+deploy before it (migration `0018`, pilot-feedback fixes: per-borrower
+housing status with married-couple inheritance, loan-purpose OTHER, optional
+property street address, title deed no longer required, three legacy
+additional-income options dropped for new cases, and the
+reminder-duplication root-cause fix), whose sections below are kept for
+history but no longer reflect the live active release. Everything below
+reflects live-verified state as of the `c2c2fac` deployment unless marked
+otherwise.
 
 ## 1. Architecture
 
@@ -61,7 +63,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423` |
+| Active release | `/opt/syncash/current` (symlink) → `c2c2fac31946cb0eb603bb0cd66c919164f58460` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -136,32 +138,39 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-08-31 (post `92b4ba3` deploy)
+## 4. Operational state — live-verified 2026-08-31 (post `c2c2fac` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423` |
-| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `92b4ba3...`), `postgres:17-alpine`, `redis:7-alpine`, `minio` |
-| Public site (`https://app.syncash.co.il/api/health`) | `200` externally |
-| Migrations | None — this release has no schema changes |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/c2c2fac31946cb0eb603bb0cd66c919164f58460` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `c2c2fac...`), `postgres:17-alpine`, `redis:7-alpine`, `minio` |
+| Health checks | `http://127.0.0.1:3181/api/health` → `200`, `http://127.0.0.1:3180/healthz` → `200` (the exact checks `deploy-production.sh` itself gates on) |
+| Migrations | None — this release has no schema changes (the migrate step still runs and reports completion with nothing pending) |
 | API/Worker error logs (post-deploy) | Zero error markers in either |
-| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release (`syncash-20260831T183157Z-92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423.tar.gz.gpg`) |
-| Scope of this release | PDF layout redesign (field grids reserved as a heading-plus-minimum unit before rendering, instead of breaking row-by-row with no page-break awareness — fixes orphaned fields with no heading in sight and the oversized blank gaps that followed on the previous page); a real RTL/bidi bug fix (a missing advisor website rendered as reversed Hebrew "צוילא" because a caller substituted the Hebrew fallback text before the RTL-safe renderer could apply its own protection); root-caused and fixed the PDF download-filename bug (`window.open()` on a blob: URL never carries over a wrapped `File`'s name — confirmed via a real Playwright download-event reproduction; added a real `<a download>`-based `downloadPdfBlob()` and a matching "הורדת PDF" button next to every PDF "view" button that lacked one); removed the hardcoded 60-second blob-URL revoke timer that caused "התצוגה המקדימה פגה" regardless of whether the tab was still open. `PDF_RENDERER_VERSION` bumped 4→6 across this and the prior release to invalidate cached PDFs. The advisor "Interested" email no longer appending a lender-contact signature line was already live from the `fa885d4` deploy (verified, not changed again here) |
+| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release (`syncash-20260831T191817Z-c2c2fac31946cb0eb603bb0cd66c919164f58460.tar.gz.gpg`) |
+| Scope of this release | Fixes the remaining PDF section-title orphans that survived the `92b4ba3` layout redesign: several sections only ever reserved space for their heading, not for the real first content that followed — the masked PDF's per-borrower "פרטי לווים מוגבלים" and "הכנסות רלוונטיות לבחינה ראשונית" loops, "פירוט העסקה" in both the masked and full PDF, "סטטוס מסמכי חובה" in the masked PDF, and the anonymous PDF's "תקציר אנונימי" summary. Each could render its heading alone at the bottom of a page while the content it belonged to started on the next page. Adds `sectionWithParagraph()` (reserves heading + the paragraph's exact measured height together) and `sectionWithBorrowerFieldsCards()`/`drawBorrowerFieldsCard()` (reserves heading + first borrower's card together, mirroring the pattern already proven for the liabilities section), then applies them at every remaining unprotected call site. `PDF_RENDERER_VERSION` bumped 6→7 to invalidate cached PDFs. The download-filename fix, the preview-expired blob-URL fix, and the advisor "Interested" email wording were all explicitly left untouched in this release |
 | Rollback required | No |
 
-Previous release, `fa885d467308f2c4d0b4ee46c196eb44c43c8252` (2026-08-31,
+Previous release, `92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423` (2026-08-31, PDF
+layout redesign, download-filename root-cause fix, preview-expired blob-URL
+fix): remains on disk for rollback; its own operational-state evidence is
+preserved in this file's Git history rather than duplicated here.
+
+Earlier release, `fa885d467308f2c4d0b4ee46c196eb44c43c8252` (2026-08-31,
 pilot-feedback fixes, migration `0018`): remains on disk for rollback; its
 own operational-state evidence is preserved in this file's Git history
 rather than duplicated here.
 
 ## 5. Git / release state — in sync as of 2026-08-31
 
-Production active release: `92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423`.
+Production active release: `c2c2fac31946cb0eb603bb0cd66c919164f58460`.
 Local HEAD and `origin/codex-syncash-production-rebuild`: same SHA
-(`92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423`) — fully in sync as of this deploy.
-Prior release `fa885d467308f2c4d0b4ee46c196eb44c43c8252` remains on disk at
-`/opt/syncash/releases/fa885d467308f2c4d0b4ee46c196eb44c43c8252` for rollback
-if needed. See the "Before starting any task"
+(`c2c2fac31946cb0eb603bb0cd66c919164f58460`) — fully in sync as of this
+deploy, confirmed a descendant of the prior active release via
+`git merge-base --is-ancestor` before deploying. Prior releases
+`92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423` and
+`fa885d467308f2c4d0b4ee46c196eb44c43c8252` remain on disk under
+`/opt/syncash/releases/` for rollback if needed. See the "Before starting any task"
 checklist in `CLAUDE.md` for how to reason about a HEAD/Production gap in
 future sessions; always confirm the exact current HEAD with `git log`
 rather than trusting this SHA prefix if it's been a while. (The prior
