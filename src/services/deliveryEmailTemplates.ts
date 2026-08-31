@@ -31,11 +31,11 @@ export const deliveryEmailTemplates = {
     const state = values.interested ? "חברתכם אישרה שהיא מעוניינת להמשיך בטיפול בתיק." : "התיק סומן כלא מתאים עבור חברתכם.";
     return {subject, text: `${state}\nתודה על המענה.`, html: shell(`<p>התקבלה תגובה מטעם חברת ${escapeHtml(values.companyName)} לתיק ${escapeHtml(values.publicCaseNumber)}.</p><p>${escapeHtml(state)}</p><p>תודה על המענה.<br>SynCash</p>`)};
   },
-  advisor(values: {advisorFirstName: string; companyName: string; interested: boolean; url: string; contact?: string}): DeliveryEmailContent {
+  advisor(values: {advisorFirstName: string; companyName: string; interested: boolean; url: string}): DeliveryEmailContent {
     const subject = values.interested ? `חברת ${values.companyName} מעוניינת בתיק` : `חברת ${values.companyName} אינה מעוניינת בתיק`;
     const state = values.interested ? "אישרה שהיא מעוניינת להמשיך בטיפול בתיק." : "השיבה שאינה מעוניינת להמשיך בטיפול בתיק.";
     const contactWindow = values.interested ? "חברת המימון הביעה עניין בתיק. נציג החברה או איש הקשר מטעמה צפוי ליצור איתך קשר בתוך 48 שעות לצורך המשך הטיפול." : null;
-    return {subject, text: `שלום ${values.advisorFirstName},\nחברת ${values.companyName} ${state}\n${contactWindow ?? ""}\n${values.contact ?? ""}\n${values.url}`, html: shell(`<p>שלום ${escapeHtml(values.advisorFirstName)},</p><p>חברת ${escapeHtml(values.companyName)} ${escapeHtml(state)}</p>${contactWindow ? `<p>${escapeHtml(contactWindow)}</p>` : ""}${values.contact ? `<p>${escapeHtml(values.contact)}</p>` : ""}${button("מעבר לסטטוס החברות בתיק", values.url)}`)};
+    return {subject, text: `שלום ${values.advisorFirstName},\nחברת ${values.companyName} ${state}\n${contactWindow ?? ""}\n${values.url}`, html: shell(`<p>שלום ${escapeHtml(values.advisorFirstName)},</p><p>חברת ${escapeHtml(values.companyName)} ${escapeHtml(state)}</p>${contactWindow ? `<p>${escapeHtml(contactWindow)}</p>` : ""}${button("מעבר לסטטוס החברות בתיק", values.url)}`)};
   },
   advisorDeliveryFailure(values: {advisorFirstName: string; companyName: string; publicCaseNumber: string; url: string}): DeliveryEmailContent {
     const subject = `נדרש טיפול בכשל שליחת תיק | SynCash | תיק ${values.publicCaseNumber}`;

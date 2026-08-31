@@ -63,7 +63,10 @@ describe("anonymous PDF", () => {
     expect(visual).not.toContain("321-CS");
     const source = readFileSync(new URL("../../src/services/pdf.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(/split\([^)]*\)\.reverse|reverse\(\)\.join/);
-    expect(PDF_RENDERER_VERSION).toBe(4);
+    // Bumped for the sectionTitle() orphan-heading fix (see docs/DECISIONS.md)
+    // — any content/layout change to pdf.ts must bump this counter so cached
+    // MinIO PDFs are regenerated rather than served stale.
+    expect(PDF_RENDERER_VERSION).toBe(5);
   });
 
   it("is generated only from the anonymous snapshot", async () => {

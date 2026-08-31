@@ -182,8 +182,25 @@ export function ensureSpace(document: PDFKit.PDFDocument, needed: number, title:
   addContentPage(document, title, subtitle);
 }
 
+// Reserves the section-title bar's own height (31) PLUS a minimum-content
+// buffer (55, matching one fieldRows() row) — not just 42 for the bar alone.
+// Root cause of the "orphaned heading" defect: sectionTitle() used to check
+// only its own ~42pt, so a title could render with just enough room for
+// itself, then the very next fieldRows()/paragraph() call would immediately
+// fail its own (independent) space check and jump to a new page — leaving a
+// lonely heading at the bottom of one page, a large empty gap beneath it,
+// and its actual content starting cold on the next page. Reserving the
+// heading together with a realistic minimum first-content height means a
+// section now only starts on a page that can also hold something under it.
+const SECTION_TITLE_RESERVED_HEIGHT = 42 + 55;
+// Exact vertical space sectionTitle() itself consumes (bar + gap before the
+// next element) — used by sectionWithFields() to reserve a field grid's
+// TRUE total height, as opposed to SECTION_TITLE_RESERVED_HEIGHT's looser
+// "heading + at least one row" minimum.
+const SECTION_HEADING_HEIGHT = 41;
+
 function sectionTitle(document: PDFKit.PDFDocument, label: string, title: string, subtitle: string): void {
-  ensureSpace(document, 42, title, subtitle);
+  ensureSpace(document, SECTION_TITLE_RESERVED_HEIGHT, title, subtitle);
   const y = document.y;
   document.roundedRect(page.left, y, page.width, 31, 8).fill(colors.blue);
   document.circle(page.right - 16, y + 15.5, 4).fill(colors.gold);
@@ -218,11 +235,36 @@ function keepTogether(document: PDFKit.PDFDocument, height: number, title: strin
   render();
 }
 
+// A titled field grid, reserved as one page-break unit (heading + every
+// row). Use this instead of a bare sectionTitle()+fieldRows() pair whenever
+// the grid is a small, self-contained block (one borrower's details, one
+// borrower's income) — see the root-cause note above SECTION_TITLE_RESERVED_HEIGHT
+// for why an unprotected pair can strand a lone field on the next page.
+function sectionWithFields(document: PDFKit.PDFDocument, label: string, fields: PdfField[], title: string, subtitle: string): void {
+  keepTogether(document, SECTION_HEADING_HEIGHT + fieldRowsHeight(fields), title, subtitle, () => {
+    sectionTitle(document, label, title, subtitle);
+    fieldRows(document, fields, title, subtitle);
+  });
+}
+
 function fieldRows(document: PDFKit.PDFDocument, fields: PdfField[], title: string, subtitle: string): void {
   for (let index = 0; index < fields.length; index += 2) {
     ensureSpace(document, 55, title, subtitle);
     const row = fields.slice(index, index + 2);
     const y = document.y;
+    // A lone trailing field (odd field count) renders as one full-width card
+    // instead of a half-width card beside a blank half — a small but visible
+    // fix for the "wasted whitespace" look a dangling single field otherwise has.
+    if (row.length === 1) {
+      const [field] = row;
+      document.roundedRect(page.left, y, page.width, 45, 7).fillAndStroke(colors.paper, colors.line);
+      document.font(PDF_REGULAR_FONT_NAME).fontSize(8).fillColor(colors.muted);
+      pdfText(document, field.label, page.left + 10, y + 8, {width: page.width - 20, align: "right"});
+      document.font(PDF_BOLD_FONT_NAME).fontSize(10.2).fillColor(colors.ink);
+      pdfText(document, field.value, page.left + 10, y + 23, {width: page.width - 20, align: "right", ellipsis: true, direction: field.ltr ? "ltr" : "rtl"});
+      document.y = y + 53;
+      continue;
+    }
     const gap = 10;
     const width = (page.width - gap) / 2;
     row.forEach((field, column) => {
@@ -517,21 +559,41 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     }
 
     // 4/7. פרטי לווה N, 5/8. הכנסות לווה N, 6. הכנסות נוספות לווה N
+    // Each borrower's personal-details grid and income grid is wrapped in
+    // keepTogether() (mirroring the pattern already used for the masked PDF
+    // and for individual liability cards): the heading and every field in
+    // that block are reserved as ONE page-break unit. Without this, a field
+    // grid could split mid-list — the observed defect was a lone field (or
+    // two) stranded at the very top of the next page with no heading in
+    // sight, while the previous page ended with an oversized blank gap
+    // right where the row-by-row break happened. Moving the WHOLE block to
+    // a fresh page when it doesn't fit trades a small amount of blank space
+    // on the page before it for a page that always reads as one coherent unit.
     for (const borrower of snapshot.borrowers) {
-      sectionTitle(document, `פרטי לווה ${borrower.order} — ${borrowerHeading(borrower)}`, title, subtitle);
-      fieldRows(document, [
+      const personalFields: PdfField[] = [
         {label: "שם מלא", value: `${borrower.firstName} ${borrower.lastName}`}, {label: "מספר תעודת זהות", value: borrower.identityNumber, ltr: true},
         {label: "תאריך לידה", value: formatDate(borrower.dateOfBirth)}, {label: "טלפון", value: borrower.phone, ltr: true},
         {label: "דוא״ל", value: borrower.email, ltr: true}, {label: "עיר מגורים", value: borrower.city},
         {label: "רחוב ומספר בית", value: borrower.streetAddress}, {label: "סטטוס מגורים", value: housingStatusDisplay(borrower)}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
         {label: "מספר ילדים", value: borrower.numberOfChildren}, {label: "גילאי ילדים", value: borrower.childrenAges.length ? borrower.childrenAges.join(", ") : "אין"}
-      ], title, subtitle);
+      ];
+      keepTogether(document, SECTION_TITLE_RESERVED_HEIGHT + fieldRowsHeight(personalFields) - 55, title, subtitle, () => {
+        sectionTitle(document, `פרטי לווה ${borrower.order} — ${borrowerHeading(borrower)}`, title, subtitle);
+        fieldRows(document, personalFields, title, subtitle);
+      });
 
-      sectionTitle(document, `הכנסות — לווה ${borrower.order}`, title, subtitle);
-      fieldRows(document, primaryIncomeFields(borrower, false), title, subtitle);
+      const incomeFields = primaryIncomeFields(borrower, false);
+      keepTogether(document, SECTION_TITLE_RESERVED_HEIGHT + fieldRowsHeight(incomeFields) - 55, title, subtitle, () => {
+        sectionTitle(document, `הכנסות — לווה ${borrower.order}`, title, subtitle);
+        fieldRows(document, incomeFields, title, subtitle);
+      });
 
-      sectionTitle(document, `הכנסות נוספות — לווה ${borrower.order}`, title, subtitle);
-      paragraph(document, additionalIncomesText(additionalIncomesOf(borrower)), title, subtitle);
+      const additionalText = additionalIncomesText(additionalIncomesOf(borrower));
+      const {height: additionalHeight} = measureParagraph(document, additionalText);
+      keepTogether(document, SECTION_TITLE_RESERVED_HEIGHT + additionalHeight - 55, title, subtitle, () => {
+        sectionTitle(document, `הכנסות נוספות — לווה ${borrower.order}`, title, subtitle);
+        paragraph(document, additionalText, title, subtitle);
+      });
     }
 
     // 9. התחייבויות

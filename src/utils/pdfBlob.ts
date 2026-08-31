@@ -9,11 +9,11 @@ export function openFreshPdfBlob(blob: Blob, filename?: string): void {
   activePdfObjectUrl = objectUrl;
   const pdfWindow = window.open(objectUrl, "_blank");
   if (pdfWindow) pdfWindow.opener = null;
-  window.setTimeout(() => {
-    if (activePdfObjectUrl !== objectUrl) return;
-    URL.revokeObjectURL(objectUrl);
-    activePdfObjectUrl = undefined;
-  }, 60_000);
+  // אין הפעלת טיימר שמבטל את ה-URL אחרי זמן קבוע: כך היה בעבר (60 שניות), וזה בדיוק מה שגרם
+  // ל"תצוגה המקדימה פגה" — ה-blob: URL היה מתבטל מתחת ללשונית הפתוחה גם אם המשתמש עדיין צופה
+  // בה. הניקוי היחיד שנדרש הוא בפתיחת PDF הבא (השורה הראשונה כאן) ובעת פירוק הרכיב הקורא
+  // (revokeActivePdfBlob, שכבר מחובר ל-unmount ב-LoanArena) — לא טיימר גלובלי שלא יודע אם
+  // המשתמש עדיין צריך את ה-URL.
 }
 
 export function revokeActivePdfBlob(): void {

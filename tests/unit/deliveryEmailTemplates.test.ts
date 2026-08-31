@@ -39,4 +39,23 @@ describe("delivery email templates", () => {
     expect(notInterested.text).not.toContain("48 שעות");
     expect(notInterested.html).not.toContain("48 שעות");
   });
+
+  it("does not append a lender-contact signature line (name/role/email/phone) to the advisor decision email", () => {
+    const interested = deliveryEmailTemplates.advisor({advisorFirstName: "יועץ", companyName: "חברה", interested: true, url: "https://app.syncash.co.il/advisor/clients/1"});
+    // Root-caused: lenderDelivery.ts used to build "First Last · role_title ·
+    // email · phone" from the deciding lender_contacts row and append it as
+    // its own paragraph — e.g. "אריאלה אברהם · בעלים · ...". The advisor()
+    // template no longer accepts a contact field at all, so its rendered
+    // output can never contain a "·"-joined name/role/email/phone line.
+    expect(interested.html).not.toContain("·");
+    expect(interested.text).not.toContain("·");
+    // Exactly 4 lines: greeting, decision state, 48-hour window, CTA URL —
+    // nothing appended after the URL.
+    expect(interested.text.split("\n").filter(Boolean)).toEqual([
+      "שלום יועץ,",
+      "חברת חברה אישרה שהיא מעוניינת להמשיך בטיפול בתיק.",
+      "חברת המימון הביעה עניין בתיק. נציג החברה או איש הקשר מטעמה צפוי ליצור איתך קשר בתוך 48 שעות לצורך המשך הטיפול.",
+      "https://app.syncash.co.il/advisor/clients/1"
+    ]);
+  });
 });
