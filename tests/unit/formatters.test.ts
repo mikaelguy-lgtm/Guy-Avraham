@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DEAL_TYPES } from "../../src/domain/clientFields";
-import { emailServerAcceptedMessage, formatAdditionalIncomeType, formatClientStatus, formatCurrency, formatDate, formatDealType, formatEmploymentType, formatIsraelDateTime, formatIsraelTimeGreeting, formatMaritalStatus, formatPropertyType, formatRegion, getIsraelTimeGreeting, maskEmailAddress } from "../../src/utils/formatters";
+import { emailServerAcceptedMessage, formatAdditionalIncomeType, formatClientStatus, formatCurrency, formatDate, formatDealType, formatEmploymentType, formatHousingStatus, formatIsraelDateTime, formatIsraelTimeGreeting, formatMaritalStatus, formatPropertyType, formatRegion, getIsraelTimeGreeting, maskEmailAddress } from "../../src/utils/formatters";
 
 describe("Hebrew display formatters", () => {
   it("never exposes business enums", () => {
-    const expectedDeals = ["רכישה מקבלן", "מחיר למשתכן", "רכישה יד שנייה", "שיפוצים", "איחוד הלוואות", "מטרה עסקית", "לכל מטרה", "בנייה עצמית", "עסקה בתוך המשפחה", "רכישה או בנייה בקיבוץ", "רכישה מכונס נכסים", "משכנתה הפוכה", "תמ״א", "מחזור משכנתה", "גישור"];
+    const expectedDeals = ["רכישה מקבלן", "מחיר למשתכן", "רכישה יד שנייה", "שיפוצים", "איחוד הלוואות", "מטרה עסקית", "לכל מטרה", "בנייה עצמית", "עסקה בתוך המשפחה", "רכישה או בנייה בקיבוץ", "רכישה מכונס נכסים", "משכנתה הפוכה", "תמ״א", "מחזור משכנתה", "גישור", "אחר"];
     expect(DEAL_TYPES.map(formatDealType)).toEqual(expectedDeals);
     expect(formatEmploymentType("SALARIED")).toBe("שכיר");
     expect(formatEmploymentType("SELF_EMPLOYED")).toBe("עצמאי");
@@ -21,6 +21,10 @@ describe("Hebrew display formatters", () => {
     expect(formatMaritalStatus("SEPARATED")).toBe("פרוד/ה");
     expect(formatAdditionalIncomeType("RENTAL_INCOME")).toBe("שכר דירה");
     expect(formatAdditionalIncomeType("SMALL_SELF_EMPLOYMENT")).toBe("הכנסה מעצמאות קטנה");
+    expect(formatHousingStatus("OWNED")).toBe("דירה בבעלותי");
+    expect(formatHousingStatus("RENTED")).toBe("גר/ה בשכירות");
+    expect(formatHousingStatus("OTHER")).toBe("אחר");
+    expect(formatHousingStatus(null)).toBe("לא צוין");
   });
 
   it("formats Israeli currency", () => {

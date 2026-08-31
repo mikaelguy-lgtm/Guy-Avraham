@@ -47,6 +47,8 @@ export class CaseRedactionService {
         label: `לווה ${borrower.order}`,
         age: borrower.age,
         residenceCity: sanitize(borrower.residenceCity) ?? "",
+        housingStatus: borrower.housingStatus,
+        housingStatusOther: sanitize(borrower.housingStatusOther),
         maritalStatus: borrower.maritalStatus,
         numberOfChildren: borrower.numberOfChildren,
         childrenAges: borrower.childrenAges,

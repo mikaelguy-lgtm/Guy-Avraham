@@ -205,6 +205,8 @@ function clientMutationRecord(input: ClientInput, encryption: EncryptionService,
         addressEncrypted: encrypt(`${borrower.streetAddress}, ${borrower.city}`),
         cityEncrypted: encrypt(borrower.city),
         streetAddressEncrypted: encrypt(borrower.streetAddress),
+        housingStatus: borrower.housingStatus,
+        housingStatusOtherEncrypted: borrower.housingStatusOther ? encrypt(borrower.housingStatusOther) : null,
         maritalStatus: borrower.maritalStatus,
         numberOfChildren: borrower.children.numberOfChildren,
         childrenAges: borrower.children.childrenAges,
@@ -224,10 +226,11 @@ function clientMutationRecord(input: ClientInput, encryption: EncryptionService,
     }),
     householdLiabilities: input.householdLiabilities.map(liabilityRecord),
     loanPurpose: input.loanPurpose,
+    loanPurposeOtherEncrypted: input.loanPurposeOther ? encrypt(input.loanPurposeOther) : null,
     propertyType: input.property.propertyType,
     propertyTypeOtherDescriptionEncrypted: input.property.propertyTypeOtherDescription ? encrypt(input.property.propertyTypeOtherDescription) : null,
     propertyCity: input.property.city,
-    propertyAddressEncrypted: encrypt(input.property.address),
+    propertyAddressEncrypted: input.property.address ? encrypt(input.property.address) : null,
     propertyValue: input.property.value,
     requestedAmount: input.loanRequest.requestedAmount,
     status: "ACTIVE"
@@ -251,6 +254,7 @@ function personalMutationRecord(input: ClientPersonalInput, encryption: Encrypti
       birthDateEncrypted: encrypt(borrower.dateOfBirth), phoneEncrypted: encrypt(borrower.phone),
       emailEncrypted: encrypt(borrower.email), addressEncrypted: encrypt(`${borrower.streetAddress}, ${borrower.city}`),
       cityEncrypted: encrypt(borrower.city), streetAddressEncrypted: encrypt(borrower.streetAddress),
+      housingStatus: borrower.housingStatus, housingStatusOtherEncrypted: borrower.housingStatusOther ? encrypt(borrower.housingStatusOther) : null,
       maritalStatus: borrower.maritalStatus, numberOfChildren: borrower.children.numberOfChildren,
       childrenAges: borrower.children.childrenAges
     }))
@@ -296,9 +300,10 @@ function liabilitiesMutationRecord(input: ClientLiabilitiesInput, encryption: En
 
 function propertyMutationRecord(input: ClientPropertyInput, encryption: EncryptionService): ClientPropertyMutationRecord {
   return {
-    loanPurpose: input.loanPurpose, propertyType: input.property.propertyType,
+    loanPurpose: input.loanPurpose, loanPurposeOtherEncrypted: input.loanPurposeOther ? encryption.encrypt(input.loanPurposeOther) : null,
+    propertyType: input.property.propertyType,
     propertyTypeOtherDescriptionEncrypted: input.property.propertyTypeOtherDescription ? encryption.encrypt(input.property.propertyTypeOtherDescription) : null,
-    propertyCity: input.property.city, propertyAddressEncrypted: encryption.encrypt(input.property.address),
+    propertyCity: input.property.city, propertyAddressEncrypted: input.property.address ? encryption.encrypt(input.property.address) : null,
     propertyValue: input.property.value, requestedAmount: input.loanRequest.requestedAmount
   };
 }
@@ -326,6 +331,8 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
       address: borrower.addressEncrypted ? encryption.decrypt(borrower.addressEncrypted) : "",
       city: borrower.cityEncrypted ? encryption.decrypt(borrower.cityEncrypted) : null,
       streetAddress: borrower.streetAddressEncrypted ? encryption.decrypt(borrower.streetAddressEncrypted) : null,
+      housingStatus: borrower.housingStatus,
+      housingStatusOther: borrower.housingStatusOtherEncrypted ? encryption.decrypt(borrower.housingStatusOtherEncrypted) : null,
       maritalStatus: borrower.maritalStatus ?? "SINGLE",
       children: {numberOfChildren: borrower.numberOfChildren, childrenAges: borrower.childrenAges},
       employment: {
@@ -416,6 +423,7 @@ async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, 
     additionalIncomeAmount: primary?.income.additionalIncomeAmount ?? 0,
     additionalIncomeDescription: primary?.income.additionalIncomeDescription ?? null,
     loanPurpose: details?.loanPurpose ?? "",
+    loanPurposeOther: details?.loanPurposeOtherEncrypted ? encryption.decrypt(details.loanPurposeOtherEncrypted) : null,
     propertyType: details?.propertyType ?? "",
     propertyTypeOtherDescription: details?.propertyTypeOtherDescriptionEncrypted ? encryption.decrypt(details.propertyTypeOtherDescriptionEncrypted) : null,
     propertyCity: details?.propertyCity ?? "",

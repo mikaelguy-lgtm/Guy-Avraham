@@ -27,4 +27,16 @@ describe("delivery email templates", () => {
     expect(message.text).toContain("654321");
     expect(Object.keys(message)).toEqual(["subject", "text", "html"]);
   });
+
+  it("tells the advisor a 48-hour contact window applies when a lender is interested, without committing on the lender's behalf", () => {
+    const interested = deliveryEmailTemplates.advisor({advisorFirstName: "יועץ", companyName: "חברה", interested: true, url: "https://app.syncash.co.il/advisor/clients/1"});
+    expect(interested.text).toContain("48 שעות");
+    expect(interested.html).toContain("48 שעות");
+    expect(interested.text).not.toMatch(/מוסווה/u);
+    expect(interested.html).not.toMatch(/מוסווה/u);
+
+    const notInterested = deliveryEmailTemplates.advisor({advisorFirstName: "יועץ", companyName: "חברה", interested: false, url: "https://app.syncash.co.il/advisor/clients/1"});
+    expect(notInterested.text).not.toContain("48 שעות");
+    expect(notInterested.html).not.toContain("48 שעות");
+  });
 });

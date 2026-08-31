@@ -34,7 +34,8 @@ export const deliveryEmailTemplates = {
   advisor(values: {advisorFirstName: string; companyName: string; interested: boolean; url: string; contact?: string}): DeliveryEmailContent {
     const subject = values.interested ? `חברת ${values.companyName} מעוניינת בתיק` : `חברת ${values.companyName} אינה מעוניינת בתיק`;
     const state = values.interested ? "אישרה שהיא מעוניינת להמשיך בטיפול בתיק." : "השיבה שאינה מעוניינת להמשיך בטיפול בתיק.";
-    return {subject, text: `שלום ${values.advisorFirstName},\nחברת ${values.companyName} ${state}\n${values.contact ?? ""}\n${values.url}`, html: shell(`<p>שלום ${escapeHtml(values.advisorFirstName)},</p><p>חברת ${escapeHtml(values.companyName)} ${escapeHtml(state)}</p>${values.contact ? `<p>${escapeHtml(values.contact)}</p>` : ""}${button("מעבר לסטטוס החברות בתיק", values.url)}`)};
+    const contactWindow = values.interested ? "חברת המימון הביעה עניין בתיק. נציג החברה או איש הקשר מטעמה צפוי ליצור איתך קשר בתוך 48 שעות לצורך המשך הטיפול." : null;
+    return {subject, text: `שלום ${values.advisorFirstName},\nחברת ${values.companyName} ${state}\n${contactWindow ?? ""}\n${values.contact ?? ""}\n${values.url}`, html: shell(`<p>שלום ${escapeHtml(values.advisorFirstName)},</p><p>חברת ${escapeHtml(values.companyName)} ${escapeHtml(state)}</p>${contactWindow ? `<p>${escapeHtml(contactWindow)}</p>` : ""}${values.contact ? `<p>${escapeHtml(values.contact)}</p>` : ""}${button("מעבר לסטטוס החברות בתיק", values.url)}`)};
   },
   advisorDeliveryFailure(values: {advisorFirstName: string; companyName: string; publicCaseNumber: string; url: string}): DeliveryEmailContent {
     const subject = `נדרש טיפול בכשל שליחת תיק | SynCash | תיק ${values.publicCaseNumber}`;

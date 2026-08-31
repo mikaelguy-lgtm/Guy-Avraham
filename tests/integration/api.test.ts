@@ -85,12 +85,12 @@ const completeClientInput = {
   numberOfBorrowers: 2, borrowerRelationship: "MARRIED", borrowerRelationshipOther: null,
   household: {numberOfChildren: 2, childrenAges: [4, 8]},
   borrowers: [
-    {order: 1, isPrimary: true, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", phone: "0501234567", email: "dana@example.com", city: "תל אביב", streetAddress: "רחוב הדוגמה 1", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SALARIED", employerName: "חברה בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6, selfEmployed: null}, income: {monthlyNetIncome: 20_000, additionalIncomes: [{type: "RENTAL_INCOME", monthlyAmount: 2_500, description: null}, {type: "SALARIED", monthlyAmount: 0, description: null}]}, liabilities: []},
-    {order: 2, isPrimary: false, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", phone: "0501234568", email: "noam@example.com", city: "תל אביב", streetAddress: "רחוב הדוגמה 1", maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SELF_EMPLOYED", employerName: "", jobTitle: "", employmentSeniorityYears: 0, selfEmployed: {businessType: "עסק", businessStartYear: 2018, lastAssessedIncome: 150_000, assessmentYear: 2025, accountantIncomePreviousYear: 140_000, accountantIncomeCurrentYear: 160_000, accountantMonthsCount: 12}}, income: {monthlyNetIncome: 15_000, additionalIncomes: []}, liabilities: []}
+    {order: 1, isPrimary: true, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", phone: "0501234567", email: "dana@example.com", city: "תל אביב", streetAddress: "רחוב הדוגמה 1", housingStatus: "OWNED", housingStatusOther: null, maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SALARIED", employerName: "חברה בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6, selfEmployed: null}, income: {monthlyNetIncome: 20_000, additionalIncomes: [{type: "RENTAL_INCOME", monthlyAmount: 2_500, description: null}, {type: "SALARIED", monthlyAmount: 0, description: null}]}, liabilities: []},
+    {order: 2, isPrimary: false, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", phone: "0501234568", email: "noam@example.com", city: "תל אביב", streetAddress: "רחוב הדוגמה 1", housingStatus: "OWNED", housingStatusOther: null, maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []}, employment: {employmentType: "SELF_EMPLOYED", employerName: "", jobTitle: "", employmentSeniorityYears: 0, selfEmployed: {businessType: "עסק", businessStartYear: 2018, lastAssessedIncome: 150_000, assessmentYear: 2025, accountantIncomePreviousYear: 140_000, accountantIncomeCurrentYear: 160_000, accountantMonthsCount: 12}}, income: {monthlyNetIncome: 15_000, additionalIncomes: []}, liabilities: []}
   ],
   householdLiabilities: [{type: "LOAN", otherTypeDescription: null, financialInstitution: "בנק לדוגמה", currentBalance: 120_000, monthlyPayment: 1_500, endDate: "2035-07-31", notes: "הלוואה בנקאית"}, {type: "MORTGAGE", otherTypeDescription: null, financialInstitution: "בנק למשכנתאות", currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "משכנתה קיימת"}],
   property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", address: "רחוב הנכס 2", value: 2_000_000},
-  loanPurpose: "SECOND_HAND_PURCHASE", loanRequest: {requestedAmount: 1_250_000},
+  loanPurpose: "SECOND_HAND_PURCHASE", loanPurposeOther: null, loanRequest: {requestedAmount: 1_250_000},
   dealDetails: "תיק מלא לבדיקה", status: "ACTIVE"
 };
 
@@ -443,7 +443,7 @@ describe("complete nested client create and update", () => {
     ["nonnegative additional income amount", {borrowers: [{...completeClientInput.borrowers[0], income: {...completeClientInput.borrowers[0].income, additionalIncomes: [{type: "SALARIED", monthlyAmount: -1, description: null}]}}, completeClientInput.borrowers[1]]}, "borrowers.0.income.additionalIncomes.0.monthlyAmount"],
     ["liability balance", {householdLiabilities: [{...completeClientInput.householdLiabilities[0], currentBalance: undefined}, completeClientInput.householdLiabilities[1]]}, "householdLiabilities.0.currentBalance"],
     ["liability monthly payment", {householdLiabilities: [{...completeClientInput.householdLiabilities[0], monthlyPayment: undefined}, completeClientInput.householdLiabilities[1]]}, "householdLiabilities.0.monthlyPayment"],
-    ["property address", {property: {...completeClientInput.property, address: undefined}}, "property.address"],
+    ["property city", {property: {...completeClientInput.property, city: ""}}, "property.city"],
     ["valid loan purpose", {loanPurpose: "PURCHASE"}, "loanPurpose"]
   ])("rejects a missing or invalid %s with Hebrew field errors", async (_name, change, field) => {
     const response = await request(app()).post("/api/clients").set("authorization", "Bearer advisor")
@@ -470,12 +470,13 @@ describe("focused client updates", () => {
       id: index + 1, order: borrower.order, isPrimary: borrower.isPrimary, firstName: borrower.firstName,
       lastName: borrower.lastName, identityNumber: borrower.identityNumber, dateOfBirth: borrower.dateOfBirth,
       phone: borrower.phone, email: borrower.email, city: borrower.city, streetAddress: borrower.streetAddress,
+      housingStatus: borrower.housingStatus, housingStatusOther: borrower.housingStatusOther,
       maritalStatus: borrower.maritalStatus, children: borrower.children
     }))
   };
   const income = {borrowers: completeClientInput.borrowers.map((borrower, index) => ({id: index + 1, employment: borrower.employment, income: borrower.income}))};
   const liabilities = {borrowerRelationship: "MARRIED", borrowers: [{id: 1, liabilities: []}, {id: 2, liabilities: []}], householdLiabilities: completeClientInput.householdLiabilities};
-  const property = {loanPurpose: completeClientInput.loanPurpose, property: completeClientInput.property, loanRequest: completeClientInput.loanRequest};
+  const property = {loanPurpose: completeClientInput.loanPurpose, loanPurposeOther: completeClientInput.loanPurposeOther, property: completeClientInput.property, loanRequest: completeClientInput.loanRequest};
 
   it.each([
     ["personal", personal, "updateClientPersonal", "CLIENT_PERSONAL_UPDATED"],
@@ -562,10 +563,20 @@ describe("focused client updates", () => {
   it("returns Hebrew field validation errors without calling the store", async () => {
     const updateClientProperty = vi.fn();
     const response = await request(app({updateClientProperty})).patch("/api/clients/1/property").set("authorization", "Bearer advisor")
-      .send({...property, property: {...property.property, address: ""}}).expect(400);
+      .send({...property, property: {...property.property, city: ""}}).expect(400);
     expect(response.body).toEqual(expect.objectContaining({error: "VALIDATION_ERROR", requestId: expect.any(String)}));
-    expect(response.body.fieldErrors["property.address"]).toMatch(/[א-ת]/);
+    expect(response.body.fieldErrors["property.city"]).toMatch(/[א-ת]/);
     expect(updateClientProperty).not.toHaveBeenCalled();
+  });
+
+  it("accepts a blank property address and does not block the property-section update", async () => {
+    const existing = await makeStore().getClient(1);
+    const updateClientProperty = vi.fn().mockResolvedValue(existing);
+    await request(app({updateClientProperty})).patch("/api/clients/1/property").set("authorization", "Bearer advisor")
+      .send({...property, property: {...property.property, address: ""}}).expect(200);
+    expect(updateClientProperty).toHaveBeenCalledOnce();
+    await request(app({updateClientProperty})).patch("/api/clients/1/property").set("authorization", "Bearer advisor")
+      .send({...property, property: {...property.property, address: null}}).expect(200);
   });
 
   it("does not write an audit when the transactional store update fails", async () => {

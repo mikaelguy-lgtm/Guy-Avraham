@@ -7,7 +7,7 @@ import {getDocumentDisplayName} from "../utils/documentDisplay.js";
 import {REQUIRED_BORROWER_DOCUMENT_TYPES, REQUIRED_CLIENT_DOCUMENT_TYPES, currentIsraelYear} from "../domain/clientFields.js";
 import {
   formatAdditionalIncomeType, formatBorrowerRelationship, formatClientStatus, formatCurrency, formatDate, formatDealType,
-  formatEmploymentType, formatLiabilityType, formatMaritalStatus, formatPropertyType
+  formatEmploymentType, formatHousingStatus, formatLiabilityType, formatMaritalStatus, formatPropertyType
 } from "../utils/formatters.js";
 import {snapshotDisplayEntries} from "../utils/snapshotDisplay.js";
 import {loadPdfHebrewFonts, PDF_BOLD_FONT_NAME, PDF_REGULAR_FONT_NAME, PDF_RENDERER_VERSION} from "./pdfFonts.js";
@@ -320,6 +320,16 @@ function primaryIncomeFields(borrower: FullCaseBorrowerSnapshot | MaskedCaseSnap
   ];
 }
 
+function loanPurposeDisplay(loanRequest: {purpose: string; purposeOther: string | null}): string {
+  const label = formatDealType(loanRequest.purpose);
+  return loanRequest.purpose === "OTHER" && loanRequest.purposeOther?.trim() ? `${label} — ${loanRequest.purposeOther.trim()}` : label;
+}
+
+function housingStatusDisplay(borrower: {housingStatus: string; housingStatusOther: string | null}): string {
+  const label = formatHousingStatus(borrower.housingStatus);
+  return borrower.housingStatus === "OTHER" && borrower.housingStatusOther?.trim() ? `${label} — ${borrower.housingStatusOther.trim()}` : label;
+}
+
 function additionalIncomesOf(borrower: FullCaseBorrowerSnapshot | MaskedCaseSnapshot["borrowers"][number]): Array<{type: string; monthlyAmount: number; description: string | null}> {
   return borrower.employment.additionalIncomes ?? (borrower.employment.hasAdditionalIncome && borrower.employment.additionalIncomeType ? [{type: borrower.employment.additionalIncomeType, monthlyAmount: borrower.employment.additionalIncomeAmount, description: borrower.employment.additionalIncomeDescription}] : []);
 }
@@ -402,7 +412,7 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
       {label: "מספר תיק", value: snapshot.publicCaseNumber, ltr: true}, {label: "סטטוס", value: formatClientStatus(snapshot.status ?? "ACTIVE")},
       {label: "מספר לווים", value: snapshot.numberOfBorrowers},
       {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)},
-      {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מטרת ההלוואה", value: formatDealType(snapshot.loanRequest.purpose)}
+      {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מטרת ההלוואה", value: loanPurposeDisplay(snapshot.loanRequest)}
     ], title, subtitle);
 
     // 2. סיכום פיננסי ומשפחתי
@@ -425,7 +435,7 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
     sectionTitle(document, "פרטי לווים מוגבלים", title, subtitle);
     for (const borrower of snapshot.borrowers) {
       const fields: PdfField[] = [
-        {label: "עיר מגורים", value: borrower.residenceCity}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
+        {label: "עיר מגורים", value: borrower.residenceCity}, {label: "סטטוס מגורים", value: housingStatusDisplay(borrower)}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
         {label: "מספר ילדים", value: borrower.numberOfChildren}, {label: "גילאי ילדים", value: borrower.childrenAges.length ? borrower.childrenAges.join(", ") : "אין"}
       ];
       keepTogether(document, 27 + fieldRowsHeight(fields), title, subtitle, () => {
@@ -486,7 +496,7 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     fieldRows(document, [
       {label: "מספר תיק", value: snapshot.publicCaseNumber, ltr: true}, {label: "סטטוס", value: formatClientStatus(snapshot.status ?? "ACTIVE")},
       {label: "מספר לווים", value: snapshot.numberOfBorrowers},
-      {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)}, {label: "מטרת ההלוואה", value: formatDealType(snapshot.loanRequest.purpose)},
+      {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)}, {label: "מטרת ההלוואה", value: loanPurposeDisplay(snapshot.loanRequest)},
       {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)}
     ], title, subtitle);
 
@@ -513,7 +523,7 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
         {label: "שם מלא", value: `${borrower.firstName} ${borrower.lastName}`}, {label: "מספר תעודת זהות", value: borrower.identityNumber, ltr: true},
         {label: "תאריך לידה", value: formatDate(borrower.dateOfBirth)}, {label: "טלפון", value: borrower.phone, ltr: true},
         {label: "דוא״ל", value: borrower.email, ltr: true}, {label: "עיר מגורים", value: borrower.city},
-        {label: "רחוב ומספר בית", value: borrower.streetAddress}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
+        {label: "רחוב ומספר בית", value: borrower.streetAddress}, {label: "סטטוס מגורים", value: housingStatusDisplay(borrower)}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
         {label: "מספר ילדים", value: borrower.numberOfChildren}, {label: "גילאי ילדים", value: borrower.childrenAges.length ? borrower.childrenAges.join(", ") : "אין"}
       ], title, subtitle);
 
@@ -534,9 +544,9 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     sectionTitle(document, "נכס ובקשת מימון", title, subtitle);
     fieldRows(document, [
       {label: "סוג נכס", value: formatPropertyType(snapshot.property.propertyType)}, {label: "עיר", value: snapshot.property.city},
-      {label: "כתובת הנכס", value: snapshot.property.address}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)},
+      {label: "רחוב ומספר בית", value: snapshot.property.address}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)},
       {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "תקופה מבוקשת", value: `${snapshot.loanRequest.requestedTermMonths} חודשים`},
-      {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מטרת ההלוואה", value: formatDealType(snapshot.loanRequest.purpose)}
+      {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מטרת ההלוואה", value: loanPurposeDisplay(snapshot.loanRequest)}
     ], title, subtitle);
 
     // 11. פירוט העסקה

@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { auth } from "../lib/firebase";
 import type { CurrentUser } from "../types";
 import { ApiError, api } from "../utils/apiClient";
-import {emailServerAcceptedMessage, formatIsraelDateTime, maskEmailAddress} from "../utils/formatters";
+import {emailServerAcceptedMessage, formatIsraelDateTime, maskEmailAddress, SPAM_FOLDER_HINT} from "../utils/formatters";
 import {MAX_EMAIL_SEND_ATTEMPTS, useResendCooldown} from "../utils/resendCooldown";
 import SynCashLogo from "./SynCashLogo";
 
@@ -71,8 +71,8 @@ export default function EmailVerificationScreen({onAuthenticated}: {onAuthentica
     <p>לאחר פתיחת קישור האימות, חזור למסך זה ובדוק את סטטוס החשבון.</p>
     {message && <div className="toast success verification-toast" role="status">{message}</div>}
     {error && <div className="toast error verification-toast" role="alert"><strong>{error}</strong>{requestId && <small>מזהה בקשה: {requestId}</small>}</div>}
+    <p className="field-hint">{SPAM_FOLDER_HINT}</p>
     <button className="secondary-action" disabled={busy !== null || !auth.currentUser || resendBlocked} onClick={() => void resend()}><RefreshCw size={17} />{busy === "resend" ? "שולח מייל…" : cooldownSeconds > 0 ? `שליחת המייל מחדש בעוד ${cooldownSeconds} שניות` : "שליחת המייל מחדש"}</button>
-    {sendAttempts >= MAX_EMAIL_SEND_ATTEMPTS && <p className="form-message">אם המייל עדיין לא הגיע, ודא שהכתובת נכונה ובדוק את תיקיית הספאם.</p>}
     <button className="primary-action large" disabled={busy !== null} onClick={() => void check()}>{busy === "check" ? "בודק אימות…" : "בדקתי, כתובת הדוא״ל אומתה"}</button>
     <button className="ghost-action" disabled={busy !== null} onClick={() => void back()}>חזרה למסך הכניסה</button>
   </section></main>;

@@ -57,9 +57,9 @@ export function collectDeliveryBlockers(snapshot: FullCaseSnapshot): DeliveryBlo
   requiredText(snapshot.property.propertyType, "PROPERTY_TYPE_REQUIRED", "חסר סוג נכס", "פרטי הנכס");
   if (snapshot.property.propertyType === "OTHER" && !snapshot.property.propertyTypeOtherDescription?.trim()) addField("PROPERTY_TYPE_DESCRIPTION_REQUIRED", "חסר תיאור סוג הנכס", "יש לתאר את סוג הנכס בפרטי הנכס.");
   requiredText(snapshot.property.city, "PROPERTY_CITY_REQUIRED", "חסרה עיר הנכס", "פרטי הנכס");
-  requiredText(snapshot.property.address, "PROPERTY_ADDRESS_REQUIRED", "חסרה כתובת הנכס", "פרטי הנכס");
   if (!Number.isFinite(snapshot.property.value) || snapshot.property.value <= 0) addField("PROPERTY_VALUE_REQUIRED", "שווי הנכס אינו תקין", "יש להזין שווי נכס גדול מאפס.");
   requiredText(snapshot.loanRequest.purpose, "LOAN_PURPOSE_REQUIRED", "חסרה מטרת הלוואה", "פרטי הנכס");
+  if (snapshot.loanRequest.purpose === "OTHER" && !snapshot.loanRequest.purposeOther?.trim()) addField("LOAN_PURPOSE_DESCRIPTION_REQUIRED", "חסר פירוט מטרת ההלוואה", "יש לתאר את מטרת ההלוואה בפרטי הנכס.");
   if (!Number.isFinite(snapshot.loanRequest.requestedAmount) || snapshot.loanRequest.requestedAmount <= 0) addField("REQUESTED_AMOUNT_REQUIRED", "סכום המימון אינו תקין", "יש להזין סכום מימון גדול מאפס.");
   if (!Number.isInteger(snapshot.loanRequest.requestedTermMonths) || snapshot.loanRequest.requestedTermMonths <= 0) addField("REQUESTED_TERM_REQUIRED", "תקופת ההלוואה אינה תקינה", "יש להזין תקופה תקינה בחודשים.");
   requiredText(snapshot.dealDetails, "DEAL_DETAILS_REQUIRED", "חסר פירוט עסקה", "פירוט העסקה");

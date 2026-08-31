@@ -7,13 +7,13 @@ const snapshot: MaskedCaseSnapshot = {
   publicCaseNumber: "SC-INTEGRATION-HE", status: "ACTIVE", numberOfBorrowers: 1, borrowerRelationship: null,
   household: {numberOfChildren: 0, childrenAges: []},
   borrowers: [{
-    label: "לווה 1", age: 41, residenceCity: "תל אביב", maritalStatus: "MARRIED", numberOfChildren: 0, childrenAges: [],
+    label: "לווה 1", age: 41, residenceCity: "תל אביב", housingStatus: "OWNED", housingStatusOther: null, maritalStatus: "MARRIED", numberOfChildren: 0, childrenAges: [],
     employment: {employmentType: "SALARIED", jobTitle: "מנהלת", employmentSeniorityYears: 6, monthlyNetIncome: 20_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null, selfEmployed: null},
     liabilities: []
   }],
   householdLiabilities: [{scope: "HOUSEHOLD", borrowerOrder: null, type: "MORTGAGE", otherTypeDescription: null, financialInstitution: "בנק למשכנתאות", currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "התחייבות פעילה"}],
   property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", value: 2_000_000},
-  loanRequest: {purpose: "SECOND_HAND_PURCHASE", requestedAmount: 1_000_000, requestedTermMonths: 240, loanToValue: 50},
+  loanRequest: {purpose: "SECOND_HAND_PURCHASE", purposeOther: null, requestedAmount: 1_000_000, requestedTermMonths: 240, loanToValue: 50},
   dealDetails: "רכישה יד שנייה במרכז הארץ", totals: {monthlyIncome: 20_000, liabilityBalance: 400_000, monthlyPayments: 4_000},
   documentStatus: "כל מסמכי החובה קיימים בתיק.",
   creditIndication: {

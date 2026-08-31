@@ -4,10 +4,12 @@ import {
   BORROWER_RELATIONSHIPS,
   DEAL_TYPES,
   EMPLOYMENT_TYPES,
+  HOUSING_STATUSES,
   LIABILITY_TYPES,
   MARITAL_STATUSES,
   MAX_BORROWERS,
   PROPERTY_TYPES,
+  SELECTABLE_ADDITIONAL_INCOME_TYPES,
   SELECTABLE_EMPLOYMENT_TYPES,
   SELECTABLE_MARITAL_STATUSES,
   currentIsraelYear
@@ -32,13 +34,17 @@ const canonicalizeMarriedBorrowers = (value: unknown): unknown => {
   const primaryRecord = primary && typeof primary === "object" ? (primary as Record<string, unknown>) : undefined;
   const primaryCity = primaryRecord?.city;
   const primaryStreetAddress = primaryRecord?.streetAddress;
+  const primaryHousingStatus = primaryRecord?.housingStatus;
+  const primaryHousingStatusOther = primaryRecord?.housingStatusOther;
   return {
     ...input,
     borrowers: input.borrowers.map((borrower, index) => borrower && typeof borrower === "object" ? {
       ...(borrower as Record<string, unknown>),
       maritalStatus: "MARRIED",
       city: index === 0 ? (borrower as Record<string, unknown>).city : primaryCity,
-      streetAddress: index === 0 ? (borrower as Record<string, unknown>).streetAddress : primaryStreetAddress
+      streetAddress: index === 0 ? (borrower as Record<string, unknown>).streetAddress : primaryStreetAddress,
+      housingStatus: index === 0 ? (borrower as Record<string, unknown>).housingStatus : primaryHousingStatus,
+      housingStatusOther: index === 0 ? (borrower as Record<string, unknown>).housingStatusOther : primaryHousingStatusOther
     } : borrower)
   };
 };
@@ -154,6 +160,8 @@ const borrowerSchema = z.object({
   email: z.string({error: "יש להזין כתובת דוא״ל"}).trim().email("יש להזין כתובת דוא״ל תקינה").max(320),
   city: requiredText("יש להזין עיר מגורים", 100),
   streetAddress: requiredText("יש להזין רחוב ומספר בית", 300),
+  housingStatus: z.enum(HOUSING_STATUSES, {error: "יש לבחור סטטוס מגורים"}),
+  housingStatusOther: z.string().trim().max(300, "התיאור ארוך מדי").nullable(),
   maritalStatus: z.enum(MARITAL_STATUSES, {error: "יש לבחור מצב משפחתי"}),
   children: childrenSchema,
   employment: employmentSchema,
@@ -162,6 +170,8 @@ const borrowerSchema = z.object({
 }).strict().superRefine((input, context) => {
   const birthDateError = validateAdultBirthDate(input.dateOfBirth);
   if (birthDateError) context.addIssue({code: "custom", path: ["dateOfBirth"], message: birthDateError});
+  if (input.housingStatus === "OTHER" && !input.housingStatusOther?.trim()) context.addIssue({code: "custom", path: ["housingStatusOther"], message: "יש לפרט את סטטוס המגורים"});
+  if (input.housingStatus !== "OTHER" && input.housingStatusOther !== null) context.addIssue({code: "custom", path: ["housingStatusOther"], message: "אין להזין פירוט כאשר סטטוס המגורים אינו 'אחר'"});
 });
 
 const clientInputObjectSchema = z.object({
@@ -175,16 +185,19 @@ const clientInputObjectSchema = z.object({
     propertyType: z.enum(PROPERTY_TYPES, {error: "יש לבחור סוג נכס"}),
     propertyTypeOtherDescription: z.string().trim().max(500, "התיאור ארוך מדי").nullable(),
     city: requiredText("יש להזין את עיר הנכס", 100),
-    address: requiredText("יש להזין כתובת נכס", 300),
+    address: z.string().trim().max(300, "הכתובת ארוכה מדי").nullable(),
     value: requiredNumber("יש להזין שווי נכס", 100_000_000)
   }).strict(),
   loanPurpose: z.enum(DEAL_TYPES, {error: "יש לבחור מטרת הלוואה"}),
+  loanPurposeOther: z.string().trim().max(300, "התיאור ארוך מדי").nullable(),
   loanRequest: z.object({
     requestedAmount: requiredNumber("יש להזין סכום מימון מבוקש", 100_000_000)
   }).strict(),
   dealDetails: requiredText("יש להזין פירוט עסקה", 5000),
   status: z.literal("ACTIVE").optional().default("ACTIVE")
 }).strict().superRefine((input, context) => {
+  if (input.loanPurpose === "OTHER" && !input.loanPurposeOther?.trim()) context.addIssue({code: "custom", path: ["loanPurposeOther"], message: "יש לפרט את מטרת ההלוואה"});
+  if (input.loanPurpose !== "OTHER" && input.loanPurposeOther !== null) context.addIssue({code: "custom", path: ["loanPurposeOther"], message: "אין להזין פירוט כאשר מטרת ההלוואה אינה 'אחר'"});
   if (input.borrowers.length !== input.numberOfBorrowers) context.addIssue({code: "custom", path: ["borrowers"], message: "מספר הלווים אינו תואם לפרטים שהוזנו"});
   if (input.numberOfBorrowers === 1 && input.borrowerRelationship !== null) context.addIssue({code: "custom", path: ["borrowerRelationship"], message: "אין לבחור קשר בתיק עם לווה יחיד"});
   if (input.numberOfBorrowers > 1 && !input.borrowerRelationship) context.addIssue({code: "custom", path: ["borrowerRelationship"], message: "יש לבחור את הקשר בין הלווים"});
@@ -213,6 +226,9 @@ export const newClientInputSchema = clientInputSchema.superRefine((input, contex
   input.borrowers.forEach((borrower, index) => {
     if (!SELECTABLE_MARITAL_STATUSES.includes(borrower.maritalStatus as never)) context.addIssue({code: "custom", path: ["borrowers", index, "maritalStatus"], message: "מצב משפחתי זה זמין לתיקים היסטוריים בלבד"});
     if (!SELECTABLE_EMPLOYMENT_TYPES.includes(borrower.employment.employmentType as never)) context.addIssue({code: "custom", path: ["borrowers", index, "employment", "employmentType"], message: "סוג תעסוקה זה זמין לתיקים היסטוריים בלבד"});
+    borrower.income.additionalIncomes.forEach((income, incomeIndex) => {
+      if (!SELECTABLE_ADDITIONAL_INCOME_TYPES.includes(income.type as never)) context.addIssue({code: "custom", path: ["borrowers", index, "income", "additionalIncomes", incomeIndex, "type"], message: "סוג הכנסה נוספת זה זמין לתיקים היסטוריים בלבד"});
+    });
   });
 });
 
@@ -230,11 +246,15 @@ const personalBorrowerSchema = z.object({
   email: z.string({error: "יש להזין כתובת דוא״ל"}).trim().email("יש להזין כתובת דוא״ל תקינה").max(320),
   city: requiredText("יש להזין עיר מגורים", 100),
   streetAddress: requiredText("יש להזין רחוב ומספר בית", 300),
+  housingStatus: z.enum(HOUSING_STATUSES, {error: "יש לבחור סטטוס מגורים"}),
+  housingStatusOther: z.string().trim().max(300, "התיאור ארוך מדי").nullable(),
   maritalStatus: z.enum(MARITAL_STATUSES, {error: "יש לבחור מצב משפחתי"}),
   children: childrenSchema
 }).strict().superRefine((input, context) => {
   const birthDateError = validateAdultBirthDate(input.dateOfBirth);
   if (birthDateError) context.addIssue({code: "custom", path: ["dateOfBirth"], message: birthDateError});
+  if (input.housingStatus === "OTHER" && !input.housingStatusOther?.trim()) context.addIssue({code: "custom", path: ["housingStatusOther"], message: "יש לפרט את סטטוס המגורים"});
+  if (input.housingStatus !== "OTHER" && input.housingStatusOther !== null) context.addIssue({code: "custom", path: ["housingStatusOther"], message: "אין להזין פירוט כאשר סטטוס המגורים אינו 'אחר'"});
 });
 
 const clientPersonalInputObjectSchema = z.object({
@@ -283,16 +303,19 @@ export const clientLiabilitiesInputSchema = z.object({
 
 export const clientPropertyInputSchema = z.object({
   loanPurpose: z.enum(DEAL_TYPES, {error: "יש לבחור מטרת הלוואה"}),
+  loanPurposeOther: z.string().trim().max(300, "התיאור ארוך מדי").nullable(),
   property: z.object({
     propertyType: z.enum(PROPERTY_TYPES, {error: "יש לבחור סוג נכס"}),
     propertyTypeOtherDescription: z.string().trim().max(500, "התיאור ארוך מדי").nullable(),
     city: requiredText("יש להזין את עיר הנכס", 100),
-    address: requiredText("יש להזין כתובת נכס", 300),
+    address: z.string().trim().max(300, "הכתובת ארוכה מדי").nullable(),
     value: requiredNumber("יש להזין שווי נכס", 100_000_000)
   }).strict(),
   loanRequest: z.object({requestedAmount: requiredNumber("יש להזין סכום מימון מבוקש", 100_000_000)}).strict()
 }).strict().superRefine((input, context) => {
   if (input.property.propertyType === "OTHER" && !input.property.propertyTypeOtherDescription?.trim()) context.addIssue({code: "custom", path: ["property", "propertyTypeOtherDescription"], message: "יש לתאר את סוג הנכס"});
+  if (input.loanPurpose === "OTHER" && !input.loanPurposeOther?.trim()) context.addIssue({code: "custom", path: ["loanPurposeOther"], message: "יש לפרט את מטרת ההלוואה"});
+  if (input.loanPurpose !== "OTHER" && input.loanPurposeOther !== null) context.addIssue({code: "custom", path: ["loanPurposeOther"], message: "אין להזין פירוט כאשר מטרת ההלוואה אינה 'אחר'"});
 });
 
 export const clientDealDetailsInputSchema = z.object({dealDetails: requiredText("יש להזין פירוט עסקה", 5000)}).strict();

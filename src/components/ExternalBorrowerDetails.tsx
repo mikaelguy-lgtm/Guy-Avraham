@@ -8,6 +8,7 @@ import {
   formatCurrency,
   formatDate,
   formatEmploymentType,
+  formatHousingStatus,
   formatLiabilityType,
   formatMaritalStatus
 } from "../utils/formatters";
@@ -48,6 +49,8 @@ export interface ExternalBorrowerDetailsModel {
   city?: string;
   streetAddress?: string;
   residenceCity?: string;
+  housingStatus?: string | null;
+  housingStatusOther?: string | null;
   maritalStatus?: string;
   numberOfChildren?: number;
   childrenAges?: number[];
@@ -91,6 +94,12 @@ function childrenAges(children: number | undefined, ages: number[] | undefined):
   if (children === 0) return "אין ילדים";
   if (!ages?.length) return missingValue;
   return ages.map((age, index) => `ילד ${index + 1}: ${age}`).join(" · ");
+}
+
+function housingStatusDisplay(borrower: ExternalBorrowerDetailsModel): string {
+  if (!borrower.housingStatus) return missingValue;
+  const label = formatHousingStatus(borrower.housingStatus);
+  return borrower.housingStatus === "OTHER" && borrower.housingStatusOther?.trim() ? `${label} — ${borrower.housingStatusOther.trim()}` : label;
 }
 
 function borrowerName(borrower: ExternalBorrowerDetailsModel): string {
@@ -164,7 +173,9 @@ export function BorrowerPersonalCard({mode, borrower, index, borrowerRelationshi
       {mode === "FULL" && <DetailField label="דוא״ל" value={borrower.email} ltr wide />}
       {mode === "FULL" && <DetailField label="עיר מגורים" value={borrower.city} />}
       {mode === "FULL" && <DetailField label="רחוב ומספר בית" value={borrower.streetAddress} wide />}
+      {mode === "FULL" && <DetailField label="סטטוס מגורים" value={housingStatusDisplay(borrower)} />}
       {mode === "MASKED" && <DetailField label="עיר מגורים" value={borrower.residenceCity} />}
+      {mode === "MASKED" && <DetailField label="סטטוס מגורים" value={housingStatusDisplay(borrower)} />}
     </DetailsSection>
     <DetailsSection icon={<UsersRound />} title="משק בית">
       <DetailField label="קשר בין הלווים" value={formatBorrowerRelationship(borrowerRelationship ?? null)} />
@@ -253,7 +264,9 @@ export function ExternalBorrowerCard({mode, borrower, index, borrowerRelationshi
       {mode === "FULL" && <DetailField label="דוא״ל" value={borrower.email} ltr wide />}
       {mode === "FULL" && <DetailField label="עיר מגורים" value={borrower.city} />}
       {mode === "FULL" && <DetailField label="רחוב ומספר בית" value={borrower.streetAddress} wide />}
+      {mode === "FULL" && <DetailField label="סטטוס מגורים" value={housingStatusDisplay(borrower)} />}
       {mode === "MASKED" && <DetailField label="עיר מגורים" value={borrower.residenceCity} />}
+      {mode === "MASKED" && <DetailField label="סטטוס מגורים" value={housingStatusDisplay(borrower)} />}
     </DetailsSection>
 
     <DetailsSection icon={<UsersRound />} title="משק בית">

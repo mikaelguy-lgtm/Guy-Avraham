@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../utils/apiClient";
+import { SPAM_FOLDER_HINT } from "../utils/formatters";
 import SynCashLogo from "./SynCashLogo";
 
 export default function ForgotPasswordScreen() {
@@ -28,7 +29,7 @@ export default function ForgotPasswordScreen() {
         <p className="auth-hint">הזן את כתובת הדוא״ל המשויכת לחשבון, ונשלח אליך קישור לאיפוס הסיסמה.</p>
         <label>דואר אלקטרוני<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoFocus /></label>
         <button disabled={busy}>{busy ? "שולח…" : "שליחת קישור לאיפוס"}</button>
-      </> : <p className="form-message success" role="status">{message}</p>}
+      </> : <><p className="form-message success" role="status">{message}</p><p className="field-hint">{SPAM_FOLDER_HINT}</p></>}
       <p className="auth-link"><Link to="/login">חזרה למסך הכניסה</Link></p>
     </form>
   </main>;

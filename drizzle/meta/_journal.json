@@ -127,6 +127,13 @@
       "when": 1788108785268,
       "tag": "0017_sleepy_king_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788190118426,
+      "tag": "0018_cute_excalibur",
+      "breakpoints": true
     }
   ]
 }

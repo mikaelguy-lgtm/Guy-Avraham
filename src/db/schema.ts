@@ -158,6 +158,8 @@ export const borrowers = pgTable("borrowers", {
   addressEncrypted: text("address_encrypted"),
   cityEncrypted: text("city_encrypted"),
   streetAddressEncrypted: text("street_address_encrypted"),
+  housingStatus: varchar("housing_status", {length: 20}),
+  housingStatusOtherEncrypted: text("housing_status_other_encrypted"),
   maritalStatus: varchar("marital_status", {length: 30}),
   numberOfChildren: integer("number_of_children").notNull().default(0),
   childrenAges: jsonb("children_ages").$type<number[]>().notNull().default([]),
@@ -169,7 +171,9 @@ export const borrowers = pgTable("borrowers", {
   uniqueIndex("borrowers_client_primary_uq").on(table.clientId).where(sql`${table.isPrimary} = true`),
   check("borrowers_order_check", sql`${table.borrowerOrder} >= 1`),
   check("borrowers_children_count_check", sql`${table.numberOfChildren} >= 0`),
-  check("borrowers_marital_status_check", sql`${table.maritalStatus} is null or ${table.maritalStatus} in ('SINGLE', 'MARRIED', 'DIVORCED', 'WIDOWED', 'COMMON_LAW', 'SEPARATED', 'OTHER')`)
+  check("borrowers_marital_status_check", sql`${table.maritalStatus} is null or ${table.maritalStatus} in ('SINGLE', 'MARRIED', 'DIVORCED', 'WIDOWED', 'COMMON_LAW', 'SEPARATED', 'OTHER')`),
+  check("borrowers_housing_status_check", sql`${table.housingStatus} is null or ${table.housingStatus} in ('OWNED', 'RENTED', 'OTHER')`),
+  check("borrowers_housing_status_other_relevance_check", sql`${table.housingStatus} = 'OTHER' or ${table.housingStatusOtherEncrypted} is null`)
 ]);
 
 export const employmentRecords = pgTable("employment_records", {
@@ -266,12 +270,14 @@ export const loanRequests = pgTable("loan_requests", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull().references(() => clients.id),
   purpose: varchar("purpose", {length: 50}).notNull(),
+  purposeOtherEncrypted: text("purpose_other_encrypted"),
   requestedAmount: numeric("requested_amount", {precision: 14, scale: 2}).notNull(),
   requestedTermMonths: integer("requested_term_months").notNull(),
   loanToValue: numeric("loan_to_value", {precision: 6, scale: 2}).notNull(),
   ...timestamps
 }, (table) => [
-  check("loan_requests_purpose_check", sql`${table.purpose} in ('PURCHASE_FROM_CONTRACTOR', 'BUYER_PRICE_PROGRAM', 'SECOND_HAND_PURCHASE', 'RENOVATION', 'DEBT_CONSOLIDATION', 'BUSINESS_PURPOSE', 'ANY_PURPOSE', 'SELF_CONSTRUCTION', 'FAMILY_TRANSACTION', 'KIBBUTZ_PURCHASE_OR_CONSTRUCTION', 'RECEIVER_PURCHASE', 'REVERSE_MORTGAGE', 'TAMA', 'MORTGAGE_REFINANCE', 'BRIDGE_FINANCING')`),
+  check("loan_requests_purpose_check", sql`${table.purpose} in ('PURCHASE_FROM_CONTRACTOR', 'BUYER_PRICE_PROGRAM', 'SECOND_HAND_PURCHASE', 'RENOVATION', 'DEBT_CONSOLIDATION', 'BUSINESS_PURPOSE', 'ANY_PURPOSE', 'SELF_CONSTRUCTION', 'FAMILY_TRANSACTION', 'KIBBUTZ_PURCHASE_OR_CONSTRUCTION', 'RECEIVER_PURCHASE', 'REVERSE_MORTGAGE', 'TAMA', 'MORTGAGE_REFINANCE', 'BRIDGE_FINANCING', 'OTHER')`),
+  check("loan_requests_purpose_other_relevance_check", sql`${table.purpose} = 'OTHER' or ${table.purposeOtherEncrypted} is null`),
   check("loan_requests_amounts_check", sql`${table.requestedAmount} >= 0 and ${table.requestedTermMonths} > 0 and ${table.loanToValue} >= 0`)
 ]);
 
@@ -547,6 +553,7 @@ export const companySubmissions = pgTable("company_submissions", {
   decisionAt: timestamp("decision_at", {withTimezone: true}),
   fullAccessStartsAt: timestamp("full_access_starts_at", {withTimezone: true}),
   fullAccessExpiresAt: timestamp("full_access_expires_at", {withTimezone: true}),
+  reminderSentAt: timestamp("reminder_sent_at", {withTimezone: true}),
   cancelledAt: timestamp("cancelled_at", {withTimezone: true}),
   cancellationReason: varchar("cancellation_reason", {length: 500}),
   ...timestamps

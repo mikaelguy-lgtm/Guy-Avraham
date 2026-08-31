@@ -129,6 +129,8 @@ export interface ClientBorrower {
   address: string;
   city: string | null;
   streetAddress: string | null;
+  housingStatus: string | null;
+  housingStatusOther: string | null;
   maritalStatus: string;
   children: {numberOfChildren: number; childrenAges: number[]};
   employment: {
@@ -219,10 +221,11 @@ export interface Client {
   additionalIncomeAmount: number;
   additionalIncomeDescription: string | null;
   loanPurpose: string;
+  loanPurposeOther: string | null;
   propertyType: string;
   propertyTypeOtherDescription: string | null;
   propertyCity: string;
-  propertyAddress: string;
+  propertyAddress: string | null;
   propertyValue: number;
   requestedAmount: number;
   financingPercentage: number;
@@ -331,6 +334,7 @@ export interface CompanyResponse {
   accessStatus: string;
   sentAt: string;
   responseDeadlineAt: string;
+  reminderSentAt: string | null;
   decisionAt: string | null;
   fullAccessExpiresAt: string | null;
   contactCount: number;

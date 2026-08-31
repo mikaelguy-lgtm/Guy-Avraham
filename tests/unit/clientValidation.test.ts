@@ -5,6 +5,7 @@ const borrower = {
   order: 1, isPrimary: true,
   firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15",
   phone: "0501234567", email: "dana@example.com", city: "תל אביב", streetAddress: "רחוב הדוגמה 1",
+  housingStatus: "OWNED", housingStatusOther: null,
   maritalStatus: "MARRIED", children: {numberOfChildren: 0, childrenAges: []},
   employment: {employmentType: "SALARIED", employerName: "חברה בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6},
   income: {monthlyNetIncome: 20_000, additionalIncomes: [{type: "RENTAL_INCOME", monthlyAmount: 2_500, description: null}]},
@@ -17,7 +18,7 @@ const completeInput = {
   borrowers: [borrower, {...borrower, order: 2, isPrimary: false, firstName: "נועם", identityNumber: "987654321", email: "noam@example.com"}],
   householdLiabilities: [{type: "MORTGAGE", otherTypeDescription: null, financialInstitution: "בנק לדוגמה", currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "משכנתה קיימת"}],
   property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", address: "רחוב הנכס 2, תל אביב", value: 2_000_000},
-  loanPurpose: "SECOND_HAND_PURCHASE", loanRequest: {requestedAmount: 1_250_000},
+  loanPurpose: "SECOND_HAND_PURCHASE", loanPurposeOther: null, loanRequest: {requestedAmount: 1_250_000},
   dealDetails: "תיק מלא לבדיקה", status: "ACTIVE"
 } as const;
 
@@ -41,7 +42,7 @@ describe("client input validation", () => {
     const invalidBorrower = {...borrower, income: {...borrower.income, additionalIncomes: [{type: null, monthlyAmount: 1000, description: null}]}};
     expect(() => clientInputSchema.parse({...completeInput, borrowers: [invalidBorrower, completeInput.borrowers[1]]})).toThrow(/סוג הכנסה נוספת/);
     const withoutAdditional = {...borrower, income: {monthlyNetIncome: 20_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null}};
-    expect(clientInputSchema.parse({numberOfBorrowers: 1, borrowerRelationship: null, borrowerRelationshipOther: null, household: {numberOfChildren: 0, childrenAges: []}, householdLiabilities: [], borrowers: [{...withoutAdditional, children: {numberOfChildren: 1, childrenAges: [5]}, liabilities: completeInput.householdLiabilities}], property: completeInput.property, loanPurpose: completeInput.loanPurpose, loanRequest: completeInput.loanRequest, dealDetails: completeInput.dealDetails}).borrowers[0].income.additionalIncomes).toEqual([]);
+    expect(clientInputSchema.parse({numberOfBorrowers: 1, borrowerRelationship: null, borrowerRelationshipOther: null, household: {numberOfChildren: 0, childrenAges: []}, householdLiabilities: [], borrowers: [{...withoutAdditional, children: {numberOfChildren: 1, childrenAges: [5]}, liabilities: completeInput.householdLiabilities}], property: completeInput.property, loanPurpose: completeInput.loanPurpose, loanPurposeOther: null, loanRequest: completeInput.loanRequest, dealDetails: completeInput.dealDetails}).borrowers[0].income.additionalIncomes).toEqual([]);
   });
 
   it.each([0, 1, 2, 5])("preserves %i ordered additional incomes", (count) => {
@@ -60,7 +61,7 @@ describe("client input validation", () => {
   });
 
   it("blocks legacy selections only for new clients", () => {
-    const separated = {numberOfBorrowers: 1, borrowerRelationship: null, borrowerRelationshipOther: null, household: {numberOfChildren: 0, childrenAges: []}, householdLiabilities: [], borrowers: [{...borrower, maritalStatus: "SEPARATED" as const, children: {numberOfChildren: 0, childrenAges: []}, liabilities: completeInput.householdLiabilities}], property: completeInput.property, loanPurpose: completeInput.loanPurpose, loanRequest: completeInput.loanRequest, dealDetails: completeInput.dealDetails};
+    const separated = {numberOfBorrowers: 1, borrowerRelationship: null, borrowerRelationshipOther: null, household: {numberOfChildren: 0, childrenAges: []}, householdLiabilities: [], borrowers: [{...borrower, maritalStatus: "SEPARATED" as const, children: {numberOfChildren: 0, childrenAges: []}, liabilities: completeInput.householdLiabilities}], property: completeInput.property, loanPurpose: completeInput.loanPurpose, loanPurposeOther: null, loanRequest: completeInput.loanRequest, dealDetails: completeInput.dealDetails};
     const government = {...completeInput, borrowers: [{...borrower, employment: {...borrower.employment, employmentType: "GOVERNMENT_EMPLOYEE" as const}}, completeInput.borrowers[1]]};
     expect(clientInputSchema.parse(separated).borrowers[0].maritalStatus).toBe("SEPARATED");
     expect(() => newClientInputSchema.parse(separated)).toThrow(/היסטוריים/);
@@ -130,12 +131,15 @@ describe("client input validation", () => {
         ...item,
         maritalStatus: index === 0 ? undefined : "SINGLE",
         city: index === 0 ? "עיר משותפת" : "עיר שנשלחה ידנית",
-        streetAddress: index === 0 ? "רחוב משותף" : "רחוב שנשלח ידנית"
+        streetAddress: index === 0 ? "רחוב משותף" : "רחוב שנשלח ידנית",
+        housingStatus: index === 0 ? "RENTED" : "OWNED",
+        housingStatusOther: null
       }))
     };
     const parsed = clientInputSchema.parse(manipulated);
     expect(parsed.borrowers.map((item) => item.maritalStatus)).toEqual(["MARRIED", "MARRIED"]);
     expect(parsed.borrowers.map((item) => item.city)).toEqual(["עיר משותפת", "עיר משותפת"]);
     expect(parsed.borrowers.map((item) => item.streetAddress)).toEqual(["רחוב משותף", "רחוב משותף"]);
+    expect(parsed.borrowers.map((item) => item.housingStatus)).toEqual(["RENTED", "RENTED"]);
   });
 });

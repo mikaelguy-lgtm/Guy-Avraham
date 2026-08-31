@@ -42,6 +42,7 @@
 .document-check-row { display: grid; grid-template-columns: minmax(220px, 1fr) auto auto; align-items: center; gap: 1rem; padding: .85rem; border-radius: 12px; margin-block-start: .6rem; background: rgba(6, 24, 40, .55); }
 .document-check-row.missing { border: 1px dashed rgba(220, 167, 55, .45); }
 .document-check-row.complete { border: 1px solid rgba(65, 213, 205, .22); }
+.document-check-row.optional { border: 1px dashed var(--border-soft); }
 .document-meta { display: grid; gap: .2rem; color: var(--muted); font-size: .85rem; }
 .missing-documents-list { display: grid; gap: .5rem; margin-block: 1rem; }
 .send-client-modal { max-inline-size: 1100px; max-block-size: 90vh; overflow: auto; }

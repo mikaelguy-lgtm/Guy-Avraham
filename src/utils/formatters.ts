@@ -100,7 +100,7 @@ const labels: Record<string, string> = {
   PHONE: "טלפון",
   EMAIL: "דוא״ל",
   IDENTITY_NUMBER: "מספר תעודת זהות",
-  PROPERTY_ADDRESS: "כתובת הנכס",
+  PROPERTY_ADDRESS: "רחוב ומספר בית",
   EMPLOYER: "מעסיק",
   SPECIFIC_DOCUMENTS: "מסמכים נבחרים",
   FINANCIAL: "מסמך פיננסי",
@@ -133,6 +133,7 @@ const deliveryStatusLabels: Record<string, string> = {PENDING: "ממתין", QUE
 const decisionStatusLabels: Record<string, string> = {PENDING: "ממתינה לתגובה", PENDING_VERIFICATION: "ממתינה לאימות", INTERESTED: "מעוניינת", NOT_INTERESTED: "לא מעוניינת", EXPIRED: "פג תוקף", CANCELLED: "בוטלה"};
 const accessStatusLabels: Record<string, string> = {NONE: "ללא גישה", ACTIVE: "גישה מלאה פעילה", EXPIRED: "הגישה פגה", REVOKED: "הגישה בוטלה"};
 const invitationStatusLabels: Record<string, string> = {QUEUED: "בתור לשליחה", SENT: "נשלח לשרת הדואר", FAILED: "נכשל", OPENED: "נפתח", CLOSED: "נסגר", EXPIRED: "פג תוקף"};
+const housingStatusLabels: Record<string, string> = {OWNED: "דירה בבעלותי", RENTED: "גר/ה בשכירות", OTHER: "אחר"};
 export const legalDocumentTypeLabels: Record<string, string> = {TERMS: "תנאי שימוש", PRIVACY: "מדיניות פרטיות", DPA: "נספח עיבוד מידע (DPA)"};
 const privacyRequestTypeLabels: Record<string, string> = {VIEW: "עיון", CORRECTION: "תיקון", DELETION: "מחיקה", ACCOUNT_CLOSURE: "סגירת חשבון", OTHER: "אחר"};
 const privacyRequestStatusLabels: Record<string, string> = {NEW: "חדשה", IN_REVIEW: "בבדיקה", IDENTITY_VERIFICATION_REQUIRED: "נדרש אימות זהות", APPROVED: "אושרה", REJECTED: "נדחתה", COMPLETED: "הושלמה"};
@@ -155,6 +156,7 @@ export const formatLiabilityType = (value: string) => labels[value] ?? "התחי
 export const formatPropertyType = (value: string) => labels[value] ?? "לא צוין";
 export const formatRegion = (value: string) => labels[value] ?? "לא צוין";
 export const formatMaritalStatus = (value: string) => labels[value] ?? "לא צוין";
+export const formatHousingStatus = (value: string | null) => value ? housingStatusLabels[value] ?? "אחר" : "לא צוין";
 export const formatAdditionalIncomeType = (value: string | null) => value ? labels[value] ?? "אחר" : "לא קיימת";
 export const formatDocumentStatus = (value: string) => labels[value] ?? "בטיפול";
 export const formatDocumentType = (value: string) => labels[value] ?? "מסמך לקוח";
@@ -244,6 +246,8 @@ export function maskEmailAddress(value: string | null | undefined): string {
   const visibleDomain = domainName.slice(0, 1);
   return `${visibleLocal}${"*".repeat(Math.max(2, localPart.length - visibleLocal.length))}@${visibleDomain}${"*".repeat(Math.max(2, domainName.length - visibleDomain.length))}${domainParts.length ? `.${domainParts.join(".")}` : ""}`;
 }
+
+export const SPAM_FOLDER_HINT = "לא קיבלת את המייל? מומלץ לבדוק גם בתיקיית הספאם או בקידומי מכירות.";
 
 export function emailServerAcceptedMessage(recipient: string | null | undefined): string {
   return `המייל נשלח לשרת הדואר עבור הכתובת ${maskEmailAddress(recipient)}.\nאם הוא לא מופיע בתוך כמה דקות, יש לבדוק גם בתיקיות ספאם, דואר זבל וקידומי מכירות.`;

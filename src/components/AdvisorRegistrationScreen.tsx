@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, Eye, EyeOff, ShieldCheck, XCircle } from "lucide-react";
+import { CheckCircle2, Circle, Eye, EyeOff, XCircle } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { advisorRegistrationFormSchema, passwordRequirements, passwordStrength } from "../domain/advisorRegistration";
@@ -124,7 +124,6 @@ export default function AdvisorRegistrationScreen() {
       {serverError && <div className="toast error registration-toast" role="alert"><strong>{serverError}</strong>{requestId && <small>מזהה בקשה: {requestId}</small>}{accountCreated && <button type="button" className="secondary-action" disabled={busy !== null} onClick={() => void retryVerification()}>{busy === "resend" ? "שולח מייל…" : "ניסיון חוזר לשליחת מייל"}</button>}</div>}
       <button className="primary-action large" disabled={busy !== null || accountCreated || !formIsValid}>{busy === "create" ? "יוצר חשבון ושולח מייל…" : "יצירת חשבון"}</button>
       <p className="auth-link">כבר יש לך חשבון? <Link to="/login">כניסה</Link></p>
-      <p className="registration-security"><ShieldCheck size={18} />הסיסמה נשמרת ב-Firebase Authentication בלבד ואינה נשלחת לשרת SynCash.</p>
     </form>
   </main>;
 }

@@ -51,6 +51,8 @@ export interface BorrowerMutationRecord {
   addressEncrypted: string;
   cityEncrypted: string;
   streetAddressEncrypted: string;
+  housingStatus: string;
+  housingStatusOtherEncrypted: string | null;
   maritalStatus: string;
   numberOfChildren: number;
   childrenAges: number[];
@@ -95,6 +97,8 @@ export interface PersonalBorrowerMutationRecord {
   addressEncrypted: string;
   cityEncrypted: string;
   streetAddressEncrypted: string;
+  housingStatus: string;
+  housingStatusOtherEncrypted: string | null;
   maritalStatus: string;
   numberOfChildren: number;
   childrenAges: number[];
@@ -140,10 +144,11 @@ export interface ClientLiabilitiesMutationRecord {
 
 export interface ClientPropertyMutationRecord {
   loanPurpose: string;
+  loanPurposeOtherEncrypted: string | null;
   propertyType: string;
   propertyTypeOtherDescriptionEncrypted: string | null;
   propertyCity: string;
-  propertyAddressEncrypted: string;
+  propertyAddressEncrypted: string | null;
   propertyValue: number;
   requestedAmount: number;
 }
@@ -169,10 +174,11 @@ export interface ClientMutationRecord {
   borrowers: BorrowerMutationRecord[];
   householdLiabilities: LiabilityMutationRecord[];
   loanPurpose: string;
+  loanPurposeOtherEncrypted: string | null;
   propertyType: string;
   propertyTypeOtherDescriptionEncrypted: string | null;
   propertyCity: string;
-  propertyAddressEncrypted: string;
+  propertyAddressEncrypted: string | null;
   propertyValue: number;
   requestedAmount: number;
   status: "ACTIVE";
@@ -226,6 +232,8 @@ export interface BorrowerFinancialDetails {
   addressEncrypted: string | null;
   cityEncrypted: string | null;
   streetAddressEncrypted: string | null;
+  housingStatus: string | null;
+  housingStatusOtherEncrypted: string | null;
   maritalStatus: string | null;
   numberOfChildren: number;
   childrenAges: number[];
@@ -278,6 +286,7 @@ export interface ClientFinancialDetails {
   additionalIncomeDescriptionEncrypted: string | null;
   householdLiabilities: LiabilityFinancialDetails[];
   loanPurpose: string;
+  loanPurposeOtherEncrypted: string | null;
   propertyType: string;
   propertyCity: string;
   propertyAddressEncrypted: string | null;
@@ -649,6 +658,8 @@ export class PostgresStore implements AppStore {
           addressEncrypted: borrowerRecord.addressEncrypted,
           cityEncrypted: borrowerRecord.cityEncrypted,
           streetAddressEncrypted: borrowerRecord.streetAddressEncrypted,
+          housingStatus: borrowerRecord.housingStatus,
+          housingStatusOtherEncrypted: borrowerRecord.housingStatusOtherEncrypted,
           maritalStatus: borrowerRecord.maritalStatus,
           numberOfChildren: borrowerRecord.numberOfChildren,
           childrenAges: borrowerRecord.childrenAges
@@ -695,7 +706,7 @@ export class PostgresStore implements AppStore {
         propertyTypeOtherDescriptionEncrypted: record.propertyTypeOtherDescriptionEncrypted
       });
       await transaction.insert(loanRequests).values({
-        clientId: client.id, purpose: record.loanPurpose, requestedAmount: String(record.requestedAmount),
+        clientId: client.id, purpose: record.loanPurpose, purposeOtherEncrypted: record.loanPurposeOtherEncrypted, requestedAmount: String(record.requestedAmount),
         requestedTermMonths: 1,
         loanToValue: String(record.propertyValue > 0 ? (record.requestedAmount / record.propertyValue) * 100 : 0)
       });
@@ -723,6 +734,8 @@ export class PostgresStore implements AppStore {
       addressEncrypted: borrowers.addressEncrypted,
       cityEncrypted: borrowers.cityEncrypted,
       streetAddressEncrypted: borrowers.streetAddressEncrypted,
+      housingStatus: borrowers.housingStatus,
+      housingStatusOtherEncrypted: borrowers.housingStatusOtherEncrypted,
       maritalStatus: borrowers.maritalStatus,
       numberOfChildren: borrowers.numberOfChildren,
       childrenAges: borrowers.childrenAges,
@@ -812,6 +825,7 @@ export class PostgresStore implements AppStore {
         endDate: row.endDate, notesEncrypted: row.notesEncrypted, legacyStatus: row.legacyStatus
       })),
       loanPurpose: loan.purpose,
+      loanPurposeOtherEncrypted: loan.purposeOtherEncrypted,
       propertyType: property.propertyType,
       propertyCity: property.city ?? "",
       propertyAddressEncrypted: property.addressEncrypted,
@@ -878,6 +892,8 @@ export class PostgresStore implements AppStore {
           addressEncrypted: borrowerRecord.addressEncrypted,
           cityEncrypted: borrowerRecord.cityEncrypted,
           streetAddressEncrypted: borrowerRecord.streetAddressEncrypted,
+          housingStatus: borrowerRecord.housingStatus,
+          housingStatusOtherEncrypted: borrowerRecord.housingStatusOtherEncrypted,
           maritalStatus: borrowerRecord.maritalStatus,
           numberOfChildren: borrowerRecord.numberOfChildren,
           childrenAges: borrowerRecord.childrenAges,
@@ -947,7 +963,7 @@ export class PostgresStore implements AppStore {
         estimatedValue: String(record.propertyValue), existingMortgageBalance: "0", updatedAt: new Date()
       }).where(eq(properties.id, property.id));
       await transaction.update(loanRequests).set({
-        purpose: record.loanPurpose, requestedAmount: String(record.requestedAmount), requestedTermMonths: 1,
+        purpose: record.loanPurpose, purposeOtherEncrypted: record.loanPurposeOtherEncrypted, requestedAmount: String(record.requestedAmount), requestedTermMonths: 1,
         loanToValue: String(record.propertyValue > 0 ? (record.requestedAmount / record.propertyValue) * 100 : 0), updatedAt: new Date()
       }).where(eq(loanRequests.id, loan.id));
       return client;
@@ -1000,7 +1016,8 @@ export class PostgresStore implements AppStore {
           lastNameEncrypted: borrower.lastNameEncrypted, identityNumberEncrypted: borrower.identityNumberEncrypted,
           identityNumberHash: borrower.identityNumberHash, birthDateEncrypted: borrower.birthDateEncrypted,
           birthDate: null, phoneEncrypted: borrower.phoneEncrypted, emailEncrypted: borrower.emailEncrypted,
-          addressEncrypted: borrower.addressEncrypted, cityEncrypted: borrower.cityEncrypted, streetAddressEncrypted: borrower.streetAddressEncrypted, maritalStatus: borrower.maritalStatus,
+          addressEncrypted: borrower.addressEncrypted, cityEncrypted: borrower.cityEncrypted, streetAddressEncrypted: borrower.streetAddressEncrypted,
+          housingStatus: borrower.housingStatus, housingStatusOtherEncrypted: borrower.housingStatusOtherEncrypted, maritalStatus: borrower.maritalStatus,
           numberOfChildren: borrower.numberOfChildren, childrenAges: borrower.childrenAges, updatedAt: new Date()
         }).where(and(eq(borrowers.id, borrower.id), eq(borrowers.clientId, id)));
       }
@@ -1081,7 +1098,7 @@ export class PostgresStore implements AppStore {
         estimatedValue: String(record.propertyValue), updatedAt: new Date()
       }).where(eq(properties.id, property.id));
       await transaction.update(loanRequests).set({
-        purpose: record.loanPurpose, requestedAmount: String(record.requestedAmount),
+        purpose: record.loanPurpose, purposeOtherEncrypted: record.loanPurposeOtherEncrypted, requestedAmount: String(record.requestedAmount),
         loanToValue: String(record.propertyValue > 0 ? (record.requestedAmount / record.propertyValue) * 100 : 0), updatedAt: new Date()
       }).where(eq(loanRequests.id, loan.id));
       const [client] = await transaction.update(clients).set({updatedAt: new Date()}).where(and(eq(clients.id, id), isNull(clients.deletedAt))).returning();

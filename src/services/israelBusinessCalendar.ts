@@ -74,9 +74,8 @@ export class IsraelBusinessCalendarService {
     return atLocalTime(this.addIsraeliBusinessDays(sentAt, businessDays), 18, 0);
   }
 
-  calculateReminderSchedule(_sentAt: Date, deadline: Date): [Date, Date] {
-    const key = dateKey(deadline);
-    return [atLocalTime(key, 9, 0), atLocalTime(key, 15, 0)];
+  calculateReminderSchedule(_sentAt: Date, deadline: Date): Date {
+    return atLocalTime(dateKey(deadline), 9, 0);
   }
 }
 

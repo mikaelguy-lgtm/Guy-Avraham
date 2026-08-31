@@ -30,6 +30,8 @@ export interface FullCaseBorrowerSnapshot {
   city: string;
   streetAddress: string;
   residenceCity: string;
+  housingStatus: string;
+  housingStatusOther: string | null;
   maritalStatus: string;
   numberOfChildren: number;
   childrenAges: number[];
@@ -96,8 +98,8 @@ export interface FullCaseSnapshot {
   household: {numberOfChildren: number; childrenAges: number[]};
   borrowers: FullCaseBorrowerSnapshot[];
   householdLiabilities: FullCaseLiabilitySnapshot[];
-  property: {propertyType: string; propertyTypeOtherDescription: string | null; city: string; address: string; value: number};
-  loanRequest: {purpose: string; requestedAmount: number; requestedTermMonths: number; loanToValue: number};
+  property: {propertyType: string; propertyTypeOtherDescription: string | null; city: string; address: string | null; value: number};
+  loanRequest: {purpose: string; purposeOther: string | null; requestedAmount: number; requestedTermMonths: number; loanToValue: number};
   dealDetails: string;
   totals: {monthlyIncome: number; liabilityBalance: number; monthlyPayments: number};
   advisor: {fullName: string; businessName: string; phone: string; email: string; website: string | null};
@@ -116,6 +118,8 @@ export interface MaskedCaseSnapshot {
     label: string;
     age: number | null;
     residenceCity: string;
+    housingStatus: string;
+    housingStatusOther: string | null;
     maritalStatus: string;
     numberOfChildren: number;
     childrenAges: number[];

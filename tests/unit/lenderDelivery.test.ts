@@ -41,23 +41,23 @@ describe("IsraelBusinessCalendarService", () => {
     expect(israelDateKey(deadline)).toBe("2026-07-29");
   });
 
-  it("keeps 18:00 local through daylight-saving transitions and schedules two reminders", () => {
+  it("keeps 18:00 local through daylight-saving transitions and schedules a single 09:00 reminder", () => {
     const calendar = new IsraelBusinessCalendarService();
     const deadline = calendar.calculateResponseDeadline(new Date("2026-10-22T09:00:00+03:00"));
     expect(localParts(deadline).hour).toBe("18");
-    const [morning, afternoon] = calendar.calculateReminderSchedule(new Date(), deadline);
-    expect(localParts(morning)).toEqual(expect.objectContaining({hour: "09", minute: "00"}));
-    expect(localParts(afternoon)).toEqual(expect.objectContaining({hour: "15", minute: "00"}));
+    const reminder = calendar.calculateReminderSchedule(new Date(), deadline);
+    expect(localParts(reminder)).toEqual(expect.objectContaining({hour: "09", minute: "00"}));
+    expect(israelDateKey(reminder)).toBe(israelDateKey(deadline));
   });
 });
 
 const fullSnapshot: FullCaseSnapshot = {
   publicCaseNumber: "SC-SECURE", sourceClientUpdatedAt: "2026-07-27T00:00:00.000Z", numberOfBorrowers: 2, borrowerRelationship: "MARRIED", household: {numberOfChildren: 2, childrenAges: [4, 8]},
   borrowers: [
-    {order: 1, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", age: 41, phone: "0501234567", email: "dana@example.com", address: "רחוב סודי 1, תל אביב", city: "תל אביב", streetAddress: "רחוב סודי 1", residenceCity: "תל אביב", maritalStatus: "MARRIED", numberOfChildren: 2, childrenAges: [4, 8], employment: {employmentType: "SALARIED", employerName: "חברה סודית בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6, monthlyNetIncome: 20_000, hasAdditionalIncome: true, additionalIncomeType: "RENTAL_INCOME", additionalIncomeAmount: 2_500, additionalIncomeDescription: "דירה של דנה", additionalIncomes: [{type: "RENTAL_INCOME", monthlyAmount: 2_500, description: "דירה של דנה"}], selfEmployed: null}, liabilities: [{scope: "BORROWER", borrowerOrder: 1, type: "LOAN", otherTypeDescription: null, financialInstitution: "בנק לדוגמה", currentBalance: 100_000, monthlyPayment: 1_500, endDate: "2030-01-01", notes: "הלוואה של דנה 0501234567"}]},
-    {order: 2, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", age: 38, phone: "0507654321", email: "noam@example.com", address: "רחוב סודי 1, תל אביב", city: "תל אביב", streetAddress: "רחוב סודי 1", residenceCity: "תל אביב", maritalStatus: "MARRIED", numberOfChildren: 2, childrenAges: [4, 8], employment: {employmentType: "SELF_EMPLOYED", employerName: "", jobTitle: "", employmentSeniorityYears: 0, monthlyNetIncome: 15_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null, selfEmployed: {businessType: "עסק נועם", businessStartYear: 2018, lastAssessedIncome: 180_000, assessmentYear: 2025, accountantIncomePreviousYear: 170_000, accountantIncomeCurrentYear: 190_000, accountantMonthsCount: 12}}, liabilities: []}
+    {order: 1, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", age: 41, phone: "0501234567", email: "dana@example.com", address: "רחוב סודי 1, תל אביב", city: "תל אביב", streetAddress: "רחוב סודי 1", residenceCity: "תל אביב", housingStatus: "OWNED", housingStatusOther: null, maritalStatus: "MARRIED", numberOfChildren: 2, childrenAges: [4, 8], employment: {employmentType: "SALARIED", employerName: "חברה סודית בע״מ", jobTitle: "מנהלת", employmentSeniorityYears: 6, monthlyNetIncome: 20_000, hasAdditionalIncome: true, additionalIncomeType: "RENTAL_INCOME", additionalIncomeAmount: 2_500, additionalIncomeDescription: "דירה של דנה", additionalIncomes: [{type: "RENTAL_INCOME", monthlyAmount: 2_500, description: "דירה של דנה"}], selfEmployed: null}, liabilities: [{scope: "BORROWER", borrowerOrder: 1, type: "LOAN", otherTypeDescription: null, financialInstitution: "בנק לדוגמה", currentBalance: 100_000, monthlyPayment: 1_500, endDate: "2030-01-01", notes: "הלוואה של דנה 0501234567"}]},
+    {order: 2, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", age: 38, phone: "0507654321", email: "noam@example.com", address: "רחוב סודי 1, תל אביב", city: "תל אביב", streetAddress: "רחוב סודי 1", residenceCity: "תל אביב", housingStatus: "OWNED", housingStatusOther: null, maritalStatus: "MARRIED", numberOfChildren: 2, childrenAges: [4, 8], employment: {employmentType: "SELF_EMPLOYED", employerName: "", jobTitle: "", employmentSeniorityYears: 0, monthlyNetIncome: 15_000, hasAdditionalIncome: false, additionalIncomeType: null, additionalIncomeAmount: 0, additionalIncomeDescription: null, selfEmployed: {businessType: "עסק נועם", businessStartYear: 2018, lastAssessedIncome: 180_000, assessmentYear: 2025, accountantIncomePreviousYear: 170_000, accountantIncomeCurrentYear: 190_000, accountantMonthsCount: 12}}, liabilities: []}
   ],
-  householdLiabilities: [], property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", address: "רחוב הנכס 9, תל אביב", value: 2_000_000}, loanRequest: {purpose: "SECOND_HAND_PURCHASE", requestedAmount: 1_250_000, requestedTermMonths: 240, loanToValue: 62.5}, dealDetails: "דנה לוי מבקשת מימון. dana@example.com, 123456789, רחוב הנכס 9, תל אביב, חברה סודית בע״מ", totals: {monthlyIncome: 37_500, liabilityBalance: 100_000, monthlyPayments: 1_500}, advisor: {fullName: "יועץ פרטי", businessName: "ייעוץ פרטי", phone: "0500000000", email: "advisor@example.com", website: null}, documents: [], creditIndication: null
+  householdLiabilities: [], property: {propertyType: "APARTMENT", propertyTypeOtherDescription: null, city: "תל אביב", address: "רחוב הנכס 9, תל אביב", value: 2_000_000}, loanRequest: {purpose: "SECOND_HAND_PURCHASE", purposeOther: null, requestedAmount: 1_250_000, requestedTermMonths: 240, loanToValue: 62.5}, dealDetails: "דנה לוי מבקשת מימון. dana@example.com, 123456789, רחוב הנכס 9, תל אביב, חברה סודית בע״מ", totals: {monthlyIncome: 37_500, liabilityBalance: 100_000, monthlyPayments: 1_500}, advisor: {fullName: "יועץ פרטי", businessName: "ייעוץ פרטי", phone: "0500000000", email: "advisor@example.com", website: null}, documents: [], creditIndication: null
 };
 
 describe("CaseRedactionService", () => {
@@ -112,17 +112,24 @@ describe("delivery preflight", () => {
 
   it("returns every missing required document in one response", () => {
     const blockers = collect(fullSnapshot);
-    expect(blockers.filter((item) => item.category === "DOCUMENT")).toHaveLength(10);
+    expect(blockers.filter((item) => item.category === "DOCUMENT")).toHaveLength(9);
     expect(blockers.map((item) => item.label)).toEqual(expect.arrayContaining([expect.stringContaining("תעודת זהות — צד אחורי"), expect.stringContaining("כתב הסמכה")]));
   });
 
   it("returns field blockers together instead of failing on the first field", () => {
     const snapshot = structuredClone(fullSnapshot);
     snapshot.dealDetails = "";
-    snapshot.property.address = "";
     snapshot.borrowers[0].employment.employerName = "";
     const blockers = collect(snapshot);
-    expect(blockers.map((item) => item.code)).toEqual(expect.arrayContaining(["DEAL_DETAILS_REQUIRED", "PROPERTY_ADDRESS_REQUIRED", "BORROWER_1_EMPLOYER"]));
+    expect(blockers.map((item) => item.code)).toEqual(expect.arrayContaining(["DEAL_DETAILS_REQUIRED", "BORROWER_1_EMPLOYER"]));
+  });
+
+  it("does not block delivery on a blank property address", () => {
+    const snapshot = structuredClone(fullSnapshot);
+    snapshot.property.address = "";
+    expect(collect(snapshot).map((item) => item.code)).not.toContain("PROPERTY_ADDRESS_REQUIRED");
+    snapshot.property.address = null;
+    expect(collect(snapshot).map((item) => item.code)).not.toContain("PROPERTY_ADDRESS_REQUIRED");
   });
 
   it("allows a complete case with all required documents", () => {
