@@ -179,7 +179,7 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     const preview = await previewResponse.json() as {maskedPdfBase64: string; pdfRendererVersion: number; pdfFontFingerprint: string; pdfGeneratedAt: string; pdfContentHash: string};
     const previewBody = JSON.stringify(preview);
     for (const pii of ["בדיקת", "מסירה", "123456782", "0501234567", "delivery-client@syncash.local", "רחוב סודי", "מעסיק סודי"]) expect(previewBody).not.toContain(pii);
-    expect(preview.pdfRendererVersion).toBe(6); expect(preview.pdfFontFingerprint).toMatch(/^[a-f0-9]{64}$/); expect(preview.pdfContentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(preview.pdfRendererVersion).toBe(7); expect(preview.pdfFontFingerprint).toMatch(/^[a-f0-9]{64}$/); expect(preview.pdfContentHash).toMatch(/^[a-f0-9]{64}$/);
     previewPdf = Buffer.from(preview.maskedPdfBase64, "base64");
     await mkdir(pdfProofDirectory, {recursive: true}); await writeFile(`${pdfProofDirectory}/masked-from-docker-endpoint.pdf`, previewPdf);
     expect(previewPdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
@@ -237,7 +237,7 @@ test("advisor-to-company delivery uses one OTP and a persistent seven-day portal
     expect(persistedMaskedPdf).toEqual(previewPdf);
     expectHealthyHebrewPdf(await extractPdf(persistedMaskedPdf), "masked");
     const regeneratedObject = await s3.send(new GetObjectCommand({Bucket: process.env.S3_BUCKET, Key: maskedObject!.Key}));
-    expect(regeneratedObject.Metadata?.["renderer-version"]).toBe("6"); expect(regeneratedObject.Metadata?.["font-fingerprint"]).toMatch(/^[a-f0-9]{64}$/); expect(regeneratedObject.Metadata?.["content-hash"]).toMatch(/^[a-f0-9]{64}$/);
+    expect(regeneratedObject.Metadata?.["renderer-version"]).toBe("7"); expect(regeneratedObject.Metadata?.["font-fingerprint"]).toMatch(/^[a-f0-9]{64}$/); expect(regeneratedObject.Metadata?.["content-hash"]).toMatch(/^[a-f0-9]{64}$/);
     const maskedDownloadPromise = reviewPage.waitForEvent("download"); await reviewPage.getByRole("button", {name: "הורדת PDF"}).click();
     const maskedDownload = await maskedDownloadPromise; expect(await downloadedBuffer(maskedDownload)).toEqual(previewPdf);
     expect(maskedDownload.suggestedFilename()).toBe(`SynCash_תיק_מימון_ראשוני_${client.publicCaseNumber}.pdf`);

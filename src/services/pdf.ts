@@ -265,6 +265,49 @@ function sectionWithFields(document: PDFKit.PDFDocument, label: string, fields: 
   });
 }
 
+// A titled section whose entire body is one paragraph, reserved together —
+// paragraph() already computes its own exact height (measureParagraph()),
+// so unlike the row-based grids above there is no "minimum" approximation
+// needed here: the heading and the FULL paragraph either both fit on the
+// current page or both move to the next one.
+function sectionWithParagraph(document: PDFKit.PDFDocument, label: string, text: string, title: string, subtitle: string, tone: "default" | "notice" = "default"): void {
+  const {height} = measureParagraph(document, text);
+  keepTogether(document, SECTION_HEADING_HEIGHT + height + 8, title, subtitle, () => {
+    sectionTitle(document, label, title, subtitle);
+    paragraph(document, text, title, subtitle, tone);
+  });
+}
+
+// One borrower's subHeading()+fieldRows() card, reserved as a single
+// page-break unit — used both standalone (every borrower after the first
+// in a section) and as the "first item" folded into a section heading's
+// own reservation below, so the heading is never left stranded from its
+// first borrower's card.
+function borrowerFieldsCardHeight(fields: PdfField[]): number {
+  return 27 + fieldRowsHeight(fields);
+}
+function drawBorrowerFieldsCard(document: PDFKit.PDFDocument, borrower: {order?: number; firstName?: string; lastName?: string; label?: string; age: number | null}, fields: PdfField[], title: string, subtitle: string): void {
+  keepTogether(document, borrowerFieldsCardHeight(fields), title, subtitle, () => {
+    subHeading(document, borrowerHeading(borrower));
+    fieldRows(document, fields, title, subtitle);
+  });
+}
+
+// A titled section whose body is a list of per-borrower field cards (e.g.
+// "פרטי לווים מוגבלים") — the heading and the FIRST borrower's card are
+// reserved together; every following borrower's card already protects
+// itself via drawBorrowerFieldsCard() and is free to flow normally.
+function sectionWithBorrowerFieldsCards(document: PDFKit.PDFDocument, label: string, items: Array<{borrower: {order?: number; firstName?: string; lastName?: string; label?: string; age: number | null}; fields: PdfField[]}>, title: string, subtitle: string): void {
+  const [first, ...rest] = items;
+  if (!first) { sectionTitle(document, label, title, subtitle); return; }
+  keepTogether(document, SECTION_HEADING_HEIGHT + borrowerFieldsCardHeight(first.fields), title, subtitle, () => {
+    sectionTitle(document, label, title, subtitle);
+    subHeading(document, borrowerHeading(first.borrower));
+    fieldRows(document, first.fields, title, subtitle);
+  });
+  for (const {borrower, fields} of rest) drawBorrowerFieldsCard(document, borrower, fields, title, subtitle);
+}
+
 function fieldRows(document: PDFKit.PDFDocument, fields: PdfField[], title: string, subtitle: string): void {
   for (let index = 0; index < fields.length; index += 2) {
     ensureSpace(document, 55, title, subtitle);
@@ -494,29 +537,32 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
     }
 
     // 4. פרטי לווים מוגבלים
-    sectionTitle(document, "פרטי לווים מוגבלים", title, subtitle);
-    for (const borrower of snapshot.borrowers) {
-      const fields: PdfField[] = [
+    sectionWithBorrowerFieldsCards(document, "פרטי לווים מוגבלים", snapshot.borrowers.map((borrower) => ({
+      borrower,
+      fields: [
         {label: "עיר מגורים", value: borrower.residenceCity}, {label: "סטטוס מגורים", value: housingStatusDisplay(borrower)}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
         {label: "מספר ילדים", value: borrower.numberOfChildren}, {label: "גילאי ילדים", value: borrower.childrenAges.length ? borrower.childrenAges.join(", ") : "אין"}
-      ];
-      keepTogether(document, 27 + fieldRowsHeight(fields), title, subtitle, () => {
-        subHeading(document, borrowerHeading(borrower));
-        fieldRows(document, fields, title, subtitle);
-      });
-    }
+      ]
+    })), title, subtitle);
 
     // 5. הכנסות רלוונטיות לבחינה ראשונית
-    sectionTitle(document, "הכנסות רלוונטיות לבחינה ראשונית", title, subtitle);
-    for (const borrower of snapshot.borrowers) {
-      const fields = primaryIncomeFields(borrower, true);
-      const additionalText = additionalIncomesText(additionalIncomesOf(borrower));
-      const {height: additionalHeight} = measureParagraph(document, additionalText);
-      keepTogether(document, 27 + fieldRowsHeight(fields), title, subtitle, () => {
-        subHeading(document, borrowerHeading(borrower));
-        fieldRows(document, fields, title, subtitle);
+    // The heading is reserved together with the first borrower's income
+    // card (not the additional-incomes paragraph that follows it) — that
+    // paragraph is free to flow to the next page on its own, exactly like
+    // every subsequent borrower's pair already does.
+    const incomeItems = snapshot.borrowers.map((borrower) => ({borrower, fields: primaryIncomeFields(borrower, true), additionalText: additionalIncomesText(additionalIncomesOf(borrower))}));
+    const [firstIncomeItem, ...restIncomeItems] = incomeItems;
+    if (firstIncomeItem) {
+      keepTogether(document, SECTION_HEADING_HEIGHT + borrowerFieldsCardHeight(firstIncomeItem.fields), title, subtitle, () => {
+        sectionTitle(document, "הכנסות רלוונטיות לבחינה ראשונית", title, subtitle);
+        subHeading(document, borrowerHeading(firstIncomeItem.borrower));
+        fieldRows(document, firstIncomeItem.fields, title, subtitle);
       });
-      keepTogether(document, additionalHeight + 8, title, subtitle, () => paragraph(document, additionalText, title, subtitle));
+      keepTogether(document, measureParagraph(document, firstIncomeItem.additionalText).height + 8, title, subtitle, () => paragraph(document, firstIncomeItem.additionalText, title, subtitle));
+    } else sectionTitle(document, "הכנסות רלוונטיות לבחינה ראשונית", title, subtitle);
+    for (const {borrower, fields, additionalText} of restIncomeItems) {
+      drawBorrowerFieldsCard(document, borrower, fields, title, subtitle);
+      keepTogether(document, measureParagraph(document, additionalText).height + 8, title, subtitle, () => paragraph(document, additionalText, title, subtitle));
     }
 
     // 6. התחייבויות
@@ -546,12 +592,10 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
     ], title, subtitle);
 
     // 8. פירוט העסקה
-    sectionTitle(document, "פירוט העסקה", title, subtitle);
-    paragraph(document, snapshot.dealDetails, title, subtitle);
+    sectionWithParagraph(document, "פירוט העסקה", snapshot.dealDetails, title, subtitle);
 
     // 9. סטטוס מסמכי חובה
-    sectionTitle(document, "סטטוס מסמכי חובה", title, subtitle);
-    paragraph(document, snapshot.documentStatus, title, subtitle);
+    sectionWithParagraph(document, "סטטוס מסמכי חובה", snapshot.documentStatus, title, subtitle);
 
     paragraph(document, "מסמך זה מיועד לבחינה ראשונית בלבד. פרטים מזהים מסוימים אינם מוצגים בשלב זה.", title, subtitle, "notice");
     finish(document, metadata.createdAt);
@@ -646,8 +690,7 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     ], title, subtitle);
 
     // 11. פירוט העסקה
-    sectionTitle(document, "פירוט העסקה", title, subtitle);
-    paragraph(document, snapshot.dealDetails, title, subtitle);
+    sectionWithParagraph(document, "פירוט העסקה", snapshot.dealDetails, title, subtitle);
 
     // 12. מסמכי התיק
     const requiredDocuments = documentStatusFields(snapshot.documents, snapshot.borrowers);
@@ -687,8 +730,7 @@ export async function createAnonymousPdf(snapshot: AnonymousSubmissionSnapshot):
   const document = createDocument(`SynCash case ${snapshot.publicCaseNumber}`, createdAt);
   return toBuffer(document, () => {
     drawPageHeader(document, title, subtitle);
-    sectionTitle(document, "תקציר אנונימי", title, subtitle);
-    fieldRows(document, snapshotDisplayEntries(snapshot).map(([label, value]) => ({label, value})), title, subtitle);
+    sectionWithFields(document, "תקציר אנונימי", snapshotDisplayEntries(snapshot).map(([label, value]) => ({label, value})), title, subtitle);
     paragraph(document, "המסמך אינו כולל פרטים המאפשרים לזהות את הלקוח או את היועץ.", title, subtitle, "notice");
     finish(document, createdAt);
   });

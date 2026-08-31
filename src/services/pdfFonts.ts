@@ -14,7 +14,7 @@ const fontkit = require("fontkit") as {
   };
 };
 
-export const PDF_RENDERER_VERSION = 6;
+export const PDF_RENDERER_VERSION = 7;
 export const PDF_REGULAR_FONT_NAME = "SynCashHebrewRegular";
 export const PDF_BOLD_FONT_NAME = "SynCashHebrewBold";
 export const REQUIRED_PDF_HEBREW_CHARACTERS = "אבגדהוזחטיכלמנסעפצקרשתםןץףך₪״׳ \u00a0";
