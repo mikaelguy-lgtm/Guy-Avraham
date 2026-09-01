@@ -1,0 +1,1574 @@
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import cors from "cors";
+import express, { type NextFunction, type Request, type Response } from "express";
+import helmet from "helmet";
+import multer from "multer";
+import { z } from "zod";
+import { allowedOrigins, type AppEnv } from "../config/env.js";
+import { IDENTITY_FIELDS, type IdentityField } from "../domain/types.js";
+import { advisorProfileSchema, advisorRegistrationApiSchema, normalizeEmail } from "../domain/advisorRegistration.js";
+import {
+  clientDealDetailsInputSchema, clientIncomeInputSchema, clientInputSchema, clientLiabilitiesInputSchema,
+  clientPersonalInputSchema, clientPropertyInputSchema, creditIndicationInputSchema, newClientInputSchema,
+  type ClientIncomeInput, type ClientInput, type ClientLiabilitiesInput, type ClientPersonalInput, type ClientPropertyInput, type CreditIndicationInput
+} from "../domain/clientValidation.js";
+import { DOCUMENT_TYPES, REQUIRED_BORROWER_DOCUMENT_TYPES } from "../domain/clientFields.js";
+import { createAuthMiddleware, type TokenVerifier } from "../middleware/auth.js";
+import { createAnonymousPdf } from "../services/pdf.js";
+import { rateLimit, type RateLimitStore } from "../services/rateLimiter.js";
+import { buildAnonymousSubmissionSnapshot } from "../services/snapshot.js";
+import type {
+  AppStore, ClientIncomeMutationRecord, ClientLiabilitiesMutationRecord, ClientMutationRecord,
+  ClientPersonalMutationRecord, ClientPropertyMutationRecord, EmailConfigurationRecord, LiabilityMutationRecord
+} from "../services/store.js";
+import type { StorageService } from "../services/storage.js";
+import { sanitizeEmailError, sanitizeSmtpFailure, type EmailService } from "../services/email.js";
+import { ADVISOR_EMAIL_VERIFICATION_TEMPLATE, EmailVerificationDeliveryError, type EmailVerificationService } from "../services/emailVerification.js";
+import { PasswordResetDeliveryError, type PasswordResetService } from "../services/passwordReset.js";
+import { LEGAL_DOCUMENT_TYPES, legalDocumentDraftSchema, legalDocumentTypeParamSchema } from "../domain/legalDocuments.js";
+import type { LegalDocumentType } from "../domain/legalDocuments.js";
+import { privacyRequestSubmitSchema, privacyRequestUpdateSchema } from "../domain/privacyRequests.js";
+import type { GeminiService } from "../services/gemini.js";
+import { EncryptionService, hashToken } from "../utils/crypto.js";
+import { calculateAge } from "../utils/age.js";
+import type { SecretProvider } from "../utils/secretManager.js";
+import {DeliveryError} from "../domain/lenderDelivery.js";
+import type {LenderDeliveryApplication} from "../services/lenderDelivery.js";
+import type {DeliveryEventBroker} from "../services/deliveryEvents.js";
+import {validateSmtpEndpoint} from "../services/smtpSecurity.js";
+import {maskEmailAddress} from "../utils/formatters.js";
+
+export interface AppServices {
+  env: AppEnv;
+  store: AppStore;
+  verifier: TokenVerifier;
+  encryption: EncryptionService;
+  storage: StorageService;
+  email: EmailService;
+  emailVerification: EmailVerificationService;
+  passwordReset: PasswordResetService;
+  secrets: SecretProvider;
+  limiter: RateLimitStore;
+  gemini: GeminiService;
+  firebaseAccounts: {deleteUser(uid: string): Promise<void>; updateUserEmail(uid: string, newEmail: string): Promise<void>};
+  delivery?: LenderDeliveryApplication;
+  deliveryEvents?: DeliveryEventBroker;
+}
+
+const asyncRoute = (handler: (request: Request, response: Response, next: NextFunction) => Promise<void>) =>
+  (request: Request, response: Response, next: NextFunction): void => { void handler(request, response, next).catch(next); };
+
+function routeParam(request: Request, name: string): string {
+  const value = request.params[name];
+  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+}
+
+const strictInteger = () => z.preprocess((value) => typeof value === "string" && !/^\d+$/.test(value) ? Number.NaN : value, z.coerce.number().int());
+
+const smtpSettingsSchema = z.object({
+  provider: z.enum(["GMAIL", "BREVO", "CUSTOM"]),
+  host: z.string().trim().min(1).max(253),
+  port: strictInteger().pipe(z.number().min(1).max(65_535)),
+  securityMode: z.enum(["NONE", "STARTTLS", "TLS"]),
+  username: z.string().trim().max(320).nullable().optional(),
+  fromEmail: z.string().trim().email().max(320),
+  fromName: z.string().trim().min(1).max(200),
+  replyTo: z.string().trim().email().max(320),
+  baseConfigurationId: strictInteger().pipe(z.number().positive()).optional(),
+  smtpPassword: z.string().max(500).optional()
+}).strict().superRefine((value, context) => {
+  if ((value.provider === "GMAIL" || value.provider === "BREVO") && !value.username) {
+    context.addIssue({code: "custom", path: ["username"], message: "יש להזין שם משתמש SMTP."});
+  }
+  if ((value.provider === "GMAIL" || value.provider === "BREVO") && value.securityMode !== "STARTTLS") {
+    context.addIssue({code: "custom", path: ["securityMode"], message: "הספק שנבחר מחייב STARTTLS."});
+  }
+  if (value.provider === "GMAIL" && value.username && !z.string().email().safeParse(value.username).success) {
+    context.addIssue({code: "custom", path: ["username"], message: "כתובת Gmail אינה תקינה."});
+  }
+});
+
+const smtpTestSchema = z.object({recipientEmail: z.string().trim().email().max(320)}).strict();
+
+function normalizeSmtpPassword(provider: "GMAIL" | "BREVO" | "CUSTOM", value?: string): string | null {
+  if (!value) return null;
+  const normalized = provider === "GMAIL" ? value.replace(/ /g, "") : value.trim();
+  return normalized ? normalized : null;
+}
+
+async function isSecretConfigured(secrets: SecretProvider, name: string | null, version?: string | null): Promise<boolean> {
+  if (!name) return false;
+  try { return await secrets.isConfigured(name, version); }
+  catch { return false; }
+}
+
+function smtpSettingsFromConfiguration(configuration: EmailConfigurationRecord): Record<string, string | null> {
+  return {
+    SMTP_CONFIGURATION_STATUS: configuration.status,
+    SMTP_HOST: configuration.host,
+    SMTP_PORT: String(configuration.port),
+    SMTP_SECURITY_MODE: configuration.securityMode,
+    SMTP_USER: configuration.username,
+    EMAIL_FROM: configuration.fromEmail,
+    EMAIL_FROM_NAME: configuration.fromName,
+    EMAIL_REPLY_TO: configuration.replyTo,
+    SMTP_SECRET_NAME: configuration.secretName,
+    SMTP_SECRET_VERSION: configuration.secretVersion
+  };
+}
+
+function publicEmailConfiguration(configuration: EmailConfigurationRecord, passwordConfigured: boolean) {
+  return {
+    id: configuration.id,
+    provider: configuration.provider,
+    status: configuration.status,
+    host: configuration.host,
+    port: configuration.port,
+    securityMode: configuration.securityMode,
+    username: configuration.username ?? "",
+    fromEmail: configuration.fromEmail,
+    fromName: configuration.fromName,
+    replyTo: configuration.replyTo,
+    passwordConfigured,
+    lastTestedAt: configuration.lastTestedAt?.toISOString() ?? null,
+    lastTestFailureCode: configuration.lastTestFailureCode,
+    activatedAt: configuration.activatedAt?.toISOString() ?? null,
+    updatedAt: configuration.updatedAt.toISOString()
+  };
+}
+
+const advisorStatusSchema = z.object({status: z.enum(["ACTIVE", "SUSPENDED", "DISABLED"]), reason: z.string().trim().max(500).optional()}).strict();
+const archiveAdvisorSchema = z.object({reason: z.string().trim().max(500).optional()}).strict();
+const advisorEmailChangeSchema = z.object({email: z.string().trim().email().max(320)}).strict();
+const companySchema = z.object({name: z.string().trim().min(2).max(200), legalName: z.string().trim().max(250).nullable().optional(), companyNumber: z.string().trim().max(50).nullable().optional(), phone: z.string().trim().max(50).nullable().optional(), address: z.string().trim().max(500).nullable().optional(), website: z.string().trim().url().max(500).nullable().optional(), activityAreas: z.array(z.string().trim().min(1).max(100)).max(30), adminNotes: z.string().trim().max(4000).nullable().optional(), active: z.boolean()}).strict();
+const contactSchema = z.object({firstName: z.string().trim().min(1).max(100), lastName: z.string().trim().min(1).max(100), roleTitle: z.string().trim().min(1).max(150), email: z.string().trim().email().max(320), phone: z.string().trim().max(50).nullable().optional(), isPrimary: z.boolean(), active: z.boolean()}).strict();
+const calendarSchema = z.object({date: z.iso.date(), type: z.enum(["HOLIDAY", "NON_WORKING_DAY", "FORCED_WORKING_DAY"]), title: z.string().trim().min(1).max(200), source: z.string().trim().min(1).max(200)}).strict();
+
+function publicAdvisorAccount(account: Awaited<ReturnType<AppStore["getAdvisorAccount"]>>, encryption: EncryptionService) {
+  if (!account) return null;
+  return {
+    id: account.id, email: account.email, firstName: account.firstName, lastName: account.lastName,
+    phone: account.phoneEncrypted ? encryption.decrypt(account.phoneEncrypted) : "", role: account.role,
+    roleLabel: account.roleLabel, status: account.status, emailVerified: account.emailVerified,
+    advisorId: account.advisorId, lenderId: null, businessName: account.businessName ?? "",
+    businessEmail: account.businessEmail ?? account.email, createdAt: account.createdAt,
+    updatedAt: account.updatedAt, lastLoginAt: account.lastLoginAt, archivedAt: account.deletedAt
+  };
+}
+
+function selfEmployedMutationFields(selfEmployed: {businessType: string; businessStartYear: number; lastAssessedIncome: number; assessmentYear: number; accountantIncomePreviousYear: number; accountantIncomeCurrentYear: number; accountantMonthsCount: number} | null | undefined, encrypt: (value: string) => string) {
+  if (!selfEmployed) return {
+    selfEmployedBusinessTypeEncrypted: null, selfEmployedBusinessStartYear: null, selfEmployedLastAssessedIncome: null,
+    selfEmployedAssessmentYear: null, selfEmployedAccountantIncomePreviousYear: null, selfEmployedAccountantIncomeCurrentYear: null,
+    selfEmployedAccountantMonthsCount: null
+  };
+  return {
+    selfEmployedBusinessTypeEncrypted: encrypt(selfEmployed.businessType), selfEmployedBusinessStartYear: selfEmployed.businessStartYear,
+    selfEmployedLastAssessedIncome: selfEmployed.lastAssessedIncome, selfEmployedAssessmentYear: selfEmployed.assessmentYear,
+    selfEmployedAccountantIncomePreviousYear: selfEmployed.accountantIncomePreviousYear, selfEmployedAccountantIncomeCurrentYear: selfEmployed.accountantIncomeCurrentYear,
+    selfEmployedAccountantMonthsCount: selfEmployed.accountantMonthsCount
+  };
+}
+
+function clientMutationRecord(input: ClientInput, encryption: EncryptionService, updatedByUserId: number): ClientMutationRecord {
+  const encrypt = (value: string) => encryption.encrypt(value);
+  const liabilityRecord = (liability: ClientInput["householdLiabilities"][number]) => ({
+    liabilityType: liability.type,
+    otherTypeDescriptionEncrypted: liability.otherTypeDescription ? encrypt(liability.otherTypeDescription) : null,
+    financialInstitutionEncrypted: liability.financialInstitution ? encrypt(liability.financialInstitution) : null,
+    currentBalance: liability.currentBalance,
+    monthlyPayment: liability.monthlyPayment,
+    endDate: liability.endDate,
+    notesEncrypted: encrypt(liability.notes)
+  });
+  return {
+    dealDetailsEncrypted: encrypt(input.dealDetails),
+    dealDetailsUpdatedByUserId: updatedByUserId,
+    numberOfBorrowers: input.numberOfBorrowers,
+    borrowerRelationship: input.borrowerRelationship,
+    borrowerRelationshipOtherEncrypted: input.borrowerRelationshipOther ? encrypt(input.borrowerRelationshipOther) : null,
+    householdChildrenCount: input.household.numberOfChildren,
+    householdChildrenAges: input.household.childrenAges,
+    borrowers: input.borrowers.map((borrower) => {
+      const firstAdditionalIncome = borrower.income.additionalIncomes[0];
+      return {
+        borrowerOrder: borrower.order,
+        isPrimary: borrower.isPrimary,
+        firstNameEncrypted: encrypt(borrower.firstName),
+        lastNameEncrypted: encrypt(borrower.lastName),
+        fullNameEncrypted: encrypt(`${borrower.firstName} ${borrower.lastName}`),
+        identityNumberEncrypted: encrypt(borrower.identityNumber),
+        identityNumberHash: createHash("sha256").update(borrower.identityNumber.replace(/\D/g, "")).digest("hex"),
+        birthDateEncrypted: encrypt(borrower.dateOfBirth),
+        phoneEncrypted: encrypt(borrower.phone),
+        emailEncrypted: encrypt(borrower.email),
+        addressEncrypted: encrypt(`${borrower.streetAddress}, ${borrower.city}`),
+        cityEncrypted: encrypt(borrower.city),
+        streetAddressEncrypted: encrypt(borrower.streetAddress),
+        housingStatus: borrower.housingStatus,
+        housingStatusOtherEncrypted: borrower.housingStatusOther ? encrypt(borrower.housingStatusOther) : null,
+        maritalStatus: borrower.maritalStatus,
+        numberOfChildren: borrower.children.numberOfChildren,
+        childrenAges: borrower.children.childrenAges,
+        employmentType: borrower.employment.employmentType,
+        employerNameEncrypted: encrypt(borrower.employment.employerName),
+        jobTitle: borrower.employment.jobTitle,
+        employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
+        ...selfEmployedMutationFields(borrower.employment.selfEmployed, encrypt),
+        monthlyNetIncome: borrower.income.monthlyNetIncome,
+        hasAdditionalIncome: borrower.income.additionalIncomes.length > 0,
+        additionalIncomeType: firstAdditionalIncome?.type ?? null,
+        additionalIncomeAmount: firstAdditionalIncome?.monthlyAmount ?? 0,
+        additionalIncomeDescriptionEncrypted: firstAdditionalIncome?.description ? encrypt(firstAdditionalIncome.description) : null,
+        additionalIncomes: borrower.income.additionalIncomes.map((income) => ({sourceType: income.type, monthlyAmount: income.monthlyAmount, descriptionEncrypted: income.description ? encrypt(income.description) : null})),
+        liabilities: borrower.liabilities.map(liabilityRecord)
+      };
+    }),
+    householdLiabilities: input.householdLiabilities.map(liabilityRecord),
+    loanPurpose: input.loanPurpose,
+    loanPurposeOtherEncrypted: input.loanPurposeOther ? encrypt(input.loanPurposeOther) : null,
+    propertyType: input.property.propertyType,
+    propertyTypeOtherDescriptionEncrypted: input.property.propertyTypeOtherDescription ? encrypt(input.property.propertyTypeOtherDescription) : null,
+    propertyCity: input.property.city,
+    propertyAddressEncrypted: input.property.address ? encrypt(input.property.address) : null,
+    propertyValue: input.property.value,
+    requestedAmount: input.loanRequest.requestedAmount,
+    status: "ACTIVE"
+  };
+}
+
+function personalMutationRecord(input: ClientPersonalInput, encryption: EncryptionService): ClientPersonalMutationRecord {
+  const encrypt = (value: string) => encryption.encrypt(value);
+  return {
+    numberOfBorrowers: input.numberOfBorrowers,
+    borrowerRelationship: input.borrowerRelationship,
+    borrowerRelationshipOtherEncrypted: input.borrowerRelationshipOther ? encrypt(input.borrowerRelationshipOther) : null,
+    householdChildrenCount: input.household.numberOfChildren,
+    householdChildrenAges: input.household.childrenAges,
+    borrowers: input.borrowers.map((borrower) => ({
+      id: borrower.id, borrowerOrder: borrower.order, isPrimary: borrower.isPrimary,
+      firstNameEncrypted: encrypt(borrower.firstName), lastNameEncrypted: encrypt(borrower.lastName),
+      fullNameEncrypted: encrypt(`${borrower.firstName} ${borrower.lastName}`),
+      identityNumberEncrypted: encrypt(borrower.identityNumber),
+      identityNumberHash: createHash("sha256").update(borrower.identityNumber.replace(/\D/g, "")).digest("hex"),
+      birthDateEncrypted: encrypt(borrower.dateOfBirth), phoneEncrypted: encrypt(borrower.phone),
+      emailEncrypted: encrypt(borrower.email), addressEncrypted: encrypt(`${borrower.streetAddress}, ${borrower.city}`),
+      cityEncrypted: encrypt(borrower.city), streetAddressEncrypted: encrypt(borrower.streetAddress),
+      housingStatus: borrower.housingStatus, housingStatusOtherEncrypted: borrower.housingStatusOther ? encrypt(borrower.housingStatusOther) : null,
+      maritalStatus: borrower.maritalStatus, numberOfChildren: borrower.children.numberOfChildren,
+      childrenAges: borrower.children.childrenAges
+    }))
+  };
+}
+
+function incomeMutationRecord(input: ClientIncomeInput, encryption: EncryptionService): ClientIncomeMutationRecord {
+  return {borrowers: input.borrowers.map((borrower) => {
+    const firstAdditionalIncome = borrower.income.additionalIncomes[0];
+    return {
+      id: borrower.id, employmentType: borrower.employment.employmentType,
+      employerNameEncrypted: encryption.encrypt(borrower.employment.employerName), jobTitle: borrower.employment.jobTitle,
+      employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
+      ...selfEmployedMutationFields(borrower.employment.selfEmployed, (value) => encryption.encrypt(value)),
+      monthlyNetIncome: borrower.income.monthlyNetIncome, hasAdditionalIncome: borrower.income.additionalIncomes.length > 0,
+      additionalIncomeType: firstAdditionalIncome?.type ?? null, additionalIncomeAmount: firstAdditionalIncome?.monthlyAmount ?? 0,
+      additionalIncomeDescriptionEncrypted: firstAdditionalIncome?.description ? encryption.encrypt(firstAdditionalIncome.description) : null,
+      additionalIncomes: borrower.income.additionalIncomes.map((income) => ({sourceType: income.type, monthlyAmount: income.monthlyAmount, descriptionEncrypted: income.description ? encryption.encrypt(income.description) : null}))
+    };
+  })};
+}
+
+function assertLegacySelectionsUnchanged(input: {borrowers: Array<{id?: number; maritalStatus?: string; employment?: {employmentType?: string}}>}, existing: {borrowers: Array<{id: number; maritalStatus: string; employment: {employmentType: string}}>}) {
+  const legacyMarital = new Set(["SEPARATED"]);
+  const legacyEmployment = new Set(["GOVERNMENT_EMPLOYEE", "SECURITY_FORCES"]);
+  for (const borrower of input.borrowers) {
+    const current = borrower.id ? existing.borrowers.find((item) => item.id === borrower.id) : undefined;
+    if (borrower.maritalStatus && legacyMarital.has(borrower.maritalStatus) && current?.maritalStatus !== borrower.maritalStatus) throw new DeliveryError("LEGACY_MARITAL_STATUS_NOT_SELECTABLE", 400, "מצב משפחתי זה זמין לתיק היסטורי קיים בלבד.");
+    const employmentType = borrower.employment?.employmentType;
+    if (employmentType && legacyEmployment.has(employmentType) && current?.employment.employmentType !== employmentType) throw new DeliveryError("LEGACY_EMPLOYMENT_TYPE_NOT_SELECTABLE", 400, "סוג תעסוקה זה זמין לתיק היסטורי קיים בלבד.");
+  }
+}
+
+function liabilitiesMutationRecord(input: ClientLiabilitiesInput, encryption: EncryptionService): ClientLiabilitiesMutationRecord {
+  const liability = (item: ClientLiabilitiesInput["householdLiabilities"][number]): LiabilityMutationRecord => ({
+    liabilityType: item.type, otherTypeDescriptionEncrypted: item.otherTypeDescription ? encryption.encrypt(item.otherTypeDescription) : null,
+    financialInstitutionEncrypted: item.financialInstitution ? encryption.encrypt(item.financialInstitution) : null,
+    currentBalance: item.currentBalance, monthlyPayment: item.monthlyPayment, endDate: item.endDate,
+    notesEncrypted: encryption.encrypt(item.notes)
+  });
+  return {borrowers: input.borrowers.map((borrower) => ({id: borrower.id, liabilities: borrower.liabilities.map(liability)})), householdLiabilities: input.householdLiabilities.map(liability)};
+}
+
+function propertyMutationRecord(input: ClientPropertyInput, encryption: EncryptionService): ClientPropertyMutationRecord {
+  return {
+    loanPurpose: input.loanPurpose, loanPurposeOtherEncrypted: input.loanPurposeOther ? encryption.encrypt(input.loanPurposeOther) : null,
+    propertyType: input.property.propertyType,
+    propertyTypeOtherDescriptionEncrypted: input.property.propertyTypeOtherDescription ? encryption.encrypt(input.property.propertyTypeOtherDescription) : null,
+    propertyCity: input.property.city, propertyAddressEncrypted: input.property.address ? encryption.encrypt(input.property.address) : null,
+    propertyValue: input.property.value, requestedAmount: input.loanRequest.requestedAmount
+  };
+}
+
+async function publicClient(client: Awaited<ReturnType<AppStore["getClient"]>>, store: AppStore, encryption: EncryptionService) {
+  if (!client) return null;
+  const details = await store.getClientDetails(client.id);
+  const publicBorrowers = (details?.borrowers ?? []).map((borrower) => {
+    const birthDate = borrower.birthDateEncrypted
+      ? encryption.decrypt(borrower.birthDateEncrypted)
+      : borrower.birthDate?.toISOString().slice(0, 10) ?? "";
+    const additionalIncomes = borrower.additionalIncomes?.length ? borrower.additionalIncomes : borrower.hasAdditionalIncome && borrower.additionalIncomeType ? [{id: 0, sortOrder: 1, sourceType: borrower.additionalIncomeType, monthlyAmount: borrower.additionalIncomeAmount, descriptionEncrypted: borrower.additionalIncomeDescriptionEncrypted}] : [];
+    return {
+      id: borrower.id,
+      borrowerOrder: borrower.borrowerOrder,
+      isPrimary: borrower.isPrimary,
+      firstName: borrower.firstNameEncrypted ? encryption.decrypt(borrower.firstNameEncrypted) : "",
+      lastName: borrower.lastNameEncrypted ? encryption.decrypt(borrower.lastNameEncrypted) : "",
+      identityNumber: encryption.decrypt(borrower.identityNumberEncrypted),
+      birthDate,
+      age: birthDate ? calculateAge(birthDate) : null,
+      calculatedAge: birthDate ? calculateAge(birthDate) : null,
+      phone: borrower.phoneEncrypted ? encryption.decrypt(borrower.phoneEncrypted) : "",
+      email: borrower.emailEncrypted ? encryption.decrypt(borrower.emailEncrypted) : "",
+      address: borrower.addressEncrypted ? encryption.decrypt(borrower.addressEncrypted) : "",
+      city: borrower.cityEncrypted ? encryption.decrypt(borrower.cityEncrypted) : null,
+      streetAddress: borrower.streetAddressEncrypted ? encryption.decrypt(borrower.streetAddressEncrypted) : null,
+      housingStatus: borrower.housingStatus,
+      housingStatusOther: borrower.housingStatusOtherEncrypted ? encryption.decrypt(borrower.housingStatusOtherEncrypted) : null,
+      maritalStatus: borrower.maritalStatus ?? "SINGLE",
+      children: {numberOfChildren: borrower.numberOfChildren, childrenAges: borrower.childrenAges},
+      employment: {
+        employmentType: borrower.employmentType,
+        employerName: borrower.employerNameEncrypted ? encryption.decrypt(borrower.employerNameEncrypted) : "",
+        jobTitle: borrower.jobTitle,
+        employmentSeniorityYears: borrower.employmentSeniorityYears,
+        selfEmployed: borrower.employmentType === "SELF_EMPLOYED" ? {
+          businessType: borrower.selfEmployedBusinessTypeEncrypted ? encryption.decrypt(borrower.selfEmployedBusinessTypeEncrypted) : null,
+          businessStartYear: borrower.selfEmployedBusinessStartYear ?? null,
+          lastAssessedIncome: borrower.selfEmployedLastAssessedIncome ?? null,
+          assessmentYear: borrower.selfEmployedAssessmentYear ?? null,
+          accountantIncomePreviousYear: borrower.selfEmployedAccountantIncomePreviousYear ?? null,
+          accountantIncomeCurrentYear: borrower.selfEmployedAccountantIncomeCurrentYear ?? null,
+          accountantMonthsCount: borrower.selfEmployedAccountantMonthsCount ?? null
+        } : null
+      },
+      income: {
+        monthlyNetIncome: borrower.monthlyNetIncome,
+        hasAdditionalIncome: additionalIncomes.length > 0,
+        additionalIncomeType: additionalIncomes[0]?.sourceType ?? null,
+        additionalIncomeAmount: additionalIncomes[0]?.monthlyAmount ?? 0,
+        additionalIncomeDescription: additionalIncomes[0]?.descriptionEncrypted ? encryption.decrypt(additionalIncomes[0].descriptionEncrypted) : null,
+        additionalIncomes: additionalIncomes.map((income) => ({
+          id: income.id || undefined, type: income.sourceType, monthlyAmount: income.monthlyAmount,
+          description: income.descriptionEncrypted ? encryption.decrypt(income.descriptionEncrypted) : null
+        }))
+      },
+      liabilities: borrower.liabilities.map((liability) => ({
+        id: liability.id, scope: liability.scope, type: liability.liabilityType,
+        otherTypeDescription: liability.otherTypeDescriptionEncrypted ? encryption.decrypt(liability.otherTypeDescriptionEncrypted) : null,
+        financialInstitution: liability.financialInstitutionEncrypted ? encryption.decrypt(liability.financialInstitutionEncrypted) : null,
+        currentBalance: liability.currentBalance, monthlyPayment: liability.monthlyPayment, endDate: liability.endDate,
+        notes: liability.notesEncrypted ? encryption.decrypt(liability.notesEncrypted) : "",
+        incompleteLegacy: liability.legacyStatus === "INCOMPLETE_LEGACY"
+      }))
+    };
+  });
+  const primary = publicBorrowers[0];
+  const creditIndication = await store.getCreditIndication(client.id);
+  const missingRequiredDocuments = await store.listMissingRequiredDocuments(client.id);
+  const dealDetailsUpdatedBy = client.dealDetailsUpdatedByUserId ? await store.getUserDisplayName(client.dealDetailsUpdatedByUserId) : null;
+  const totalMonthlyIncome = publicBorrowers.reduce((sum, borrower) => sum + borrower.income.monthlyNetIncome + borrower.income.additionalIncomes.reduce((incomeSum, income) => incomeSum + income.monthlyAmount, 0), 0);
+  const householdLiabilities = (details?.householdLiabilities ?? []).map((liability) => ({
+    id: liability.id, scope: liability.scope, type: liability.liabilityType,
+    otherTypeDescription: liability.otherTypeDescriptionEncrypted ? encryption.decrypt(liability.otherTypeDescriptionEncrypted) : null,
+    financialInstitution: liability.financialInstitutionEncrypted ? encryption.decrypt(liability.financialInstitutionEncrypted) : null,
+    currentBalance: liability.currentBalance, monthlyPayment: liability.monthlyPayment, endDate: liability.endDate,
+    notes: liability.notesEncrypted ? encryption.decrypt(liability.notesEncrypted) : "",
+    incompleteLegacy: liability.legacyStatus === "INCOMPLETE_LEGACY"
+  }));
+  const allLiabilities = [...householdLiabilities, ...publicBorrowers.flatMap((borrower) => borrower.liabilities)];
+  const totalMonthlyPayments = allLiabilities.reduce((sum, liability) => sum + liability.monthlyPayment, 0);
+  const totalLiabilityBalance = allLiabilities.reduce((sum, liability) => sum + (liability.currentBalance ?? 0), 0);
+  return {
+    id: client.id,
+    publicCaseNumber: client.publicCaseNumber,
+    advisorId: client.advisorId,
+    status: client.status,
+    firstName: primary?.firstName ?? encryption.decrypt(client.firstNameEncrypted),
+    lastName: primary?.lastName ?? encryption.decrypt(client.lastNameEncrypted),
+    identityNumber: primary?.identityNumber ?? encryption.decrypt(client.identityNumberEncrypted),
+    phone: primary?.phone ?? encryption.decrypt(client.phoneEncrypted),
+    email: primary?.email ?? encryption.decrypt(client.emailEncrypted),
+    address: primary?.address ?? (client.addressEncrypted ? encryption.decrypt(client.addressEncrypted) : ""),
+    dealDetails: client.dealDetailsEncrypted ? encryption.decrypt(client.dealDetailsEncrypted) : client.notesEncrypted ? encryption.decrypt(client.notesEncrypted) : "",
+    dealDetailsUpdatedAt: client.dealDetailsUpdatedAt,
+    dealDetailsUpdatedBy: dealDetailsUpdatedBy ?? "המערכת",
+    numberOfBorrowers: client.numberOfBorrowers,
+    borrowerRelationship: client.borrowerRelationship,
+    borrowerRelationshipOther: client.borrowerRelationshipOtherEncrypted ? encryption.decrypt(client.borrowerRelationshipOtherEncrypted) : null,
+    household: {numberOfChildren: client.householdChildrenCount, childrenAges: client.householdChildrenAges},
+    borrowers: publicBorrowers,
+    householdLiabilities,
+    creditIndication,
+    maritalStatus: primary?.maritalStatus ?? client.maritalStatus,
+    numberOfChildren: primary?.children.numberOfChildren ?? client.numberOfChildren,
+    childrenAges: primary?.children.childrenAges ?? client.childrenAges,
+    borrowerCount: client.numberOfBorrowers,
+    birthDate: primary?.birthDate ?? "",
+    employmentType: primary?.employment.employmentType ?? "",
+    employerName: primary?.employment.employerName ?? "",
+    jobTitle: primary?.employment.jobTitle ?? "",
+    employmentSeniorityYears: primary?.employment.employmentSeniorityYears ?? 0,
+    monthlyNetIncome: primary?.income.monthlyNetIncome ?? 0,
+    hasAdditionalIncome: primary?.income.hasAdditionalIncome ?? false,
+    additionalIncomeType: primary?.income.additionalIncomeType ?? null,
+    additionalIncomeAmount: primary?.income.additionalIncomeAmount ?? 0,
+    additionalIncomeDescription: primary?.income.additionalIncomeDescription ?? null,
+    loanPurpose: details?.loanPurpose ?? "",
+    loanPurposeOther: details?.loanPurposeOtherEncrypted ? encryption.decrypt(details.loanPurposeOtherEncrypted) : null,
+    propertyType: details?.propertyType ?? "",
+    propertyTypeOtherDescription: details?.propertyTypeOtherDescriptionEncrypted ? encryption.decrypt(details.propertyTypeOtherDescriptionEncrypted) : null,
+    propertyCity: details?.propertyCity ?? "",
+    propertyAddress: details?.propertyAddressEncrypted ? encryption.decrypt(details.propertyAddressEncrypted) : "",
+    propertyValue: details?.propertyValue ?? 0,
+    requestedAmount: details?.requestedAmount ?? 0,
+    financingPercentage: details?.financingPercentage ?? 0,
+    latestSubmissionStatus: details?.latestSubmissionStatus ?? null,
+    totalMonthlyIncome,
+    totalMonthlyPayments,
+    totalLiabilityBalance,
+    activeLiabilityCount: allLiabilities.length,
+    missingRequiredDocuments,
+    missingRequiredDocumentCount: missingRequiredDocuments.length,
+    createdAt: client.createdAt,
+    updatedAt: client.updatedAt
+  };
+}
+
+function snapshotSourceWithAges(source: NonNullable<Awaited<ReturnType<AppStore["getSnapshotSource"]>>>, encryption: EncryptionService) {
+  const borrowerAges = source.borrowerBirthDatesEncrypted.map((encryptedBirthDate, index) => {
+    const birthDate = encryptedBirthDate
+      ? encryption.decrypt(encryptedBirthDate)
+      : source.borrowerBirthDates[index]?.toISOString().slice(0, 10) ?? "";
+    return calculateAge(birthDate);
+  }).filter((age): age is number => age !== null);
+  return {...source, borrowerAges};
+}
+
+function publicDocument(document: Awaited<ReturnType<AppStore["getDocument"]>> | NonNullable<Awaited<ReturnType<AppStore["getDocument"]>>>, encryption: EncryptionService) {
+  if (!document) return null;
+  const {descriptionEncrypted, storageKey: _storageKey, checksumSha256: _checksumSha256, ...safeDocument} = document;
+  void _storageKey; void _checksumSha256;
+  return {...safeDocument, description: descriptionEncrypted ? encryption.decrypt(descriptionEncrypted) : null};
+}
+
+function detectMime(file: Express.Multer.File): string | null {
+  const bytes = file.buffer;
+  if (bytes.subarray(0, 5).toString("ascii") === "%PDF-") return "application/pdf";
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  return null;
+}
+
+function cookieValue(request: Request, name: string): string {
+  const cookies = request.header("cookie")?.split(";") ?? [];
+  for (const cookie of cookies) {
+    const [key, ...value] = cookie.trim().split("=");
+    if (key === name) return decodeURIComponent(value.join("="));
+  }
+  return "";
+}
+
+function valuesEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left); const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+export function createApp(services: AppServices) {
+  const app = express();
+  const auth = createAuthMiddleware(services.store, services.verifier);
+  const requireProductionAccess = (request: Request, response: Response, next: NextFunction): void => {
+    if (services.env.SUPER_ADMIN_ONLY_MODE && request.user?.role !== "SUPER_ADMIN") {
+      response.status(403).json({error: "PRODUCTION_ACCESS_RESTRICTED", message: "הגישה לסביבה זו מוגבלת כעת לסופר אדמין בלבד.", requestId: request.requestId});
+      return;
+    }
+    next();
+  };
+  const requirePublicRegistration = (request: Request, response: Response, next: NextFunction): void => {
+    if (!services.env.PUBLIC_REGISTRATION_ENABLED) {
+      response.status(503).json({error: "PUBLIC_REGISTRATION_DISABLED", message: "ההרשמה הציבורית אינה פעילה כעת.", requestId: request.requestId});
+      return;
+    }
+    next();
+  };
+  const requireExternalPortals = (request: Request, response: Response, next: NextFunction): void => {
+    if (!services.env.EXTERNAL_PORTALS_ENABLED) {
+      response.status(503).json({error: "EXTERNAL_PORTALS_DISABLED", message: "הגישה לפורטלים החיצוניים אינה פעילה כעת.", requestId: request.requestId});
+      return;
+    }
+    next();
+  };
+  const requireEmailDelivery = asyncRoute(async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    if (!await services.email.isDeliveryActive()) {
+      response.status(503).json({error: "EMAIL_DELIVERY_DISABLED", message: "שירות שליחת הדוא״ל אינו פעיל כעת.", requestId: request.requestId});
+      return;
+    }
+    next();
+  });
+  const authenticated = [auth.requireFirebaseAuth, auth.loadDatabaseUser, auth.requireActiveUser, requireProductionAccess];
+  const upload = multer({storage: multer.memoryStorage(), limits: {fileSize: services.env.MAX_UPLOAD_SIZE_MB * 1024 * 1024, files: 1}});
+
+  app.disable("x-powered-by");
+  app.use(helmet());
+  app.use(cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins(services.env).includes(origin)) callback(null, true);
+      else callback(new Error("Origin not allowed"));
+    },
+    credentials: true
+  }));
+  app.use((request, response, next) => {
+    request.requestId = request.header("x-request-id")?.slice(0, 64) || randomUUID();
+    response.setHeader("x-request-id", request.requestId);
+    next();
+  });
+  app.use(express.json({limit: "1mb"}));
+
+  app.get("/api/health", (_request, response) => response.json({status: "ok"}));
+
+  const loginAttemptLimit = services.env.NODE_ENV === "production" ? 10 : 100;
+  app.post("/api/auth/login-attempt", rateLimit(services.limiter, "login-attempt", loginAttemptLimit, 15 * 60), (_request, response) => response.json({allowed: true}));
+
+  app.post("/api/auth/forgot-password", rateLimit(services.limiter, "forgot-password-minute", 2, 60), rateLimit(services.limiter, "forgot-password-hour", 5, 60 * 60), asyncRoute(async (request, response) => {
+    const {email} = z.object({email: z.string().trim().email()}).strict().parse(request.body);
+    const normalized = normalizeEmail(email);
+    const genericMessage = "אם קיים חשבון המשויך לכתובת הזו, נשלח אליך קישור לאיפוס הסיסמה.";
+    // הודעה זהה בכל מקרה (קיים/לא קיים/כשל שליחה) — כדי שלא ניתן יהיה ללמוד
+    // מהתגובה עצמה אם כתובת דוא״ל מסוימת רשומה במערכת.
+    const user = await services.store.findUserByEmail(normalized);
+    if (user && user.deletedAt === null) {
+      try {
+        await services.passwordReset.sendPasswordResetEmail({email: user.email, userId: user.id}, {requestId: request.requestId});
+        await services.store.addAudit(null, "PASSWORD_RESET_REQUESTED", "user", user.id, {source: "self_service"}, request.requestId, request.ip, request.header("user-agent"));
+      } catch {
+        await services.store.addAudit(null, "PASSWORD_RESET_EMAIL_FAILED", "user", user.id, {source: "self_service"}, request.requestId, request.ip, request.header("user-agent"));
+      }
+    } else {
+      await services.store.addAudit(null, "PASSWORD_RESET_REQUESTED_UNKNOWN_EMAIL", "user", null, {}, request.requestId, request.ip, request.header("user-agent"));
+    }
+    response.json({success: true, message: genericMessage});
+  }));
+
+  app.post("/api/auth/register-advisor", requirePublicRegistration, auth.requireFirebaseAuth, rateLimit(services.limiter, "advisor-registration", 5, 60 * 60), asyncRoute(async (request, response) => {
+    await services.store.addAudit(null, "ADVISOR_REGISTRATION_STARTED", "user", null, {source: "self_service"}, request.requestId, request.ip, request.header("user-agent"));
+    const parsed = advisorRegistrationApiSchema.safeParse(request.body);
+    if (!parsed.success) {
+      await services.store.addAudit(null, "ADVISOR_REGISTRATION_FAILED", "user", null, {reason: "VALIDATION_ERROR"}, request.requestId, request.ip, request.header("user-agent"));
+      throw parsed.error;
+    }
+    const identity = request.firebaseIdentity!;
+    const email = normalizeEmail(identity.email ?? "");
+    if (!email || email !== parsed.data.email) {
+      await services.store.addAudit(null, "ADVISOR_REGISTRATION_FAILED", "user", null, {reason: "EMAIL_MISMATCH"}, request.requestId, request.ip, request.header("user-agent"));
+      response.status(400).json({error: "EMAIL_MISMATCH", requestId: request.requestId});
+      return;
+    }
+    if (await services.store.findUserByFirebaseUid(identity.uid) || await services.store.findUserByEmail(email)) {
+      await services.store.addAudit(null, "ADVISOR_REGISTRATION_FAILED", "user", null, {reason: "DUPLICATE_ACCOUNT"}, request.requestId, request.ip, request.header("user-agent"));
+      response.status(409).json({error: "ADVISOR_ALREADY_REGISTERED", message: "כתובת הדוא״ל כבר רשומה במערכת", requestId: request.requestId});
+      return;
+    }
+    let account: Awaited<ReturnType<AppStore["createAdvisorAccount"]>>;
+    try {
+      const encryptedPhone = services.encryption.encrypt(parsed.data.phone);
+      account = await services.store.createAdvisorAccount({
+        firebaseUid: identity.uid, email, firstName: parsed.data.firstName, lastName: parsed.data.lastName,
+        phoneEncrypted: encryptedPhone, businessName: parsed.data.businessName,
+        businessPhoneEncrypted: encryptedPhone, businessEmail: email
+      });
+      await services.store.addAudit(account.id, "ADVISOR_REGISTERED", "user", account.id, {source: "self_service"}, request.requestId, request.ip, request.header("user-agent"));
+      // רושמים אישור רק עבור סוגי מסמכים שיש להם כרגע גרסה פעילה (PUBLISHED) —
+      // אם מדיניות הפרטיות עדיין בטיוטה בלבד, לא נרשם עבורה אישור בדוי.
+      for (const documentType of LEGAL_DOCUMENT_TYPES) {
+        const active = await services.store.getActiveLegalDocumentVersion(documentType);
+        if (active) await services.store.recordLegalDocumentAcceptance(account.id, documentType, active.id, {ip: request.ip, userAgent: request.header("user-agent")});
+      }
+    } catch (error: unknown) {
+      const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+      await services.store.addAudit(null, "ADVISOR_REGISTRATION_FAILED", "user", null, {reason: code === "23505" ? "DUPLICATE_ACCOUNT" : "DATABASE_ERROR"}, request.requestId, request.ip, request.header("user-agent"));
+      if (code === "23505") {
+        response.status(409).json({error: "ADVISOR_ALREADY_REGISTERED", message: "כתובת הדוא״ל כבר רשומה במערכת", requestId: request.requestId});
+        return;
+      }
+      throw error;
+    }
+    try {
+      await services.emailVerification.sendVerificationEmail({
+        firebaseUid: account.firebaseUid,
+        email: account.email,
+        displayName: account.firstName
+      }, {userId: account.id, requestId: request.requestId});
+      await services.store.addAudit(account.id, "EMAIL_VERIFICATION_SENT", "user", account.id, {channel: "smtp", template: ADVISOR_EMAIL_VERIFICATION_TEMPLATE}, request.requestId, request.ip, request.header("user-agent"));
+      response.status(201).json({success: true, verificationEmailSent: true});
+    } catch (error) {
+      const delivery = error instanceof EmailVerificationDeliveryError ? error : new EmailVerificationDeliveryError("VERIFICATION_EMAIL_DELIVERY_FAILED", 502);
+      await services.store.addAudit(account.id, "ADVISOR_VERIFICATION_EMAIL_FAILED", "user", account.id, {errorCode: delivery.code}, request.requestId, request.ip, request.header("user-agent"));
+      response.status(delivery.status).json({
+        error: delivery.code,
+        message: "החשבון נוצר, אך לא הצלחנו לשלוח את מייל האימות. ניתן לנסות לשלוח אותו מחדש.",
+        accountCreated: true,
+        verificationEmailSent: false,
+        requestId: request.requestId
+      });
+    }
+  }));
+
+  app.get("/api/auth/me", auth.requireFirebaseAuth, auth.loadDatabaseUser, asyncRoute(async (request, response) => {
+    let user = request.user!;
+    let activatedAdvisor: Awaited<ReturnType<AppStore["getAdvisorAccount"]>> = null;
+    if (user.role === "ADVISOR" && user.status === "PENDING") {
+      if (!request.firebaseIdentity!.emailVerified) {
+        response.status(403).json({error: "EMAIL_NOT_VERIFIED", message: "כתובת הדוא״ל עדיין לא אומתה", requestId: request.requestId});
+        return;
+      }
+      const activated = await services.store.activateVerifiedAdvisor(user.id);
+      if (!activated) { response.status(409).json({error: "ADVISOR_ACTIVATION_FAILED", requestId: request.requestId}); return; }
+      await services.store.addAudit(user.id, "EMAIL_VERIFIED", "user", user.id, {source: "firebase_token"}, request.requestId, request.ip, request.header("user-agent"));
+      user = activated;
+      activatedAdvisor = activated;
+    }
+    if (user.status !== "ACTIVE" || user.deletedAt !== null) {
+      response.status(403).json({error: "USER_INACTIVE", requestId: request.requestId});
+      return;
+    }
+    if (services.env.SUPER_ADMIN_ONLY_MODE && user.role !== "SUPER_ADMIN") {
+      response.status(403).json({error: "PRODUCTION_ACCESS_RESTRICTED", message: "הגישה לסביבה זו מוגבלת כעת לסופר אדמין בלבד.", requestId: request.requestId});
+      return;
+    }
+    await services.store.recordLogin(user.id);
+    const advisor = user.role === "ADVISOR" ? activatedAdvisor ?? await services.store.getAdvisorAccount(user.id) : null;
+    response.json(advisor ? publicAdvisorAccount(advisor, services.encryption) : {
+      id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName,
+      role: user.role, roleLabel: user.roleLabel, status: user.status, emailVerified: true,
+      advisorId: user.advisorId, lenderId: user.lenderId, phone: "", businessName: ""
+    });
+  }));
+
+  app.post("/api/auth/email-verification/resend", requirePublicRegistration, requireEmailDelivery, auth.requireFirebaseAuth, auth.loadDatabaseUser,
+    rateLimit(services.limiter, "verification-resend-minute", 1, 60), rateLimit(services.limiter, "verification-resend-hour", 5, 60 * 60),
+    asyncRoute(async (request, response) => {
+      const user = request.user!;
+      if (user.role !== "ADVISOR" || user.status !== "PENDING" || user.emailVerified || request.firebaseIdentity!.emailVerified) {
+        response.status(409).json({error: "VERIFICATION_NOT_REQUIRED", requestId: request.requestId}); return;
+      }
+      try {
+        await services.emailVerification.sendVerificationEmail({firebaseUid: user.firebaseUid, email: user.email, displayName: user.firstName}, {userId: user.id, requestId: request.requestId});
+        await services.store.addAudit(user.id, "EMAIL_VERIFICATION_SENT", "user", user.id, {channel: "smtp", template: ADVISOR_EMAIL_VERIFICATION_TEMPLATE}, request.requestId, request.ip, request.header("user-agent"));
+        response.json({success: true, verificationEmailSent: true, lastSentAt: new Date().toISOString()});
+      } catch (error) {
+        const delivery = error instanceof EmailVerificationDeliveryError ? error : new EmailVerificationDeliveryError("VERIFICATION_EMAIL_DELIVERY_FAILED", 502);
+        await services.store.addAudit(user.id, "ADVISOR_VERIFICATION_EMAIL_FAILED", "user", user.id, {errorCode: delivery.code}, request.requestId, request.ip, request.header("user-agent"));
+        response.status(delivery.status).json({error: delivery.code, message: "שליחת מייל האימות נכשלה.", verificationEmailSent: false, requestId: request.requestId});
+      }
+    }));
+
+  app.get("/api/auth/email-verification/status", requirePublicRegistration, auth.requireFirebaseAuth, auth.loadDatabaseUser, asyncRoute(async (request, response) => {
+    const user = request.user!;
+    if (user.role !== "ADVISOR") { response.status(403).json({error: "FORBIDDEN", requestId: request.requestId}); return; }
+    const latest = await services.store.getLatestEmailLog(user.id, ADVISOR_EMAIL_VERIFICATION_TEMPLATE);
+    response.json({
+      email: user.email,
+      emailVerified: user.emailVerified || request.firebaseIdentity!.emailVerified,
+      status: latest?.status ?? "NOT_SENT",
+      lastSentAt: latest?.sentAt?.toISOString() ?? latest?.failedAt?.toISOString() ?? null
+    });
+  }));
+
+  app.get("/api/clients", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), asyncRoute(async (request, response) => {
+    const page = Math.max(1, Number(request.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(request.query.pageSize) || 20));
+    const search = String(request.query.search ?? "").slice(0, 100);
+    const advisorId = request.user!.role === "ADVISOR" ? request.user!.advisorId : null;
+    const result = await services.store.listClients(advisorId, page, pageSize, search);
+    response.json({items: await Promise.all(result.items.map((client) => publicClient(client, services.store, services.encryption))), total: result.total, page, pageSize});
+  }));
+
+  app.post("/api/clients", ...authenticated, auth.requireRole("ADVISOR"), asyncRoute(async (request, response) => {
+    const input = newClientInputSchema.parse(request.body);
+    const advisorId = request.user!.advisorId;
+    if (!advisorId) { response.status(403).json({error: "ADVISOR_PROFILE_REQUIRED"}); return; }
+    const publicCaseNumber = `SC-${randomBytes(8).toString("hex").toUpperCase()}`;
+    const client = await services.store.createClient({
+      publicCaseNumber, advisorId, ...clientMutationRecord(input, services.encryption, request.user!.id)
+    });
+    await services.store.addAudit(request.user!.id, "CLIENT_CREATED", "client", client.id, {publicCaseNumber}, request.requestId, request.ip, request.header("user-agent"));
+    response.status(201).json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.get("/api/clients/:id", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const client = await services.store.getClient(request.authorizedClientId!);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientInputSchema.parse(request.body);
+    const existing = await publicClient(await services.store.getClient(request.authorizedClientId!), services.store, services.encryption);
+    if (!existing) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
+    assertLegacySelectionsUnchanged(input, existing);
+    const client = await services.store.updateClient(request.authorizedClientId!, clientMutationRecord(input, services.encryption, request.user!.id));
+    if (!client) { response.status(400).json({error: "CLIENT_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_FULL_UPDATED", "client", request.authorizedClientId!, {section: "full", fields: ["personal", "income", "liabilities", "property", "dealDetails"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+  app.get("/api/email/status", ...authenticated, asyncRoute(async (_request, response) => {
+    response.json({active: await services.email.isDeliveryActive()});
+  }));
+
+  app.patch("/api/clients/:id/personal", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientPersonalInputSchema.parse(request.body);
+    const existing = await publicClient(await services.store.getClient(request.authorizedClientId!), services.store, services.encryption);
+    if (!existing) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
+    assertLegacySelectionsUnchanged(input, existing);
+    const client = await services.store.updateClientPersonal(request.authorizedClientId!, personalMutationRecord(input, services.encryption));
+    if (!client) { response.status(400).json({error: "CLIENT_PERSONAL_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_PERSONAL_UPDATED", "client", request.authorizedClientId!, {section: "personal", fields: ["borrowers", "relationship", "household"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id/income", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientIncomeInputSchema.parse(request.body);
+    const existing = await publicClient(await services.store.getClient(request.authorizedClientId!), services.store, services.encryption);
+    if (!existing) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
+    assertLegacySelectionsUnchanged(input, existing);
+    const client = await services.store.updateClientIncome(request.authorizedClientId!, incomeMutationRecord(input, services.encryption));
+    if (!client) { response.status(400).json({error: "CLIENT_INCOME_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_INCOME_UPDATED", "client", request.authorizedClientId!, {section: "income", fields: ["employment", "income"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id/liabilities", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientLiabilitiesInputSchema.parse(request.body);
+    const client = await services.store.updateClientLiabilities(request.authorizedClientId!, liabilitiesMutationRecord(input, services.encryption));
+    if (!client) { response.status(400).json({error: "CLIENT_LIABILITIES_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_LIABILITIES_UPDATED", "client", request.authorizedClientId!, {section: "liabilities", fields: ["borrowerLiabilities", "householdLiabilities"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id/credit-indication", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input: CreditIndicationInput = creditIndicationInputSchema.parse(request.body);
+    await services.store.upsertCreditIndication(request.authorizedClientId!, input);
+    await services.store.addAudit(request.user!.id, "CLIENT_CREDIT_INDICATION_UPDATED", "client", request.authorizedClientId!, {section: "credit-indication"}, request.requestId);
+    const client = await services.store.getClient(request.authorizedClientId!);
+    if (!client) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id/property", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientPropertyInputSchema.parse(request.body);
+    const client = await services.store.updateClientProperty(request.authorizedClientId!, propertyMutationRecord(input, services.encryption));
+    if (!client) { response.status(400).json({error: "CLIENT_PROPERTY_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_PROPERTY_UPDATED", "client", request.authorizedClientId!, {section: "property", fields: ["loanPurpose", "property", "loanRequest"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.patch("/api/clients/:id/deal-details", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const input = clientDealDetailsInputSchema.parse(request.body);
+    const client = await services.store.updateClientDealDetails(request.authorizedClientId!, services.encryption.encrypt(input.dealDetails), request.user!.id);
+    if (!client) { response.status(400).json({error: "CLIENT_DEAL_DETAILS_UPDATE_FAILED", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "CLIENT_DEAL_DETAILS_UPDATED", "client", request.authorizedClientId!, {section: "dealDetails", fields: ["dealDetails"]}, request.requestId);
+    response.json(await publicClient(client, services.store, services.encryption));
+  }));
+
+  app.delete("/api/clients/:id", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    await services.store.softDeleteClient(request.authorizedClientId!);
+    await services.store.addAudit(request.user!.id, "CLIENT_DELETED", "client", request.authorizedClientId!, null, request.requestId);
+    response.status(204).end();
+  }));
+
+  app.get("/api/clients/:clientId/documents", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    const documentRows = await services.store.listDocuments(request.authorizedClientId!);
+    response.json(documentRows.map((document) => publicDocument(document, services.encryption)));
+  }));
+
+  app.get("/api/clients/:clientId/documents/requirements", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    response.json({missingDocuments: await services.store.listMissingRequiredDocuments(request.authorizedClientId!)});
+  }));
+
+  app.post("/api/clients/:clientId/documents", ...authenticated, auth.requireAdvisorClientAccess, upload.single("file"), asyncRoute(async (request, response) => {
+    if (!request.file) { response.status(400).json({error: "FILE_REQUIRED"}); return; }
+    const detectedMime = detectMime(request.file);
+    const allowed = ["application/pdf", "image/png", "image/jpeg"];
+    if (!detectedMime || !allowed.includes(request.file.mimetype) || detectedMime !== request.file.mimetype) {
+      response.status(400).json({error: "INVALID_FILE_TYPE"}); return;
+    }
+    const documentInput = z.object({
+      documentType: z.enum(DOCUMENT_TYPES, {error: "יש לבחור סוג מסמך"}),
+      borrowerId: z.preprocess((value) => value === "" || value === undefined ? null : value, z.coerce.number().int().positive().nullable()),
+      customTitle: z.preprocess((value) => value === undefined ? null : value, z.string().trim().max(255).nullable()),
+      description: z.preprocess((value) => value === undefined ? null : value, z.string().trim().max(1000).nullable())
+    }).strict().parse(request.body);
+    const borrowerRequired = REQUIRED_BORROWER_DOCUMENT_TYPES.includes(documentInput.documentType as typeof REQUIRED_BORROWER_DOCUMENT_TYPES[number]);
+    if (borrowerRequired && !documentInput.borrowerId) { response.status(400).json({error: "BORROWER_REQUIRED", message: "יש לבחור לווה למסמך הזיהוי"}); return; }
+    if (!borrowerRequired && documentInput.documentType !== "OTHER" && documentInput.borrowerId) { response.status(400).json({error: "BORROWER_NOT_ALLOWED"}); return; }
+    if (documentInput.documentType === "OTHER" && !documentInput.customTitle) { response.status(400).json({error: "CUSTOM_TITLE_REQUIRED", message: "יש להזין שם או נושא למסמך"}); return; }
+    if (documentInput.borrowerId) {
+      const details = await services.store.getClientDetails(request.authorizedClientId!);
+      if (!details?.borrowers.some((borrower) => borrower.id === documentInput.borrowerId)) { response.status(400).json({error: "INVALID_BORROWER"}); return; }
+    }
+    const storageKey = `clients/${request.authorizedClientId}/${randomUUID()}`;
+    const checksumSha256 = createHash("sha256").update(request.file.buffer).digest("hex");
+    await services.storage.put(storageKey, request.file.buffer, detectedMime, {checksum: checksumSha256});
+    const document = await services.store.createDocument({
+      clientId: request.authorizedClientId!, uploadedByUserId: request.user!.id,
+      borrowerId: documentInput.borrowerId, documentType: documentInput.documentType,
+      customTitle: documentInput.customTitle,
+      descriptionEncrypted: documentInput.description ? services.encryption.encrypt(documentInput.description) : null,
+      originalFileName: request.file.originalname.slice(0, 255), storageKey, mimeType: detectedMime,
+      sizeBytes: request.file.size, checksumSha256
+    });
+    await services.store.addAudit(request.user!.id, "DOCUMENT_UPLOADED", "document", document.id, {clientId: document.clientId, checksumSha256}, request.requestId);
+    response.status(201).json(publicDocument(document, services.encryption));
+  }));
+
+  app.get("/api/documents/:documentId/download", ...authenticated, rateLimit(services.limiter, "document-download", 60, 60), asyncRoute(async (request, response) => {
+    const document = await services.store.getDocument(Number(request.params.documentId));
+    if (!document || document.deletedAt) { response.status(404).json({error: "DOCUMENT_NOT_FOUND"}); return; }
+    const advisorId = await services.store.getClientAdvisorId(document.clientId);
+    const authorized = request.user!.role === "SUPER_ADMIN" || (request.user!.role === "ADVISOR" && request.user!.advisorId === advisorId);
+    if (!authorized) { response.status(403).json({error: "FORBIDDEN"}); return; }
+    const object = await services.storage.get(document.storageKey);
+    await services.store.addAudit(request.user!.id, "DOCUMENT_DOWNLOADED", "document", document.id, {clientId: document.clientId}, request.requestId);
+    response.type(object.contentType).setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(document.originalFileName)}`).send(object.body);
+  }));
+
+  app.delete("/api/documents/:documentId", ...authenticated, asyncRoute(async (request, response) => {
+    const document = await services.store.getDocument(Number(request.params.documentId));
+    if (!document) { response.status(404).json({error: "DOCUMENT_NOT_FOUND"}); return; }
+    const advisorId = await services.store.getClientAdvisorId(document.clientId);
+    if (request.user!.role !== "SUPER_ADMIN" && request.user!.advisorId !== advisorId) { response.status(403).json({error: "FORBIDDEN"}); return; }
+    await services.store.softDeleteDocument(document.id);
+    await services.store.addAudit(request.user!.id, "DOCUMENT_DELETED", "document", document.id, {clientId: document.clientId}, request.requestId);
+    response.status(204).end();
+  }));
+
+  app.get("/api/lenders", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), asyncRoute(async (_request, response) => {
+    response.json(await services.store.listLenders());
+  }));
+
+  app.get("/api/clients/:clientId/submissions", ...authenticated, auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    response.json(await services.store.listClientSubmissions(request.authorizedClientId!));
+  }));
+
+  app.post("/api/clients/:clientId/submissions", ...authenticated, auth.requireAdvisorClientAccess, requireEmailDelivery, asyncRoute(async (request, response) => {
+    const input = z.object({lenderIds: z.array(z.number().int().positive()).min(1).max(20)}).parse(request.body);
+    if (await services.store.hasIncompleteLegacyLiabilities(request.authorizedClientId!)) {
+      response.status(422).json({
+        error: "INCOMPLETE_LEGACY_LIABILITIES",
+        code: "INCOMPLETE_LEGACY_LIABILITIES",
+        message: "נדרש להשלים את פרטי ההתחייבויות שהועברו מהמערכת הישנה לפני שליחת התיק.",
+        requestId: request.requestId
+      });
+      return;
+    }
+    const missingDocuments = await services.store.listMissingRequiredDocuments(request.authorizedClientId!);
+    if (missingDocuments.length > 0) {
+      response.status(422).json({error: "MISSING_REQUIRED_DOCUMENTS", code: "MISSING_REQUIRED_DOCUMENTS", missingDocuments, requestId: request.requestId});
+      return;
+    }
+    const available = new Map((await services.store.listLenders()).map((lender) => [lender.id, lender]));
+    const source = await services.store.getSnapshotSource(request.authorizedClientId!);
+    if (!source) { response.status(409).json({error: "CLIENT_FINANCIAL_DATA_INCOMPLETE"}); return; }
+    const snapshot = buildAnonymousSubmissionSnapshot(snapshotSourceWithAges(source, services.encryption));
+    const pdf = await createAnonymousPdf(snapshot);
+    const results: Array<{lenderId: number; status: string}> = [];
+    for (const lenderId of input.lenderIds) {
+      const lender = available.get(lenderId);
+      if (!lender) { results.push({lenderId, status: "INVALID_LENDER"}); continue; }
+      const token = randomBytes(32).toString("base64url");
+      const pdfStorageKey = `submissions/${randomUUID()}/anonymous.pdf`;
+      await services.storage.put(pdfStorageKey, pdf, "application/pdf");
+      const submission = await services.store.createSubmission({
+        clientId: request.authorizedClientId!, lenderId, createdByUserId: request.user!.id, snapshot, pdfStorageKey,
+        tokenHash: hashToken(token), expiresAt: new Date(Date.now() + services.env.LENDER_INVITE_EXPIRY_HOURS * 3_600_000)
+      });
+      try {
+        const link = `${services.env.APP_URL}/lender/invite/${encodeURIComponent(token)}`;
+        const email = await services.email.send(lender.contactEmail, `SynCash financing case ${snapshot.publicCaseNumber}`, `<p>A new anonymous financing case is available.</p><p><a href="${link}">Open secure invitation</a></p>`);
+        await services.store.markSubmissionSent(submission.id, email.messageId, lender.contactEmail);
+        await services.store.addAudit(request.user!.id, "SUBMISSION_EMAIL_SENT", "submission", submission.id, {lenderId}, request.requestId);
+        results.push({lenderId, status: "SENT"});
+      } catch {
+        await services.store.markSubmissionDeliveryFailed(submission.id, lender.contactEmail, sanitizeEmailError());
+        await services.store.addAudit(request.user!.id, "SUBMISSION_DELIVERY_FAILED", "submission", submission.id, {lenderId}, request.requestId);
+        results.push({lenderId, status: "DELIVERY_FAILED"});
+      }
+    }
+    response.status(201).json({results});
+  }));
+
+  app.post("/api/submissions/:id/retry-delivery", ...authenticated, auth.requireRole("ADVISOR"), requireEmailDelivery, rateLimit(services.limiter, "submission-retry", 10, 60), asyncRoute(async (request, response) => {
+    const advisorId = request.user!.advisorId;
+    if (!advisorId) { response.status(403).json({error: "ADVISOR_PROFILE_REQUIRED"}); return; }
+    const token = randomBytes(32).toString("base64url");
+    const submissionId = Number(request.params.id);
+    const delivery = await services.store.prepareSubmissionRetry(
+      submissionId,
+      advisorId,
+      hashToken(token),
+      new Date(Date.now() + services.env.LENDER_INVITE_EXPIRY_HOURS * 3_600_000)
+    );
+    if (!delivery) { response.status(404).json({error: "SUBMISSION_NOT_FOUND"}); return; }
+    try {
+      const link = `${services.env.APP_URL}/lender/invite/${encodeURIComponent(token)}`;
+      const email = await services.email.send(delivery.recipient, `SynCash financing case ${delivery.publicCaseNumber}`, `<p>The financing invitation was reissued.</p><p><a href="${link}">Open secure invitation</a></p>`);
+      await services.store.markSubmissionSent(submissionId, email.messageId, delivery.recipient);
+      await services.store.addAudit(request.user!.id, "SUBMISSION_EMAIL_SENT", "submission", submissionId, {retry: true}, request.requestId);
+      response.json({status: "SENT"});
+    } catch {
+      await services.store.markSubmissionDeliveryFailed(submissionId, delivery.recipient, sanitizeEmailError());
+      await services.store.addAudit(request.user!.id, "SUBMISSION_DELIVERY_FAILED", "submission", submissionId, {retry: true}, request.requestId);
+      response.status(502).json({status: "DELIVERY_FAILED"});
+    }
+  }));
+
+  app.use("/api/lender", requireExternalPortals);
+  app.post("/api/lender/invites/validate", rateLimit(services.limiter, "invite-validation", 20, 60), asyncRoute(async (request, response) => {
+    const {token} = z.object({token: z.string().min(20).max(200)}).parse(request.body);
+    const invite = await services.store.validateInvite(hashToken(token));
+    if (!invite) { response.status(404).json({error: "INVITE_NOT_FOUND"}); return; }
+    if (invite.expiresAt.getTime() <= Date.now()) { response.status(410).json({error: "INVITE_EXPIRED"}); return; }
+    if (invite.revokedAt) { response.status(403).json({error: "INVITE_REVOKED"}); return; }
+    if (invite.usedAt) { response.status(403).json({error: "INVITE_USED"}); return; }
+    response.json({lenderName: invite.lenderName, requiresAuthentication: true});
+  }));
+
+  app.post("/api/lender/invites/consume", ...authenticated, rateLimit(services.limiter, "invite-consume", 10, 60), asyncRoute(async (request, response) => {
+    const {token} = z.object({token: z.string().min(20).max(200)}).parse(request.body);
+    const invite = await services.store.validateInvite(hashToken(token));
+    if (!invite) { response.status(404).json({error: "INVITE_NOT_FOUND"}); return; }
+    if (invite.expiresAt.getTime() <= Date.now()) { response.status(410).json({error: "INVITE_EXPIRED"}); return; }
+    if (invite.revokedAt || invite.usedAt) { response.status(403).json({error: "INVITE_UNAVAILABLE"}); return; }
+    if (request.user!.lenderId !== invite.lenderId) { response.status(403).json({error: "FORBIDDEN"}); return; }
+    await services.store.consumeInvite(invite.tokenId, request.user!.id);
+    await services.store.addAudit(request.user!.id, "INVITE_OPENED", "submission", invite.submissionId, null, request.requestId);
+    response.json({submissionId: invite.submissionId});
+  }));
+
+  app.get("/api/lender/submissions/:id", ...authenticated, auth.requireLenderSubmissionAccess, asyncRoute(async (request, response) => {
+    response.json({id: request.authorizedSubmission!.id, status: (await services.store.getLenderSubmission(request.authorizedSubmission!.id))?.status, anonymousSnapshot: request.authorizedSubmission!.anonymousSnapshot});
+  }));
+
+  app.get("/api/lender/submissions", ...authenticated, auth.requireRole("LENDER_ADMIN", "LENDER_UNDERWRITER"), asyncRoute(async (request, response) => {
+    response.json(await services.store.listLenderSubmissions(request.user!.lenderId!));
+  }));
+
+  app.post("/api/lender/submissions/:id/reply", ...authenticated, auth.requireLenderSubmissionAccess, rateLimit(services.limiter, "lender-reply", 30, 60), asyncRoute(async (request, response) => {
+    const input = z.object({responseType: z.enum(["MESSAGE", "MORE_INFO_REQUEST", "INTERESTED", "DECLINED"]), message: z.string().trim().min(1).max(4000)}).parse(request.body);
+    const reply = await services.store.createLenderResponse(request.authorizedSubmission!.id, request.user!.id, input.responseType, input.message);
+    await services.store.addAudit(request.user!.id, "LENDER_REPLY_CREATED", "lender_response", reply.id, {submissionId: request.authorizedSubmission!.id}, request.requestId);
+    response.status(201).json(reply);
+  }));
+
+  app.post("/api/lender/submissions/:id/identity-request", ...authenticated, auth.requireLenderSubmissionAccess, rateLimit(services.limiter, "identity-request", 10, 60), asyncRoute(async (request, response) => {
+    const input = z.object({reason: z.string().trim().min(10).max(1000), requestedFields: z.array(z.enum(IDENTITY_FIELDS)).min(1)}).parse(request.body);
+    const identityRequest = await services.store.createIdentityRequest(request.authorizedSubmission!.id, request.user!.id, input.reason, input.requestedFields);
+    await services.store.notifyAdvisor(request.authorizedSubmission!.clientId, "IDENTITY_REQUEST", "בקשת חשיפת זהות חדשה", `בקשה ${identityRequest.id} ממתינה להחלטה`);
+    await services.store.addAudit(request.user!.id, "IDENTITY_REQUESTED", "identity_request", identityRequest.id, {requestedFields: input.requestedFields}, request.requestId);
+    response.status(201).json(identityRequest);
+  }));
+
+  app.get("/api/advisor/identity-requests", ...authenticated, auth.requireRole("ADVISOR"), asyncRoute(async (request, response) => {
+    response.json(await services.store.listAdvisorIdentityRequests(request.user!.advisorId!));
+  }));
+
+  const decideIdentity = (approve: boolean) => asyncRoute(async (request, response) => {
+    const input = z.object({approvedFields: z.array(z.enum(IDENTITY_FIELDS)).default([]), approvedDocumentIds: z.array(z.number().int().positive()).default([])}).parse(request.body);
+    const decided = await services.store.decideIdentityRequest(Number(request.params.id), request.user!.advisorId!, request.user!.id, input.approvedFields, input.approvedDocumentIds, approve);
+    if (!decided) { response.status(404).json({error: "IDENTITY_REQUEST_NOT_FOUND"}); return; }
+    const action = approve ? "IDENTITY_APPROVED" : "IDENTITY_REJECTED";
+    await services.store.addAudit(request.user!.id, action, "identity_request", Number(request.params.id), {approvedFields: input.approvedFields, approvedDocumentIds: input.approvedDocumentIds}, request.requestId);
+    response.json({status: approve ? "APPROVED" : "REJECTED"});
+  });
+  app.post("/api/advisor/identity-requests/:id/approve", ...authenticated, auth.requireRole("ADVISOR"), decideIdentity(true));
+  app.post("/api/advisor/identity-requests/:id/reject", ...authenticated, auth.requireRole("ADVISOR"), decideIdentity(false));
+
+  app.get("/api/lender/submissions/:id/revealed-data", ...authenticated, auth.requireLenderSubmissionAccess, asyncRoute(async (request, response) => {
+    const approval = await services.store.getRevealedData(request.authorizedSubmission!.id);
+    if (!approval) { response.status(403).json({error: "IDENTITY_NOT_APPROVED"}); return; }
+    const data = await services.store.getIdentityData(approval.clientId);
+    if (!data) { response.status(404).json({error: "CLIENT_NOT_FOUND"}); return; }
+    const fields = new Set<IdentityField>(approval.approvedFields);
+    const revealed: Record<string, string> = {};
+    if (fields.has("FULL_NAME")) revealed.fullName = `${services.encryption.decrypt(data.firstNameEncrypted)} ${services.encryption.decrypt(data.lastNameEncrypted)}`;
+    if (fields.has("PHONE")) revealed.phone = services.encryption.decrypt(data.phoneEncrypted);
+    if (fields.has("EMAIL")) revealed.email = services.encryption.decrypt(data.emailEncrypted);
+    if (fields.has("IDENTITY_NUMBER")) revealed.identityNumber = services.encryption.decrypt(data.identityNumberEncrypted);
+    if (fields.has("PROPERTY_ADDRESS") && data.propertyAddressEncrypted) revealed.propertyAddress = services.encryption.decrypt(data.propertyAddressEncrypted);
+    if (fields.has("EMPLOYER") && data.employerNameEncrypted) revealed.employer = services.encryption.decrypt(data.employerNameEncrypted);
+    response.json({approvedFields: approval.approvedFields, approvedDocumentIds: approval.approvedDocumentIds, data: revealed});
+  }));
+
+  app.get("/api/lender/submissions/:id/documents/:documentId/download", ...authenticated, auth.requireLenderSubmissionAccess, rateLimit(services.limiter, "lender-document-download", 30, 60), asyncRoute(async (request, response) => {
+    const approval = await services.store.getRevealedData(request.authorizedSubmission!.id);
+    const documentId = Number(request.params.documentId);
+    if (!approval?.approvedFields.includes("SPECIFIC_DOCUMENTS") || !approval.approvedDocumentIds.includes(documentId)) {
+      response.status(403).json({error: "DOCUMENT_NOT_APPROVED"}); return;
+    }
+    const document = await services.store.getDocument(documentId);
+    if (!document || document.clientId !== request.authorizedSubmission!.clientId || document.deletedAt) { response.status(404).json({error: "DOCUMENT_NOT_FOUND"}); return; }
+    const object = await services.storage.get(document.storageKey);
+    await services.store.addAudit(request.user!.id, "DOCUMENT_DOWNLOADED", "document", document.id, {submissionId: request.authorizedSubmission!.id}, request.requestId);
+    response.type(object.contentType).send(object.body);
+  }));
+
+  // Lender financing-offer creation was removed end-to-end (product decision:
+  // SynCash is not a system for submitting loan offers; a company and
+  // advisor coordinate directly once the company is Interested). See
+  // docs/DECISIONS.md.
+
+  app.get("/api/admin/settings/email", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
+    const configurations = await services.store.listEmailConfigurations();
+    const active = configurations.find((configuration) => configuration.status === "ACTIVE") ?? null;
+    const draft = configurations.find((configuration) => ["DRAFT", "TESTED", "FAILED"].includes(configuration.status)) ?? null;
+    const toPublic = async (configuration: EmailConfigurationRecord) => publicEmailConfiguration(
+      configuration,
+      await isSecretConfigured(services.secrets, configuration.secretName, configuration.secretVersion)
+    );
+    const legacySettings = Object.fromEntries((await services.store.getSettings("SMTP")).map((setting) => [setting.key, setting.value]));
+    response.json({
+      active: active ? await toPublic(active) : null,
+      draft: draft ? await toPublic(draft) : null,
+      history: await Promise.all(configurations.filter((configuration) => configuration.id !== active?.id && configuration.id !== draft?.id).slice(0, 8).map(toPublic)),
+      canRollback: Boolean(active?.previousConfigurationId),
+      bootstrap: {
+        provider: (legacySettings.SMTP_HOST ?? services.env.SMTP_HOST) === "smtp.gmail.com" ? "GMAIL" : (legacySettings.SMTP_HOST ?? services.env.SMTP_HOST) === "smtp-relay.brevo.com" ? "BREVO" : "CUSTOM",
+        host: legacySettings.SMTP_HOST ?? services.env.SMTP_HOST,
+        port: Number(legacySettings.SMTP_PORT ?? services.env.SMTP_PORT),
+        securityMode: (legacySettings.SMTP_SECURE ?? String(services.env.SMTP_SECURE)) === "true" ? "TLS" : Number(legacySettings.SMTP_PORT ?? services.env.SMTP_PORT) === 587 ? "STARTTLS" : "NONE",
+        username: legacySettings.SMTP_USER ?? services.env.SMTP_USER,
+        fromEmail: legacySettings.EMAIL_FROM ?? services.env.EMAIL_FROM,
+        fromName: legacySettings.EMAIL_FROM_NAME ?? services.env.EMAIL_FROM_NAME,
+        replyTo: legacySettings.EMAIL_REPLY_TO ?? services.env.EMAIL_REPLY_TO,
+        passwordConfigured: await isSecretConfigured(services.secrets, "syncash-smtp-password")
+      }
+    });
+  }));
+
+  app.patch("/api/admin/settings/email", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const input = smtpSettingsSchema.parse(request.body);
+    try {
+      await validateSmtpEndpoint({provider: input.provider, host: input.host, port: input.port, securityMode: input.securityMode, nodeEnv: services.env.NODE_ENV});
+    } catch (error: unknown) {
+      const code = error instanceof Error ? error.message : "SMTP_ENDPOINT_INVALID";
+      response.status(422).json({error: code, message: "כתובת שרת ה-SMTP או הפורט אינם מורשים.", requestId: request.requestId});
+      return;
+    }
+    const base = input.baseConfigurationId ? await services.store.getEmailConfiguration(input.baseConfigurationId) : await services.store.getActiveEmailConfiguration();
+    const password = normalizeSmtpPassword(input.provider, input.smtpPassword);
+    if (input.provider === "GMAIL" && password && password.length !== 16) {
+      response.status(422).json({
+        error: "GMAIL_APP_PASSWORD_INVALID",
+        message: "Google App Password חייבת להכיל 16 תווים לאחר הסרת רווחים.",
+        fieldErrors: {smtpPassword: "יש להזין Google App Password תקינה בת 16 תווים."},
+        requestId: request.requestId
+      });
+      return;
+    }
+    let secretName = base?.secretName ?? null;
+    let secretVersion = base?.secretVersion ?? null;
+    if (!secretName && await isSecretConfigured(services.secrets, "syncash-smtp-password")) {
+      secretName = "syncash-smtp-password";
+      secretVersion = "latest";
+    }
+    if (password) {
+      if (!services.secrets.setSecret) { response.status(409).json({error: "SECRET_PROVIDER_READ_ONLY", requestId: request.requestId}); return; }
+      try {
+        secretName = "syncash-smtp-password";
+        secretVersion = await services.secrets.setSecret(secretName, password);
+        if (!secretVersion) throw new Error("SECRET_VERSION_REFERENCE_MISSING");
+      } catch (error: unknown) {
+        const permissionDenied = typeof error === "object" && error !== null && "code" in error && Number(error.code) === 7;
+        const errorCode = permissionDenied ? "SMTP_SECRET_WRITE_FORBIDDEN" : "SMTP_SECRET_WRITE_FAILED";
+        await services.store.addAudit(request.user!.id, "SMTP_DRAFT_FAILED", "email_configuration", null, {errorCode}, request.requestId);
+        response.status(503).json({error: errorCode, message: "שמירת סיסמת ה-SMTP במנגנון הסודות נכשלה.", requestId: request.requestId});
+        return;
+      }
+    }
+    const configuration = await services.store.createEmailConfiguration({
+      provider: input.provider,
+      host: input.host,
+      port: input.port,
+      securityMode: input.securityMode,
+      username: input.username || null,
+      fromEmail: input.fromEmail,
+      fromName: input.fromName,
+      replyTo: input.replyTo,
+      secretName,
+      secretVersion,
+      previousConfigurationId: (await services.store.getActiveEmailConfiguration())?.id ?? null,
+      userId: request.user!.id
+    });
+    await services.store.addAudit(request.user!.id, "SMTP_DRAFT_CREATED", "email_configuration", configuration.id, {provider: configuration.provider, passwordUpdated: Boolean(password)}, request.requestId);
+    response.json({draft: publicEmailConfiguration(configuration, password ? true : await isSecretConfigured(services.secrets, secretName, secretVersion))});
+  }));
+
+  app.delete("/api/admin/settings/email/:id/password", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const configuration = await services.store.clearEmailConfigurationPassword(Number(request.params.id), request.user!.id);
+    if (!configuration) { response.status(409).json({error: "SMTP_DRAFT_NOT_EDITABLE", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "SMTP_PASSWORD_CLEARED", "email_configuration", configuration.id, {passwordConfigured: false}, request.requestId);
+    response.json({draft: publicEmailConfiguration(configuration, false)});
+  }));
+
+  app.post("/api/admin/settings/email/:id/test", ...authenticated, auth.requireSuperAdmin, rateLimit(services.limiter, "smtp-test", 5, 60 * 60), asyncRoute(async (request, response) => {
+    const recipient = smtpTestSchema.parse(request.body).recipientEmail;
+    const configuration = await services.store.getEmailConfiguration(Number(request.params.id));
+    if (!configuration || !["DRAFT", "TESTED", "FAILED"].includes(configuration.status)) { response.status(404).json({error: "SMTP_DRAFT_NOT_FOUND", requestId: request.requestId}); return; }
+    try {
+      await validateSmtpEndpoint({provider: configuration.provider, host: configuration.host, port: configuration.port, securityMode: configuration.securityMode, nodeEnv: services.env.NODE_ENV});
+      const result = await services.email.test(recipient, smtpSettingsFromConfiguration(configuration));
+      const tested = await services.store.markEmailConfigurationTest(configuration.id, "TESTED", null, request.user!.id);
+      await services.store.addEmailLog({recipient, template: "SMTP_CONFIGURATION_TEST", requestId: request.requestId, messageId: result.messageId, status: "SENT"});
+      await services.store.addAudit(request.user!.id, "SMTP_TESTED", "email_configuration", configuration.id, {recipient, status: "SENT"}, request.requestId);
+      response.json({messageId: result.messageId, draft: publicEmailConfiguration(tested!, true)});
+    } catch (error: unknown) {
+      const failure = sanitizeSmtpFailure(error);
+      await services.store.markEmailConfigurationTest(configuration.id, "FAILED", failure.code, request.user!.id);
+      await services.store.addEmailLog({recipient, template: "SMTP_CONFIGURATION_TEST", requestId: request.requestId, status: "FAILED", sanitizedError: failure.code});
+      await services.store.addAudit(request.user!.id, "SMTP_TESTED", "email_configuration", configuration.id, {recipient, status: "FAILED", errorCode: failure.code}, request.requestId);
+      response.status(failure.status).json({error: failure.code, message: failure.message, requestId: request.requestId});
+    }
+  }));
+
+  app.post("/api/admin/settings/email/:id/activate", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const configuration = await services.store.activateEmailConfiguration(Number(request.params.id), request.user!.id);
+    if (!configuration) { response.status(409).json({error: "SMTP_CONFIGURATION_NOT_TESTED", message: "ניתן להפעיל רק הגדרה שנבדקה בהצלחה.", requestId: request.requestId}); return; }
+    await services.email.reload();
+    await services.store.addAudit(request.user!.id, "SMTP_ACTIVATED", "email_configuration", configuration.id, {provider: configuration.provider}, request.requestId);
+    response.json({active: publicEmailConfiguration(configuration, Boolean(configuration.secretName && await services.secrets.isConfigured(configuration.secretName, configuration.secretVersion)))});
+  }));
+
+  app.post("/api/admin/settings/email/rollback", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const configuration = await services.store.rollbackEmailConfiguration(request.user!.id);
+    if (!configuration) { response.status(409).json({error: "SMTP_ROLLBACK_UNAVAILABLE", requestId: request.requestId}); return; }
+    await services.email.reload();
+    await services.store.addAudit(request.user!.id, "SMTP_ROLLED_BACK", "email_configuration", configuration.id, {provider: configuration.provider}, request.requestId);
+    response.json({active: publicEmailConfiguration(configuration, Boolean(configuration.secretName && await services.secrets.isConfigured(configuration.secretName, configuration.secretVersion)))});
+  }));
+
+  app.get("/api/admin/advisors", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const advisors = await services.store.listAdvisorAccounts({includeArchived: request.query.includeArchived === "1"});
+    response.json(advisors.map((advisor) => publicAdvisorAccount(advisor, services.encryption)));
+  }));
+
+  app.get("/api/admin/advisors/:id/audit-events", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const advisor = await services.store.getAdvisorAccount(Number(request.params.id), {includeArchived: true});
+    if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    const events = await services.store.listUserAuditEvents(advisor.id, [
+      "USER_UPDATED", "USER_ENABLED", "USER_SUSPENDED", "USER_DISABLED", "USER_ARCHIVED", "USER_RESTORED",
+      "PASSWORD_RESET_REQUESTED_BY_ADMIN", "EMAIL_VERIFICATION_RESENT", "EMAIL_VERIFICATION_SENT"
+    ]);
+    response.json(events);
+  }));
+
+  app.get("/api/admin/advisors/:id/legal-acceptances", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const advisor = await services.store.getAdvisorAccount(Number(request.params.id), {includeArchived: true});
+    if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    response.json(await services.store.listLegalDocumentAcceptancesForUser(advisor.id));
+  }));
+
+  app.patch("/api/admin/advisors/:id/status", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const {status, reason} = advisorStatusSchema.parse(request.body);
+    const advisor = await services.store.getAdvisorAccount(Number(request.params.id));
+    if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    if (status === "ACTIVE" && !advisor.emailVerified) { response.status(409).json({error: "EMAIL_NOT_VERIFIED", requestId: request.requestId}); return; }
+    const updated = await services.store.updateAdvisorStatus(advisor.id, status);
+    const action = status === "DISABLED" ? "USER_DISABLED" : status === "ACTIVE" ? "USER_ENABLED" : "USER_SUSPENDED";
+    await services.store.addAudit(request.user!.id, action, "user", advisor.id, {previousStatus: advisor.status, reason: reason ?? null}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(publicAdvisorAccount(updated, services.encryption));
+  }));
+
+  app.post("/api/admin/advisors/:id/archive", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const {reason} = archiveAdvisorSchema.parse(request.body ?? {});
+    const advisor = await services.store.getAdvisorAccount(Number(request.params.id));
+    if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    const updated = await services.store.archiveAdvisorAccount(advisor.id);
+    await services.store.addAudit(request.user!.id, "USER_ARCHIVED", "user", advisor.id, {reason: reason ?? null}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(publicAdvisorAccount(updated, services.encryption));
+  }));
+
+  app.post("/api/admin/advisors/:id/restore", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const advisor = await services.store.getAdvisorAccount(Number(request.params.id), {includeArchived: true});
+    if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    const updated = await services.store.restoreAdvisorAccount(advisor.id);
+    await services.store.addAudit(request.user!.id, "USER_RESTORED", "user", advisor.id, {}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(publicAdvisorAccount(updated, services.encryption));
+  }));
+
+  app.patch("/api/admin/advisors/:id/profile", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const input = advisorProfileSchema.parse(request.body);
+    const advisorId = Number(request.params.id);
+    const existing = await services.store.getAdvisorAccount(advisorId);
+    if (!existing) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    const encryptedPhone = services.encryption.encrypt(input.phone);
+    const advisor = await services.store.updateAdvisorProfile(advisorId, {
+      firstName: input.firstName, lastName: input.lastName, phoneEncrypted: encryptedPhone,
+      businessName: input.businessName, businessPhoneEncrypted: encryptedPhone
+    });
+    await services.store.addAudit(request.user!.id, "USER_UPDATED", "user", advisorId, {fields: ["firstName", "lastName", "phone", "businessName"], adminTriggered: true}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(publicAdvisorAccount(advisor, services.encryption));
+  }));
+
+  app.patch("/api/admin/advisors/:id/email", ...authenticated, auth.requireSuperAdmin, requireEmailDelivery,
+    rateLimit(services.limiter, "admin-email-change-minute", 3, 60), asyncRoute(async (request, response) => {
+      const {email} = advisorEmailChangeSchema.parse(request.body);
+      const normalized = normalizeEmail(email);
+      const advisorId = Number(request.params.id);
+      const existing = await services.store.getAdvisorAccount(advisorId);
+      if (!existing) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+      if (normalized === existing.email) { response.status(409).json({error: "EMAIL_UNCHANGED", requestId: request.requestId}); return; }
+      if (await services.store.findUserByEmail(normalized)) { response.status(409).json({error: "EMAIL_ALREADY_IN_USE", requestId: request.requestId}); return; }
+      await services.firebaseAccounts.updateUserEmail(existing.firebaseUid, normalized);
+      const advisor = await services.store.updateAdvisorEmail(advisorId, normalized);
+      await services.store.addAudit(request.user!.id, "USER_UPDATED", "user", advisorId, {field: "email", previousEmailMasked: maskEmailAddress(existing.email)}, request.requestId, request.ip, request.header("user-agent"));
+      try {
+        await services.emailVerification.sendVerificationEmail({firebaseUid: existing.firebaseUid, email: normalized, displayName: existing.firstName}, {userId: advisorId, requestId: request.requestId});
+      } catch { /* כתובת הדוא״ל כבר עודכנה בהצלחה; כשל בשליחת מייל האימות אינו קריטי — ניתן לשלוח מחדש מהמסך */ }
+      response.json(publicAdvisorAccount(advisor, services.encryption));
+    }));
+
+  app.post("/api/admin/advisors/:id/send-password-reset", ...authenticated, auth.requireSuperAdmin, requireEmailDelivery,
+    rateLimit(services.limiter, "admin-password-reset-minute", 1, 60), asyncRoute(async (request, response) => {
+      const advisor = await services.store.getAdvisorAccount(Number(request.params.id));
+      if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+      try {
+        await services.passwordReset.sendPasswordResetEmail({email: advisor.email, userId: advisor.id}, {requestId: request.requestId});
+        await services.store.addAudit(request.user!.id, "PASSWORD_RESET_REQUESTED_BY_ADMIN", "user", advisor.id, {}, request.requestId, request.ip, request.header("user-agent"));
+        response.json({success: true});
+      } catch (error) {
+        const failure = error instanceof PasswordResetDeliveryError ? error : new PasswordResetDeliveryError("PASSWORD_RESET_EMAIL_DELIVERY_FAILED", 502);
+        response.status(failure.status).json({error: failure.code, requestId: request.requestId});
+      }
+    }));
+
+  app.post("/api/admin/advisors/:id/resend-verification", ...authenticated, auth.requireSuperAdmin, requireEmailDelivery,
+    rateLimit(services.limiter, "admin-verification-resend-minute", 1, 60), rateLimit(services.limiter, "admin-verification-resend-hour", 5, 60 * 60), asyncRoute(async (request, response) => {
+      const advisor = await services.store.getAdvisorAccount(Number(request.params.id));
+      if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+      if (advisor.status !== "PENDING" || advisor.emailVerified) { response.status(409).json({error: "VERIFICATION_NOT_REQUIRED", requestId: request.requestId}); return; }
+      await services.emailVerification.sendVerificationEmail({firebaseUid: advisor.firebaseUid, email: advisor.email, displayName: advisor.firstName}, {userId: advisor.id, requestId: request.requestId});
+      await services.store.addAudit(request.user!.id, "EMAIL_VERIFICATION_RESENT", "user", advisor.id, {channel: "smtp", template: ADVISOR_EMAIL_VERIFICATION_TEMPLATE, adminTriggered: true}, request.requestId, request.ip, request.header("user-agent"));
+      response.json({success: true, verificationEmailSent: true});
+    }));
+
+  const publicLegalDocumentVersion = (version: Awaited<ReturnType<AppStore["getActiveLegalDocumentVersion"]>>) => version && {
+    id: version.id, documentType: version.documentType, versionNumber: version.versionNumber, title: version.title,
+    content: version.content, contactEmail: version.contactEmail, contactPhone: version.contactPhone, contactAddress: version.contactAddress,
+    effectiveDate: version.effectiveDate, publishedAt: version.publishedAt
+  };
+  const adminLegalDocumentVersion = (version: Awaited<ReturnType<AppStore["getLegalDocumentVersion"]>>) => version && {
+    ...publicLegalDocumentVersion(version), status: version.status, contentHash: version.contentHash,
+    createdByUserId: version.createdByUserId, publishedByUserId: version.publishedByUserId,
+    archivedAt: version.archivedAt, createdAt: version.createdAt, updatedAt: version.updatedAt
+  };
+
+  app.get("/api/legal-documents/:type", asyncRoute(async (request, response) => {
+    const documentType = legalDocumentTypeParamSchema.parse(request.params.type);
+    const active = await services.store.getActiveLegalDocumentVersion(documentType);
+    if (!active) { response.status(404).json({error: "LEGAL_DOCUMENT_NOT_PUBLISHED", requestId: request.requestId}); return; }
+    response.json(publicLegalDocumentVersion(active));
+  }));
+
+  app.get("/api/admin/legal-documents", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
+    const overview = await Promise.all(LEGAL_DOCUMENT_TYPES.map(async (documentType) => ({
+      documentType,
+      active: adminLegalDocumentVersion(await services.store.getActiveLegalDocumentVersion(documentType)),
+      draft: adminLegalDocumentVersion(await services.store.getDraftLegalDocumentVersion(documentType))
+    })));
+    response.json(overview);
+  }));
+
+  app.get("/api/admin/legal-documents/:type/versions", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const documentType = legalDocumentTypeParamSchema.parse(request.params.type);
+    const versions = await services.store.listLegalDocumentVersions(documentType);
+    const withCounts = await Promise.all(versions.map(async (version) => ({...adminLegalDocumentVersion(version), acceptanceCount: await services.store.countLegalDocumentAcceptances(version.id)})));
+    response.json(withCounts);
+  }));
+
+  app.get("/api/admin/legal-documents/versions/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const version = await services.store.getLegalDocumentVersion(Number(request.params.id));
+    if (!version) { response.status(404).json({error: "LEGAL_DOCUMENT_VERSION_NOT_FOUND", requestId: request.requestId}); return; }
+    response.json({...adminLegalDocumentVersion(version), acceptanceCount: await services.store.countLegalDocumentAcceptances(version.id)});
+  }));
+
+  app.post("/api/admin/legal-documents/:type/draft", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const documentType = legalDocumentTypeParamSchema.parse(request.params.type);
+    const draft = await services.store.createLegalDocumentDraft(documentType, request.user!.id);
+    await services.store.addAudit(request.user!.id, "LEGAL_DOCUMENT_DRAFT_CREATED", "legal_document_version", draft.id, {documentType, versionNumber: draft.versionNumber}, request.requestId, request.ip, request.header("user-agent"));
+    response.status(201).json(adminLegalDocumentVersion(draft));
+  }));
+
+  app.patch("/api/admin/legal-documents/versions/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const id = Number(request.params.id);
+    const existing = await services.store.getLegalDocumentVersion(id);
+    if (!existing) { response.status(404).json({error: "LEGAL_DOCUMENT_VERSION_NOT_FOUND", requestId: request.requestId}); return; }
+    if (existing.status !== "DRAFT") { response.status(409).json({error: "LEGAL_DOCUMENT_VERSION_NOT_EDITABLE", message: "ניתן לערוך רק גרסת טיוטה.", requestId: request.requestId}); return; }
+    const input = legalDocumentDraftSchema.parse(request.body);
+    const updated = await services.store.updateLegalDocumentDraft(id, input);
+    await services.store.addAudit(request.user!.id, "LEGAL_DOCUMENT_DRAFT_UPDATED", "legal_document_version", id, {documentType: existing.documentType}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(adminLegalDocumentVersion(updated));
+  }));
+
+  app.delete("/api/admin/legal-documents/versions/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const id = Number(request.params.id);
+    const existing = await services.store.getLegalDocumentVersion(id);
+    if (!existing) { response.status(404).json({error: "LEGAL_DOCUMENT_VERSION_NOT_FOUND", requestId: request.requestId}); return; }
+    if (existing.status !== "DRAFT") { response.status(409).json({error: "LEGAL_DOCUMENT_VERSION_NOT_EDITABLE", message: "ניתן למחוק רק גרסת טיוטה.", requestId: request.requestId}); return; }
+    await services.store.discardLegalDocumentDraft(id);
+    await services.store.addAudit(request.user!.id, "LEGAL_DOCUMENT_DRAFT_DISCARDED", "legal_document_version", id, {documentType: existing.documentType}, request.requestId, request.ip, request.header("user-agent"));
+    response.status(204).send();
+  }));
+
+  app.post("/api/admin/legal-documents/versions/:id/publish", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const id = Number(request.params.id);
+    const existing = await services.store.getLegalDocumentVersion(id);
+    if (!existing) { response.status(404).json({error: "LEGAL_DOCUMENT_VERSION_NOT_FOUND", requestId: request.requestId}); return; }
+    if (existing.status !== "DRAFT") { response.status(409).json({error: "LEGAL_DOCUMENT_VERSION_NOT_EDITABLE", message: "ניתן לפרסם רק גרסת טיוטה.", requestId: request.requestId}); return; }
+    if (!existing.content.trim()) { response.status(422).json({error: "LEGAL_DOCUMENT_CONTENT_REQUIRED", message: "יש להזין תוכן לפני פרסום.", requestId: request.requestId}); return; }
+    const published = await services.store.publishLegalDocumentVersion(id, request.user!.id);
+    const publishAuditAction: Record<LegalDocumentType, string> = {TERMS: "TERMS_VERSION_PUBLISHED", PRIVACY: "PRIVACY_VERSION_PUBLISHED", DPA: "DPA_VERSION_PUBLISHED"};
+    const action = publishAuditAction[existing.documentType];
+    await services.store.addAudit(request.user!.id, action, "legal_document_version", id, {documentType: existing.documentType, versionNumber: existing.versionNumber, contentHash: published?.contentHash}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(adminLegalDocumentVersion(published));
+  }));
+
+  const adminPrivacyRequest = (request: Awaited<ReturnType<AppStore["getPrivacyRequest"]>>) => request && {
+    id: request.id, requestType: request.requestType, name: request.name, email: request.email,
+    description: request.description, status: request.status, internalNotes: request.internalNotes,
+    handledByUserId: request.handledByUserId, createdAt: request.createdAt, updatedAt: request.updatedAt
+  };
+
+  app.post("/api/privacy-requests", rateLimit(services.limiter, "privacy-request-minute", 2, 60), rateLimit(services.limiter, "privacy-request-hour", 5, 60 * 60), asyncRoute(async (request, response) => {
+    const input = privacyRequestSubmitSchema.parse(request.body);
+    const created = await services.store.createPrivacyRequest(input);
+    await services.store.addAudit(null, "PRIVACY_REQUEST_CREATED", "privacy_request", created.id, {requestType: created.requestType}, request.requestId, request.ip, request.header("user-agent"));
+    response.status(201).json({success: true});
+  }));
+
+  app.get("/api/admin/privacy-requests", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
+    response.json((await services.store.listPrivacyRequests()).map(adminPrivacyRequest));
+  }));
+
+  app.get("/api/admin/privacy-requests/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const found = await services.store.getPrivacyRequest(Number(request.params.id));
+    if (!found) { response.status(404).json({error: "PRIVACY_REQUEST_NOT_FOUND", requestId: request.requestId}); return; }
+    response.json(adminPrivacyRequest(found));
+  }));
+
+  app.patch("/api/admin/privacy-requests/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const id = Number(request.params.id);
+    const existing = await services.store.getPrivacyRequest(id);
+    if (!existing) { response.status(404).json({error: "PRIVACY_REQUEST_NOT_FOUND", requestId: request.requestId}); return; }
+    const input = privacyRequestUpdateSchema.parse(request.body);
+    const updated = await services.store.updatePrivacyRequestStatus(id, input, request.user!.id);
+    await services.store.addAudit(request.user!.id, "PRIVACY_REQUEST_UPDATED", "privacy_request", id, {status: input.status}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(adminPrivacyRequest(updated));
+  }));
+
+  app.patch("/api/advisor/profile", ...authenticated, auth.requireRole("ADVISOR"), asyncRoute(async (request, response) => {
+    const input = advisorProfileSchema.parse(request.body);
+    const encryptedPhone = services.encryption.encrypt(input.phone);
+    const advisor = await services.store.updateAdvisorProfile(request.user!.id, {
+      firstName: input.firstName, lastName: input.lastName, phoneEncrypted: encryptedPhone,
+      businessName: input.businessName, businessPhoneEncrypted: encryptedPhone
+    });
+    if (!advisor) { response.status(404).json({error: "ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+    await services.store.addAudit(request.user!.id, "ADVISOR_PROFILE_UPDATED", "user", request.user!.id, {fields: ["firstName", "lastName", "phone", "businessName"]}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(publicAdvisorAccount(advisor, services.encryption));
+  }));
+
+  if (services.env.NODE_ENV !== "production") {
+    app.get("/api/test/email-logs", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+      const recipient = z.string().email().parse(request.query.recipient);
+      response.json(await services.store.listEmailLogs(recipient));
+    }));
+    app.delete("/api/test/advisors/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+      const advisor = await services.store.getAdvisorAccount(Number(request.params.id));
+      if (!advisor || !advisor.email.endsWith("@syncash-e2e.local")) { response.status(404).json({error: "TEST_ADVISOR_NOT_FOUND", requestId: request.requestId}); return; }
+      await services.store.softDeleteAdvisorAccount(advisor.id);
+      await services.firebaseAccounts.deleteUser(advisor.firebaseUid).catch(() => undefined);
+      await services.store.addAudit(request.user!.id, "TEST_ADVISOR_CLEANED", "user", advisor.id, {scope: "e2e"}, request.requestId, request.ip, request.header("user-agent"));
+      response.status(204).send();
+    }));
+    if (services.delivery) {
+      app.get("/api/test/lender-flow", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+        const input = z.object({clientId: z.coerce.number().int().positive(), companyId: z.coerce.number().int().positive()}).parse(request.query);
+        response.json(await services.delivery!.inspectTestFlow(input.clientId, input.companyId));
+      }));
+      app.post("/api/test/lender-flow/expire-session", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+        const input = z.object({clientId: z.number().int().positive(), companyId: z.number().int().positive()}).strict().parse(request.body);
+        await services.delivery!.expireTestPortalSessions(input.clientId, input.companyId); response.status(204).end();
+      }));
+    }
+  }
+
+  app.get("/api/admin/audit-logs", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    response.json(await services.store.listAuditLogs(Number(request.query.limit) || 100));
+  }));
+
+  app.post("/api/admin/security/encryption-test", ...authenticated, auth.requireSuperAdmin, (request, response) => {
+    const source = randomUUID();
+    const encrypted = services.encryption.encrypt(source);
+    response.json({configured: services.encryption.decrypt(encrypted) === source});
+  });
+
+  app.get("/api/notifications", ...authenticated, asyncRoute(async (request, response) => {
+    response.json(await services.store.listNotifications(request.user!.id));
+  }));
+
+  app.get("/api/admin/email-logs", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => {
+    const logs = await services.store.listRecentEmailLogs(Number(request.query.limit) || 200);
+    response.json(logs.map(({recipient, ...entry}) => ({...entry, recipientMasked: maskEmailAddress(recipient)})));
+  }));
+  app.patch("/api/notifications/read-all", ...authenticated, asyncRoute(async (request, response) => {
+    const count = await services.store.markAllNotificationsRead(request.user!.id);
+    await services.store.addAudit(request.user!.id, "NOTIFICATIONS_MARKED_READ", "notification", null, {count}, request.requestId);
+    response.json({read: true, count});
+  }));
+  app.patch("/api/notifications/:id/read", ...authenticated, asyncRoute(async (request, response) => {
+    const updated = await services.store.markNotificationRead(Number(request.params.id), request.user!.id);
+    if (!updated) { response.status(404).json({error: "NOTIFICATION_NOT_FOUND"}); return; }
+    await services.store.addAudit(request.user!.id, "NOTIFICATION_MARKED_READ", "notification", Number(request.params.id), {}, request.requestId);
+    response.json({read: true});
+  }));
+
+  if (services.delivery) {
+    const delivery = services.delivery;
+    const context = (request: Request) => ({requestId: request.requestId, ip: request.ip, userAgent: request.header("user-agent")});
+    const advisorActor = (request: Request) => {
+      if (!request.user?.advisorId) throw new DeliveryError("ADVISOR_PROFILE_REQUIRED", 403, "נדרש פרופיל יועץ פעיל.");
+      return {userId: request.user.id, advisorId: request.user.advisorId};
+    };
+    const adminActor = (request: Request) => ({userId: request.user!.id});
+    const csrfCookie = "syncash_external_csrf";
+    const portalCookie = "syncash_portal_session";
+    const issueCsrf = (request: Request, response: Response) => {
+      const value = cookieValue(request, csrfCookie) || randomBytes(24).toString("base64url");
+      if (!cookieValue(request, csrfCookie)) response.cookie(csrfCookie, value, {httpOnly: false, secure: services.env.NODE_ENV === "production", sameSite: services.env.NODE_ENV === "production" ? "none" : "lax", path: "/api/external", maxAge: 30 * 60_000});
+      return value;
+    };
+    const requireExternalCsrf = (request: Request, response: Response, next: NextFunction) => {
+      const cookie = cookieValue(request, csrfCookie); const header = request.header("x-csrf-token") ?? "";
+      if (!cookie || !header || !valuesEqual(cookie, header)) { response.status(403).json({error: "CSRF_VALIDATION_FAILED", message: "אימות הבקשה נכשל.", requestId: request.requestId}); return; }
+      next();
+    };
+    app.use("/api/external", requireExternalPortals, (_request, response, next) => {
+      response.setHeader("Cache-Control", "no-store, max-age=0"); response.setHeader("Pragma", "no-cache"); response.setHeader("X-Robots-Tag", "noindex, nofollow"); response.setHeader("Referrer-Policy", "no-referrer"); response.setHeader("X-Frame-Options", "DENY"); next();
+    });
+
+    app.get("/api/advisor/financing-companies", ...authenticated, auth.requireRole("ADVISOR"), asyncRoute(async (request, response) => {
+      const clientId = z.coerce.number().int().positive().parse(request.query.clientId); response.json(await delivery.listAdvisorCompanies(clientId, advisorActor(request)));
+    }));
+    app.get("/api/clients/:clientId/delivery/preflight", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+      response.json(await delivery.preflight(request.authorizedClientId!, advisorActor(request)));
+    }));
+    app.post("/api/clients/:clientId/delivery/preview", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+      z.object({}).strict().parse(request.body ?? {}); response.json(await delivery.preview(request.authorizedClientId!, advisorActor(request)));
+    }));
+    app.post("/api/clients/:clientId/delivery/send", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, requireEmailDelivery, rateLimit(services.limiter, "lender-delivery-send", 10, 60), asyncRoute(async (request, response) => {
+      const input = z.object({idempotencyKey: z.string().uuid(), previewConfirmation: z.string().min(40).max(4000)}).strict().parse(request.body); response.status(201).json(await delivery.send(request.authorizedClientId!, input, advisorActor(request), context(request)));
+    }));
+    app.get("/api/clients/:clientId/company-responses", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.listClientResponses(request.authorizedClientId!, advisorActor(request))); }));
+    app.get("/api/clients/:clientId/company-responses/:submissionId", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.getClientResponse(request.authorizedClientId!, routeParam(request, "submissionId"), advisorActor(request))); }));
+
+    app.get("/api/admin/financing-companies", ...authenticated, auth.requireAdmin, asyncRoute(async (_request, response) => { response.json(await delivery.listCompaniesForAdmin()); }));
+    app.post("/api/admin/financing-companies", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.status(201).json(await delivery.createCompany(companySchema.parse(request.body), adminActor(request), context(request))); }));
+    app.patch("/api/admin/financing-companies/:id", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.updateCompany(Number(request.params.id), companySchema.partial().strict().parse(request.body), adminActor(request), context(request))); }));
+    app.delete("/api/admin/financing-companies/:id", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { await delivery.deleteCompany(Number(request.params.id), adminActor(request), context(request)); response.status(204).end(); }));
+    app.post("/api/admin/financing-companies/:id/logo", ...authenticated, auth.requireAdmin, upload.single("file"), asyncRoute(async (request, response) => {
+      if (!request.file || request.file.size > 2 * 1024 * 1024) throw new DeliveryError("INVALID_COMPANY_LOGO", 422, "יש להעלות לוגו PNG או JPEG עד 2MB.");
+      const mimeType = detectMime(request.file);
+      if (mimeType !== "image/png" && mimeType !== "image/jpeg") throw new DeliveryError("INVALID_COMPANY_LOGO", 422, "יש להעלות לוגו PNG או JPEG תקין.");
+      response.json(await delivery.uploadCompanyLogo(Number(request.params.id), request.file.buffer, mimeType, adminActor(request), context(request)));
+    }));
+    app.post("/api/admin/financing-companies/:id/contacts", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.status(201).json(await delivery.createContact(Number(request.params.id), contactSchema.parse(request.body), adminActor(request), context(request))); }));
+    app.patch("/api/admin/financing-companies/:id/contacts/:contactId", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.updateContact(Number(request.params.id), Number(request.params.contactId), contactSchema.partial().strict().parse(request.body), adminActor(request), context(request))); }));
+    app.delete("/api/admin/financing-companies/:id/contacts/:contactId", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { await delivery.deleteContact(Number(request.params.id), Number(request.params.contactId), adminActor(request), context(request)); response.status(204).end(); }));
+    app.get("/api/admin/business-calendar", ...authenticated, auth.requireAdmin, asyncRoute(async (_request, response) => { response.json(await delivery.listCalendar()); }));
+    app.post("/api/admin/business-calendar", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.status(201).json(await delivery.createCalendarException(calendarSchema.parse(request.body), adminActor(request), context(request))); }));
+    app.patch("/api/admin/business-calendar/:id", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.updateCalendarException(Number(request.params.id), calendarSchema.parse(request.body), adminActor(request), context(request))); }));
+    app.delete("/api/admin/business-calendar/:id", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { await delivery.deleteCalendarException(Number(request.params.id), adminActor(request), context(request)); response.status(204).end(); }));
+    app.get("/api/admin/company-submissions", ...authenticated, auth.requireAdmin, asyncRoute(async (_request, response) => { response.json(await delivery.listAdminSubmissions()); }));
+    app.get("/api/admin/company-submissions/:id", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.getAdminSubmission(routeParam(request, "id"))); }));
+    for (const [route, kind] of [["masked-pdf", "masked"], ["full-pdf", "full"]] as const) app.get(`/api/admin/company-submissions/:id/${route}`, ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => {
+      const file = await delivery.getAdminPdf(routeParam(request, "id"), kind, adminActor(request), context(request));
+      response.type("application/pdf").setHeader("Cache-Control", "no-store, max-age=0").setHeader("Pragma", "no-cache").setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body);
+    }));
+    for (const action of ["resend-failed", "send-reminder", "cancel-invitation", "reissue", "extend-access", "revoke-access"]) app.post(`/api/admin/company-submissions/:id/${action}`, ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.adminAction(routeParam(request, "id"), action, z.record(z.string(), z.unknown()).parse(request.body ?? {}), adminActor(request), context(request))); }));
+
+    app.get("/api/delivery/events", ...authenticated, asyncRoute(async (request, response) => {
+      if (!services.deliveryEvents) throw new DeliveryError("REALTIME_UNAVAILABLE", 503, "עדכונים בזמן אמת אינם זמינים כרגע.");
+      response.writeHead(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no"});
+      const unsubscribe = services.deliveryEvents.subscribe({userId: request.user!.id, advisorId: request.user!.advisorId, isAdmin: request.user!.role === "ADMIN" || request.user!.role === "SUPER_ADMIN", response});
+      const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 20_000); request.on("close", () => {clearInterval(heartbeat); unsubscribe();});
+    }));
+
+    app.get("/api/external/review/:token", rateLimit(services.limiter, "external-review", 60, 60), asyncRoute(async (request, response) => { const result = await delivery.getReview(routeParam(request, "token"), context(request)); response.json({...result as object, csrfToken: issueCsrf(request, response)}); }));
+    app.get("/api/external/review/:token/masked-pdf", rateLimit(services.limiter, "external-masked-pdf", 30, 60), asyncRoute(async (request, response) => { const file = await delivery.getMaskedPdf(routeParam(request, "token"), request.query.download === "1", context(request)); response.type("application/pdf").setHeader("Cache-Control", "no-store, max-age=0").setHeader("Pragma", "no-cache").setHeader("Content-Disposition", `${request.query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
+    app.post("/api/external/review/:token/not-interested", requireExternalCsrf, rateLimit(services.limiter, "external-decision", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.decideNotInterested(routeParam(request, "token"), context(request))); }));
+    app.post("/api/external/review/:token/interested/start", requireExternalCsrf, rateLimit(services.limiter, "external-otp-start", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.startInterest(routeParam(request, "token"), context(request))); }));
+    app.post("/api/external/review/:token/interested/resend-code", requireExternalCsrf, rateLimit(services.limiter, "external-otp-resend", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.resendInterestCode(routeParam(request, "token"), context(request))); }));
+    app.post("/api/external/review/:token/interested/verify", requireExternalCsrf, rateLimit(services.limiter, "external-otp-verify", 20, 60), asyncRoute(async (request, response) => { const {code} = z.object({code: z.string().regex(/^\d{6}$/)}).strict().parse(request.body); const result = await delivery.verifyInterest(routeParam(request, "token"), code, context(request)); response.cookie(portalCookie, result.sessionToken, {httpOnly: true, secure: services.env.NODE_ENV === "production", sameSite: services.env.NODE_ENV === "production" ? "none" : "lax", path: "/api/external/portal", expires: result.expiresAt}); response.json({authenticated: true, decisionStatus: result.decisionStatus, accessStatus: result.accessStatus, fullAccessExpiresAt: result.fullAccessExpiresAt, expiresAt: result.expiresAt}); }));
+    app.get("/api/external/access/:token", rateLimit(services.limiter, "external-access", 60, 60), asyncRoute(async (request, response) => { const result = await delivery.getAccess(routeParam(request, "token"), session(request), context(request)); response.json({...result as object, csrfToken: issueCsrf(request, response)}); }));
+    app.post("/api/external/access/:token/send-code", requireExternalCsrf, rateLimit(services.limiter, "external-access-code", 10, 60), asyncRoute(async (request, response) => { response.json(await delivery.sendAccessCode(routeParam(request, "token"), context(request))); }));
+    app.post("/api/external/access/:token/verify-code", requireExternalCsrf, rateLimit(services.limiter, "external-access-verify", 20, 60), asyncRoute(async (request, response) => { const {code} = z.object({code: z.string().regex(/^\d{6}$/)}).strict().parse(request.body); const result = await delivery.verifyAccessCode(routeParam(request, "token"), code, context(request)); response.cookie(portalCookie, result.sessionToken, {httpOnly: true, secure: services.env.NODE_ENV === "production", sameSite: services.env.NODE_ENV === "production" ? "none" : "lax", path: "/api/external/portal", expires: result.expiresAt}); response.json({authenticated: true, expiresAt: result.expiresAt}); }));
+    const session = (request: Request) => cookieValue(request, portalCookie);
+    app.get("/api/external/portal/case", rateLimit(services.limiter, "external-portal", 120, 60), asyncRoute(async (request, response) => { const result = await delivery.getPortalCase(session(request), context(request)); response.json({...result as object, csrfToken: issueCsrf(request, response)}); }));
+    app.get("/api/external/portal/full-pdf", rateLimit(services.limiter, "external-portal-download", 30, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalPdf(session(request), context(request)); response.type("application/pdf").setHeader("Cache-Control", "no-store, max-age=0").setHeader("Pragma", "no-cache").setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
+    app.get("/api/external/portal/documents", rateLimit(services.limiter, "external-portal", 120, 60), asyncRoute(async (request, response) => { response.json(await delivery.listPortalDocuments(session(request), context(request))); }));
+    for (const mode of ["view", "download"]) app.get(`/api/external/portal/documents/:documentId/${mode}`, rateLimit(services.limiter, "external-portal-download", 30, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalDocument(session(request), routeParam(request, "documentId"), mode === "download", context(request)); response.type(file.contentType).setHeader("Content-Disposition", `${mode === "download" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
+    app.get("/api/external/portal/download-all", rateLimit(services.limiter, "external-portal-zip", 5, 60), asyncRoute(async (request, response) => { const file = await delivery.getPortalZip(session(request), context(request)); response.type("application/zip").setHeader("Cache-Control", "no-store, max-age=0").setHeader("Pragma", "no-cache").setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`).send(file.body); }));
+    app.post("/api/external/portal/logout", requireExternalCsrf, asyncRoute(async (request, response) => { await delivery.logoutPortal(session(request)); response.clearCookie(portalCookie, {path: "/api/external/portal"}); response.status(204).end(); }));
+  }
+
+  app.post("/api/clients/:clientId/analysis", ...authenticated, auth.requireAdvisorClientAccess, rateLimit(services.limiter, "gemini", 10, 60), asyncRoute(async (request, response) => {
+    const {question} = z.object({question: z.string().trim().min(3).max(2000)}).parse(request.body);
+    const source = await services.store.getSnapshotSource(request.authorizedClientId!);
+    if (!source) { response.status(409).json({error: "CLIENT_FINANCIAL_DATA_INCOMPLETE"}); return; }
+    const context = JSON.stringify(buildAnonymousSubmissionSnapshot(snapshotSourceWithAges(source, services.encryption)));
+    const started = Date.now();
+    try {
+      const answer = await services.gemini.analyze(context, question);
+      await services.store.addAiLog({clientId: request.authorizedClientId!, userId: request.user!.id, model: services.env.GEMINI_MODEL, promptCharacters: context.length + question.length, status: "SUCCESS", durationMs: Date.now() - started});
+      response.json({answer});
+    } catch {
+      await services.store.addAiLog({clientId: request.authorizedClientId!, userId: request.user!.id, model: services.env.GEMINI_MODEL, promptCharacters: context.length + question.length, status: "FAILED", durationMs: Date.now() - started, error: "AI request failed"});
+      response.status(502).json({error: "AI_REQUEST_FAILED", requestId: request.requestId});
+    }
+  }));
+
+  app.use((_request, response) => response.status(404).json({error: "NOT_FOUND"}));
+  app.use((error: unknown, request: Request, response: Response, _next: NextFunction) => {
+    void _next;
+    if (error instanceof z.ZodError) {
+      const fieldErrors = Object.fromEntries(error.issues.map((issue) => [issue.path.join("."), issue.message]));
+      response.status(400).json({
+        error: "VALIDATION_ERROR",
+        message: "יש לתקן את השדות המסומנים",
+        fields: Object.keys(fieldErrors),
+        fieldErrors,
+        requestId: request.requestId
+      });
+      return;
+    }
+    if (error instanceof multer.MulterError) {
+      response.status(400).json({error: error.code === "LIMIT_FILE_SIZE" ? "FILE_TOO_LARGE" : "UPLOAD_ERROR", requestId: request.requestId});
+      return;
+    }
+    if (error instanceof DeliveryError) {
+      response.status(error.status).json({error: error.code, code: error.code, message: error.publicMessage, requestId: request.requestId, ...(error.details ?? {})});
+      return;
+    }
+    console.error("Request failed", {requestId: request.requestId, errorCode: "UNHANDLED_REQUEST_ERROR"});
+    response.status(500).json({error: "INTERNAL_SERVER_ERROR", requestId: request.requestId});
+  });
+
+  return app;
+}

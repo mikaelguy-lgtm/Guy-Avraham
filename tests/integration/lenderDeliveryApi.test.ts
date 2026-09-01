@@ -1,0 +1,180 @@
+import request from "supertest";
+import {describe, expect, it, vi} from "vitest";
+import {createApp} from "../../src/server/app";
+import type {LenderDeliveryApplication} from "../../src/services/lenderDelivery";
+import {AdvisorEmailVerificationService} from "../../src/services/emailVerification";
+import {EncryptionService} from "../../src/utils/crypto";
+import {env, makeStore, MemoryLimiter, MemoryStorage, secrets, verifier} from "../helpers/fakes";
+import {DeliveryError} from "../../src/domain/lenderDelivery";
+import type {AppStore} from "../../src/services/store";
+
+function fakeDelivery(overrides: Partial<LenderDeliveryApplication> = {}): LenderDeliveryApplication {
+  const defaults: Partial<LenderDeliveryApplication> = {
+    listAdvisorCompanies: vi.fn().mockResolvedValue([{id: 7, activeContactCount: 2}]),
+    preflight: vi.fn().mockResolvedValue({ready: true, blockers: []}),
+    preview: vi.fn().mockResolvedValue({maskedSnapshot: {publicCaseNumber: "SC-1"}, maskedPdfBase64: "JVBERg==", pdfRendererVersion: 3, pdfFontFingerprint: "a".repeat(64), pdfGeneratedAt: new Date().toISOString(), pdfContentHash: "b".repeat(64), eligibleCompanyCount: 1, responseDeadlineAt: new Date().toISOString(), previewConfirmation: "signed-preview"}),
+    send: vi.fn().mockResolvedValue({batchId: "batch-public", companies: []}),
+    listClientResponses: vi.fn().mockResolvedValue([]), getClientResponse: vi.fn().mockResolvedValue({publicId: "submission-public", timeline: []}),
+    listCompaniesForAdmin: vi.fn().mockResolvedValue([]), createCompany: vi.fn().mockResolvedValue({id: 1}), updateCompany: vi.fn(), deleteCompany: vi.fn(), createContact: vi.fn(), updateContact: vi.fn(), deleteContact: vi.fn(),
+    listCalendar: vi.fn().mockResolvedValue([]), createCalendarException: vi.fn(), updateCalendarException: vi.fn(), deleteCalendarException: vi.fn(), listAdminSubmissions: vi.fn().mockResolvedValue([]), getAdminSubmission: vi.fn(), getAdminPdf: vi.fn().mockResolvedValue({body: Buffer.from("%PDF-secure"), filename: "תיק-מימון-ראשוני.pdf"}), adminAction: vi.fn(),
+    getReview: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, maskedSnapshot: {borrowers: [{label: "לווה 1"}]}, closed: false}),
+    getMaskedPdf: vi.fn().mockResolvedValue({body: Buffer.from("%PDF-test"), filename: "תיק-ראשוני.pdf"}), decideNotInterested: vi.fn().mockResolvedValue({decisionStatus: "NOT_INTERESTED"}), startInterest: vi.fn(), resendInterestCode: vi.fn(), verifyInterest: vi.fn(),
+    getAccess: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, expiresAt: new Date().toISOString(), requiresOtp: true}), sendAccessCode: vi.fn(), verifyAccessCode: vi.fn(), getPortalCase: vi.fn(), getPortalPdf: vi.fn(), listPortalDocuments: vi.fn(), getPortalDocument: vi.fn(), getPortalZip: vi.fn(), logoutPortal: vi.fn(), inspectTestFlow: vi.fn(), expireTestPortalSessions: vi.fn(), processJobs: vi.fn()
+  };
+  return {...defaults, ...overrides} as LenderDeliveryApplication;
+}
+
+function application(delivery = fakeDelivery(), store: AppStore = makeStore(), environment = env) {
+  const email = {send: vi.fn(), verify: vi.fn(), test: vi.fn(), reload: vi.fn()} as never;
+  return createApp({env: environment, store, verifier, encryption: new EncryptionService(Buffer.alloc(32, 4)), storage: new MemoryStorage(), limiter: new MemoryLimiter(), secrets, email, emailVerification: new AdvisorEmailVerificationService({createVerificationLink: vi.fn()}, email, store), passwordReset: {sendPasswordResetEmail: vi.fn().mockResolvedValue({messageId: "message-1"})}, gemini: {analyze: vi.fn()} as never, firebaseAccounts: {deleteUser: vi.fn(), updateUserEmail: vi.fn()}, delivery});
+}
+
+describe("secure lender delivery API", () => {
+  it("blocks lender and external portals when production portals are disabled", async () => {
+    const restrictedEnv = {...env, EMAIL_DELIVERY_ENABLED: false, PUBLIC_REGISTRATION_ENABLED: false, EXTERNAL_PORTALS_ENABLED: false, SUPER_ADMIN_ONLY_MODE: true};
+    const app = application(fakeDelivery(), makeStore(), restrictedEnv);
+    const review = await request(app).get("/api/external/review/personal-token").expect(503);
+    const invite = await request(app).post("/api/lender/invites/validate").send({token: "x".repeat(32)}).expect(503);
+    const portal = await request(app).get("/api/lender/submissions/1").set("authorization", "Bearer lender").expect(503);
+    for (const response of [review, invite, portal]) {
+      expect(response.body).toEqual(expect.objectContaining({error: "EXTERNAL_PORTALS_DISABLED", requestId: expect.any(String)}));
+    }
+  });
+
+  it("allows only the owning advisor to list companies and preview a delivery", async () => {
+    await request(application()).get("/api/advisor/financing-companies?clientId=1").set("authorization", "Bearer advisor").expect(200);
+    await request(application()).post("/api/clients/1/delivery/preview").set("authorization", "Bearer advisor").send({}).expect(200);
+    await request(application()).get("/api/advisor/financing-companies?clientId=1").set("authorization", "Bearer admin").expect(403);
+    await request(application()).post("/api/clients/1/delivery/preview").set("authorization", "Bearer advisor2").send({}).expect(403);
+  });
+
+  it("returns a complete preflight blocker list only to the owning advisor", async () => {
+    const blockers = [{code: "MISSING_ID_BACK_1", category: "DOCUMENT" as const, label: "חסר מסמך: תעודת זהות — צד אחורי — לווה 1", hint: "יש להעלות את המסמך בכרטיסיית המסמכים.", action: "documents" as const}, {code: "DEAL_DETAILS_REQUIRED", category: "FIELD" as const, label: "חסר פירוט עסקה", hint: "יש להשלים בעריכת התיק.", action: "edit" as const}];
+    const delivery = fakeDelivery({preflight: vi.fn().mockResolvedValue({ready: false, blockers})});
+    await request(application(delivery)).get("/api/clients/1/delivery/preflight").set("authorization", "Bearer advisor").expect(200, {ready: false, blockers});
+    await request(application(delivery)).get("/api/clients/1/delivery/preflight").set("authorization", "Bearer advisor2").expect(403);
+    await request(application(delivery)).get("/api/clients/1/delivery/preflight").set("authorization", "Bearer admin").expect(403);
+  });
+
+  it("keeps preview and send protected by the same non-bypassable preflight guard", async () => {
+    const blocker = {code: "PROPERTY_ADDRESS_REQUIRED", category: "FIELD", label: "חסרה כתובת הנכס", hint: "יש להשלים בעריכת התיק.", action: "edit"};
+    const delivery = fakeDelivery({preview: vi.fn().mockRejectedValue(new DeliveryError("DELIVERY_PREFLIGHT_BLOCKED", 422, "לפני שליחה יש להשלים פריטים.", {blockers: [blocker]}))});
+    const response = await request(application(delivery)).post("/api/clients/1/delivery/preview").set("authorization", "Bearer advisor").send({}).expect(422);
+    expect(response.body).toEqual(expect.objectContaining({error: "DELIVERY_PREFLIGHT_BLOCKED", blockers: [blocker], requestId: expect.any(String)}));
+  });
+
+  it("marks one or all notifications read and records audit events", async () => {
+    const markOne = vi.fn().mockResolvedValue(true); const markAll = vi.fn().mockResolvedValue(2); const addAudit = vi.fn().mockResolvedValue(undefined);
+    const store = makeStore({listNotifications: vi.fn().mockResolvedValue([{id: 1, type: "COMPANY_INTERESTED", title: "עדכון", body: "חברה מעוניינת", readAt: null, createdAt: new Date()}]), markNotificationRead: markOne, markAllNotificationsRead: markAll, addAudit});
+    await request(application(fakeDelivery(), store)).get("/api/notifications").set("authorization", "Bearer advisor").expect(200);
+    await request(application(fakeDelivery(), store)).patch("/api/notifications/read-all").set("authorization", "Bearer advisor").expect(200, {read: true, count: 2});
+    await request(application(fakeDelivery(), store)).patch("/api/notifications/1/read").set("authorization", "Bearer advisor").expect(200, {read: true});
+    expect(markAll).toHaveBeenCalledWith(1); expect(markOne).toHaveBeenCalledWith(1, 1); expect(addAudit).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows admins and blocks advisors from financing-company administration", async () => {
+    await request(application()).get("/api/admin/financing-companies").set("authorization", "Bearer admin").expect(200);
+    await request(application()).get("/api/admin/financing-companies").set("authorization", "Bearer super").expect(200);
+    await request(application()).get("/api/admin/financing-companies").set("authorization", "Bearer advisor").expect(403);
+  });
+
+  it("streams immutable delivery PDFs only to authenticated admins", async () => {
+    const delivery = fakeDelivery(); const app = application(delivery);
+    const masked = await request(app).get("/api/admin/company-submissions/submission-public/masked-pdf").set("authorization", "Bearer admin").expect("content-type", /application\/pdf/).expect(200);
+    expect(masked.headers["cache-control"]).toContain("no-store");
+    await request(app).get("/api/admin/company-submissions/submission-public/full-pdf").set("authorization", "Bearer super").expect("content-type", /application\/pdf/).expect(200);
+    await request(app).get("/api/admin/company-submissions/submission-public/full-pdf").set("authorization", "Bearer advisor").expect(403);
+    expect(delivery.getAdminPdf).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a masked public review without authentication or internal identifiers", async () => {
+    const response = await request(application()).get("/api/external/review/personal-token").expect(200);
+    expect(response.body).toEqual(expect.objectContaining({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", csrfToken: expect.any(String)}));
+    expect(JSON.stringify(response.body)).not.toMatch(/clientId|companyId|contactId|tokenHash|identityNumber/i);
+    expect(response.headers["cache-control"]).toContain("no-store");
+    expect(response.headers["x-robots-tag"]).toContain("noindex");
+  });
+
+  it("keeps masked and full borrower view models separated with one household liability collection", async () => {
+    const maskedSnapshot = {
+      borrowerRelationship: "MARRIED",
+      household: {numberOfChildren: 2, childrenAges: [4, 8]},
+      borrowers: [
+        {label: "לווה 1", age: 41, residenceCity: "תל אביב", maritalStatus: "MARRIED", employment: {employmentType: "SALARIED", jobTitle: "מנהלת", monthlyNetIncome: 20_000}, liabilities: []},
+        {label: "לווה 2", age: 38, residenceCity: "תל אביב", maritalStatus: "MARRIED", employment: {employmentType: "SELF_EMPLOYED", jobTitle: "בעלים", monthlyNetIncome: 15_000}, liabilities: []}
+      ],
+      householdLiabilities: [{type: "MORTGAGE", currentBalance: 400_000, monthlyPayment: 4_000, endDate: "2040-07-31", notes: "התחייבות משותפת"}]
+    };
+    const fullSnapshot = {
+      ...maskedSnapshot,
+      borrowers: [
+        {order: 1, firstName: "דנה", lastName: "לוי", identityNumber: "123456789", dateOfBirth: "1985-06-15", age: 41, phone: "0501234567", email: "dana@example.com", address: "רחוב סודי 1", residenceCity: "תל אביב", maritalStatus: "MARRIED", employment: {employmentType: "SALARIED", employerName: "חברה סודית", jobTitle: "מנהלת", monthlyNetIncome: 20_000}, liabilities: []},
+        {order: 2, firstName: "נועם", lastName: "לוי", identityNumber: "987654321", dateOfBirth: "1987-08-20", age: 38, phone: "0507654321", email: "noam@example.com", address: "רחוב סודי 1", residenceCity: "תל אביב", maritalStatus: "MARRIED", employment: {employmentType: "SELF_EMPLOYED", employerName: "עסק סודי", jobTitle: "בעלים", monthlyNetIncome: 15_000}, liabilities: []}
+      ]
+    };
+    const delivery = fakeDelivery({
+      getReview: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, maskedSnapshot, closed: false}),
+      getPortalCase: vi.fn().mockResolvedValue({companyName: "מימון בטוח", versionNumber: 1, snapshot: fullSnapshot})
+    });
+    const masked = await request(application(delivery)).get("/api/external/review/personal-token").expect(200);
+    const maskedBody = JSON.stringify(masked.body);
+    for (const pii of ["דנה", "לוי", "123456789", "0501234567", "dana@example.com", "רחוב סודי", "חברה סודית"]) expect(maskedBody).not.toContain(pii);
+    expect(masked.body.maskedSnapshot.borrowers).toHaveLength(2);
+    expect(masked.body.maskedSnapshot.householdLiabilities).toHaveLength(1);
+    expect(maskedBody.match(/התחייבות משותפת/gu)).toHaveLength(1);
+
+    const full = await request(application(delivery)).get("/api/external/portal/case").expect(200);
+    expect(full.body.snapshot.borrowers[0]).toEqual(expect.objectContaining({firstName: "דנה", identityNumber: "123456789", phone: "0501234567"}));
+    expect(full.body.snapshot.borrowers[1]).toEqual(expect.objectContaining({firstName: "נועם", identityNumber: "987654321"}));
+    expect(full.body.snapshot.householdLiabilities).toHaveLength(1);
+    expect(JSON.stringify(full.body).match(/התחייבות משותפת/gu)).toHaveLength(1);
+  });
+
+  it("serves a fresh masked PDF with browser caching disabled", async () => {
+    const response = await request(application()).get("/api/external/review/personal-token/masked-pdf").expect("content-type", /application\/pdf/).expect(200);
+    expect(response.headers["cache-control"]).toContain("no-store");
+    expect(response.headers.pragma).toBe("no-cache");
+  });
+
+  it("requires double-submit CSRF for a public decision", async () => {
+    const delivery = fakeDelivery(); const app = application(delivery);
+    await request(app).post("/api/external/review/personal-token/not-interested").send({}).expect(403);
+    const review = await request(app).get("/api/external/review/personal-token").expect(200);
+    const cookie = (review.headers["set-cookie"] as unknown as string[])[0];
+    await request(app).post("/api/external/review/personal-token/not-interested").set("cookie", cookie).set("x-csrf-token", review.body.csrfToken).send({}).expect(200, {decisionStatus: "NOT_INTERESTED"});
+    expect(delivery.decideNotInterested).toHaveBeenCalledOnce();
+  });
+
+  it("creates the authenticated portal session from the single interest OTP", async () => {
+    const verifyInterest = vi.fn().mockResolvedValue({
+      sessionToken: "server-only-session-token",
+      expiresAt: new Date("2026-08-02T12:00:00.000Z"),
+      decisionStatus: "INTERESTED",
+      accessStatus: "ACTIVE",
+      fullAccessExpiresAt: new Date("2026-08-08T12:00:00.000Z")
+    });
+    const app = application(fakeDelivery({verifyInterest}));
+    const review = await request(app).get("/api/external/review/personal-token").expect(200);
+    const csrfCookie = (review.headers["set-cookie"] as unknown as string[])[0];
+    const response = await request(app)
+      .post("/api/external/review/personal-token/interested/verify")
+      .set("cookie", csrfCookie)
+      .set("x-csrf-token", review.body.csrfToken)
+      .send({code: "123456"})
+      .expect(200);
+
+    expect(response.body).toEqual(expect.objectContaining({authenticated: true, decisionStatus: "INTERESTED", accessStatus: "ACTIVE"}));
+    expect(response.body).not.toHaveProperty("sessionToken");
+    expect((response.headers["set-cookie"] as unknown as string[]).some((cookie) => cookie.startsWith("syncash_portal_session=server-only-session-token") && cookie.includes("Path=/api/external/portal") && cookie.includes("HttpOnly"))).toBe(true);
+    expect(verifyInterest).toHaveBeenCalledOnce();
+  });
+
+  it("no longer exposes an offer-submission endpoint on the external portal", async () => {
+    const app = application(fakeDelivery());
+    const review = await request(app).get("/api/external/review/personal-token").expect(200);
+    const csrfCookie = (review.headers["set-cookie"] as unknown as string[])[0];
+    const payload = {idempotencyKey: "74c435a1-f2ab-44b7-b348-bf8baae6fe8c", amount: 900000};
+
+    await request(app).post("/api/external/portal/offers").set("Cookie", [csrfCookie, "syncash_portal_session=portal-session"]).set("x-csrf-token", review.body.csrfToken).send(payload).expect(404);
+  });
+});

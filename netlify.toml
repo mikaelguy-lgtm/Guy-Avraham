@@ -1,14 +1,24 @@
 [build]
+  command = "npm run build:web"
   publish = "dist"
-  command = "npm run build:frontend"
+
+[build.environment]
+  NODE_VERSION = "22"
 
 [[redirects]]
   from = "/api/*"
-  to = "https://YOUR-RENDER-BACKEND-URL.onrender.com/api/:splat"
-  status = 200
+  to = "/api-unavailable.json"
+  status = 404
   force = true
 
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"

@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:24-alpine AS dependencies
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM dependencies AS api-builder
+COPY tsconfig.server.json drizzle.config.ts server.ts worker.ts ./
+COPY src ./src
+COPY assets ./assets
+COPY scripts/copy-pdf-fonts.mjs ./scripts/copy-pdf-fonts.mjs
+RUN npm run build:api
+
+FROM node:24-alpine AS api
+ENV NODE_ENV=production
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+COPY --from=api-builder --chown=node:node /app/dist-server ./dist-server
+COPY --chown=node:node drizzle ./drizzle
+USER node
+EXPOSE 3000
+CMD ["node", "dist-server/server.js"]
+
+FROM dependencies AS frontend-builder
+ARG VITE_API_BASE_URL
+ARG VITE_FIREBASE_API_KEY
+ARG VITE_FIREBASE_AUTH_DOMAIN
+ARG VITE_FIREBASE_PROJECT_ID
+ARG VITE_FIREBASE_STORAGE_BUCKET
+ARG VITE_FIREBASE_MESSAGING_SENDER_ID
+ARG VITE_FIREBASE_APP_ID
+ARG VITE_EMAIL_DELIVERY_ENABLED
+ARG VITE_PUBLIC_REGISTRATION_ENABLED
+ARG VITE_EXTERNAL_PORTALS_ENABLED
+ARG VITE_SUPER_ADMIN_ONLY_MODE
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
+    VITE_FIREBASE_API_KEY=$VITE_FIREBASE_API_KEY \
+    VITE_FIREBASE_AUTH_DOMAIN=$VITE_FIREBASE_AUTH_DOMAIN \
+    VITE_FIREBASE_PROJECT_ID=$VITE_FIREBASE_PROJECT_ID \
+    VITE_FIREBASE_STORAGE_BUCKET=$VITE_FIREBASE_STORAGE_BUCKET \
+    VITE_FIREBASE_MESSAGING_SENDER_ID=$VITE_FIREBASE_MESSAGING_SENDER_ID \
+    VITE_FIREBASE_APP_ID=$VITE_FIREBASE_APP_ID \
+    VITE_EMAIL_DELIVERY_ENABLED=$VITE_EMAIL_DELIVERY_ENABLED \
+    VITE_PUBLIC_REGISTRATION_ENABLED=$VITE_PUBLIC_REGISTRATION_ENABLED \
+    VITE_EXTERNAL_PORTALS_ENABLED=$VITE_EXTERNAL_PORTALS_ENABLED \
+    VITE_SUPER_ADMIN_ONLY_MODE=$VITE_SUPER_ADMIN_ONLY_MODE \
+    VITE_USE_FIREBASE_EMULATOR=false
+COPY . .
+RUN npm run build:web
+
+FROM nginx:1.27-alpine AS frontend
+COPY nginx/frontend.conf /etc/nginx/nginx.conf
+COPY --from=frontend-builder --chown=nginx:nginx /app/dist /usr/share/nginx/html
+RUN mkdir -p /var/cache/nginx /var/run/nginx && chown -R nginx:nginx /var/cache/nginx /var/run/nginx /usr/share/nginx/html
+USER nginx
+EXPOSE 8080
+CMD ["nginx", "-g", "daemon off;"]
