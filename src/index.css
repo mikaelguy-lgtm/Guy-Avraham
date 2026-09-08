@@ -314,6 +314,7 @@ h4 { font-size: 1rem; font-weight: 700; }
 .confirmation-check input, .checkbox-label input { inline-size: 20px; min-block-size: 20px; accent-color: var(--cyan); }
 .delivery-complete { display: grid; justify-items: center; gap: .6rem; padding: 2.5rem 1rem; text-align: center; }
 .delivery-complete > svg { inline-size: 64px; block-size: 64px; color: #6ee7b7; }
+.delivery-followup-note { max-inline-size: 440px; margin: 0; padding: .7rem 1.1rem; border-radius: 13px; font-size: .92rem; font-weight: 800; line-height: 1.55; color: #a5f3fc; background: rgba(6, 182, 212, .08); border: 1px solid rgba(34, 211, 238, .22); }
 
 .response-card-grid, .admin-company-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .response-card { display: grid; gap: .9rem; padding: 1rem; border: 1px solid var(--border-soft); border-radius: 17px; background: rgba(3, 11, 27, .48); }
