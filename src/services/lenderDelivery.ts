@@ -902,7 +902,12 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       try {
         const advisorName = await this.pool.query("select u.first_name from advisor_profiles ap join users u on u.id=ap.user_id where ap.id=$1", [row.advisor_id]);
         await this.notifySuperAdminsOfInterest(row.public_case_number, row.company_name, advisorName.rows[0]?.first_name ?? "", Number(row.submission_id), Number(row.client_id));
-      } catch { /* best-effort: the INTERESTED decision itself already committed successfully */ }
+      } catch {
+        // Best-effort: the INTERESTED decision itself already committed
+        // successfully above, so this failure must never propagate to the
+        // lender contact's response — but it must not vanish silently either.
+        console.error("Admin notification failed after a successful INTERESTED decision", {errorCode: "ADMIN_NOTIFICATION_FAILED", eventType: "SUPER_ADMIN_LENDER_INTERESTED", submissionId: Number(row.submission_id), requestId: context.requestId});
+      }
       return {...session, decisionStatus: "INTERESTED", accessStatus: "ACTIVE", fullAccessExpiresAt: accessExpiresAt};
     } catch (error) { await connection.query(error instanceof DeliveryError && error.code.startsWith("OTP_") ? "commit" : "rollback"); throw error; } finally { connection.release(); }
   }

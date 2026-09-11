@@ -499,11 +499,24 @@ export function createApp(services: AppServices) {
   // (email_outbox's own idempotency_key), reusing the exact same outbox
   // mechanism and worker every other transactional email already goes
   // through — never sent from here directly.
-  async function notifySuperAdminsOfEvent(type: string, title: string, body: string, entityType: string, entityId: number, idempotencyKeySuffix: string, emailToggle: (settings: AdminNotificationSettings) => boolean, emailTemplate: string, emailPayload: Record<string, unknown>): Promise<void> {
-    await services.store.notifySuperAdmins(type, title, body, entityType, entityId, `SUPER_ADMIN_NOTIFICATION:${idempotencyKeySuffix}`);
-    services.deliveryEvents?.publish({type, advisorId: -1, clientId: entityId, submissionPublicId: ""});
-    const settings = await services.store.getAdminNotificationSettings();
-    if (settings.email && emailToggle(settings)) await services.store.enqueueSuperAdminEmail(emailTemplate, `SUPER_ADMIN_EMAIL:${idempotencyKeySuffix}`, settings.email, emailPayload);
+  //
+  // Called only after the triggering business transaction has already
+  // committed (advisor created / client created) — this is a side effect,
+  // never a precondition for the caller's success response. It therefore
+  // never throws: a failure here is logged (no PII — just the event type,
+  // numeric entity id, and requestId for correlation) and swallowed, so a
+  // notification/email/DB hiccup can never turn an already-successful
+  // registration or case creation into an error response, and can never
+  // trigger a client-side retry that would duplicate the business record.
+  async function notifySuperAdminsOfEvent(type: string, title: string, body: string, entityType: string, entityId: number, idempotencyKeySuffix: string, emailToggle: (settings: AdminNotificationSettings) => boolean, emailTemplate: string, emailPayload: Record<string, unknown>, requestId?: string): Promise<void> {
+    try {
+      await services.store.notifySuperAdmins(type, title, body, entityType, entityId, `SUPER_ADMIN_NOTIFICATION:${idempotencyKeySuffix}`);
+      services.deliveryEvents?.publish({type, advisorId: -1, clientId: entityId, submissionPublicId: ""});
+      const settings = await services.store.getAdminNotificationSettings();
+      if (settings.email && emailToggle(settings)) await services.store.enqueueSuperAdminEmail(emailTemplate, `SUPER_ADMIN_EMAIL:${idempotencyKeySuffix}`, settings.email, emailPayload);
+    } catch {
+      console.error("Admin notification failed after a successful business operation", {errorCode: "ADMIN_NOTIFICATION_FAILED", eventType: type, entityId, requestId});
+    }
   }
 
   const requirePublicRegistration = (request: Request, response: Response, next: NextFunction): void => {
@@ -605,7 +618,7 @@ export function createApp(services: AppServices) {
         const active = await services.store.getActiveLegalDocumentVersion(documentType);
         if (active) await services.store.recordLegalDocumentAcceptance(account.id, documentType, active.id, {ip: request.ip, userAgent: request.header("user-agent")});
       }
-      await notifySuperAdminsOfEvent("SUPER_ADMIN_ADVISOR_REGISTERED", "יועץ חדש נרשם", `${account.firstName} ${account.lastName}${account.businessName ? ` (${account.businessName})` : ""} נרשם/ה כיועץ/ת חדש/ה.`, "user", account.id, `ADVISOR_REGISTERED:${account.id}`, (settings) => settings.notifyNewAdvisor, "SUPER_ADMIN_ADVISOR_REGISTERED", {advisorId: account.id});
+      await notifySuperAdminsOfEvent("SUPER_ADMIN_ADVISOR_REGISTERED", "יועץ חדש נרשם", `${account.firstName} ${account.lastName}${account.businessName ? ` (${account.businessName})` : ""} נרשם/ה כיועץ/ת חדש/ה.`, "user", account.id, `ADVISOR_REGISTERED:${account.id}`, (settings) => settings.notifyNewAdvisor, "SUPER_ADMIN_ADVISOR_REGISTERED", {advisorId: account.id}, request.requestId);
     } catch (error: unknown) {
       const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
       await services.store.addAudit(null, "ADVISOR_REGISTRATION_FAILED", "user", null, {reason: code === "23505" ? "DUPLICATE_ACCOUNT" : "DATABASE_ERROR"}, request.requestId, request.ip, request.header("user-agent"));
@@ -715,7 +728,7 @@ export function createApp(services: AppServices) {
       publicCaseNumber, advisorId, ...clientMutationRecord(input, services.encryption, request.user!.id)
     });
     await services.store.addAudit(request.user!.id, "CLIENT_CREATED", "client", client.id, {publicCaseNumber}, request.requestId, request.ip, request.header("user-agent"));
-    await notifySuperAdminsOfEvent("SUPER_ADMIN_CASE_CREATED", "תיק חדש נוצר", `תיק ${publicCaseNumber} נוצר על ידי ${request.user!.firstName} ${request.user!.lastName}.`, "client", client.id, `CASE_CREATED:${client.id}`, (settings) => settings.notifyNewCase, "SUPER_ADMIN_CASE_CREATED", {clientId: client.id});
+    await notifySuperAdminsOfEvent("SUPER_ADMIN_CASE_CREATED", "תיק חדש נוצר", `תיק ${publicCaseNumber} נוצר על ידי ${request.user!.firstName} ${request.user!.lastName}.`, "client", client.id, `CASE_CREATED:${client.id}`, (settings) => settings.notifyNewCase, "SUPER_ADMIN_CASE_CREATED", {clientId: client.id}, request.requestId);
     response.status(201).json(await publicClient(client, services.store, services.encryption));
   }));
 
