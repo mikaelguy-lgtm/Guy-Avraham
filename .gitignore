@@ -1,10 +1,25 @@
 node_modules/
-build/
 dist/
+dist-server/
 coverage/
-.DS_Store
-*.log
-.env*
+playwright-report/
+test-results/
+output/playwright/
+output/pdf-hebrew-verification/
+output/external-borrower-layout/
+.env
+.env.local
+.env.*.local
 !.env.example
-data/secrets_vault.json
-data/*.json
+*.log
+.DS_Store
+codex-bridge/
+tmp/
+
+# Local-machine SSH/credential material for connecting to the SynCash server.
+# The real files live outside this repo entirely (C:\Users\guyav\.syncash\,
+# C:\Users\guyav\.ssh\) — these patterns are a defensive backstop only.
+credentials.env
+*.credentials.env
+.syncash/
+SYNCASH_PASSWORD
