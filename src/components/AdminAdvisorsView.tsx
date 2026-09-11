@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import type { AdvisorAdminRecord, LegalDocumentAcceptanceRecord, UserAuditEvent } from "../types";
+import type { AdvisorAdminRecord, AdvisorCaseStats, LegalDocumentAcceptanceRecord, UserAuditEvent } from "../types";
 import { ApiError, api } from "../utils/apiClient";
-import { emailServerAcceptedMessage, formatDate, formatLegalDocumentType, formatUserStatus } from "../utils/formatters";
+import { emailServerAcceptedMessage, formatCurrency, formatDate, formatLegalDocumentType, formatUserStatus } from "../utils/formatters";
 
 const auditActionLabel: Record<string, string> = {
   USER_UPDATED: "פרטי המשתמש עודכנו",
@@ -29,9 +29,11 @@ export default function AdminAdvisorsView() {
   const [emailForm, setEmailForm] = useState<string | null>(null);
   const [auditEvents, setAuditEvents] = useState<UserAuditEvent[]>([]);
   const [acceptances, setAcceptances] = useState<LegalDocumentAcceptanceRecord[]>([]);
+  const [caseStats, setCaseStats] = useState<Record<number, AdvisorCaseStats>>({});
   const load = useCallback(async () => setAdvisors(await api.adminAdvisors(includeArchived)), [includeArchived]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void api.adminAdvisorStats().then((rows) => setCaseStats(Object.fromEntries(rows.map((row) => [row.advisorId, row])))); }, []);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer); }, []);
 
   const openProfile = async (advisor: AdvisorAdminRecord) => {
@@ -177,6 +179,12 @@ export default function AdminAdvisorsView() {
             <div><dt>תאריך הרשמה</dt><dd>{formatDate(advisor.createdAt)}</dd></div>
             <div><dt>פעילות אחרונה</dt><dd>{advisor.lastLoginAt ? formatDate(advisor.lastLoginAt) : "טרם התחבר"}</dd></div>
           </dl>
+          {advisor.advisorId && caseStats[advisor.advisorId] && <dl className="company-stat-row">
+            <div><small>תיקים</small><strong>{caseStats[advisor.advisorId].clientCount}</strong></div>
+            <div><small>נשלחו</small><strong>{caseStats[advisor.advisorId].sentCount}</strong></div>
+            <div><small>עם עניין</small><strong>{caseStats[advisor.advisorId].interestedCount}</strong></div>
+            <div><small>סך מימון מבוקש</small><strong>{formatCurrency(caseStats[advisor.advisorId].totalRequested)}</strong></div>
+          </dl>}
           <div className="advisor-admin-actions">
             <button className="ghost-action" onClick={() => void openProfile(advisor)}>צפייה בפרופיל</button>
             {!advisor.archivedAt && <>

@@ -34,6 +34,8 @@ import AdminFinancingCompaniesView from "./components/AdminFinancingCompaniesVie
 import AdminBusinessCalendarView from "./components/AdminBusinessCalendarView";
 import AdminCompanySubmissionsView from "./components/AdminCompanySubmissionsView";
 import AdminEmailLogsView from "./components/AdminEmailLogsView";
+import AdminCasesView from "./components/AdminCasesView";
+import AdminCaseDetailView from "./components/AdminCaseDetailView";
 import {requireFrontendConfig} from "./config/frontend";
 
 const productionConfig = requireFrontendConfig();
@@ -79,7 +81,9 @@ export default function App() {
     <Route path="/admin" element={canAccessAdmin(user.role) ? <AdminLayout user={user} /> : <Navigate to={homePath} replace />}>
       <Route index element={<AdminHome user={user} />} />
       <Route path="advisors" element={user.role === "SUPER_ADMIN" ? <AdminAdvisorsView /> : <AdminSectionPage title="יועצים" description="אין הרשאה לניהול יועצים." />} />
-      <Route path="clients" element={<AdminSectionPage title="לקוחות" description="סקירת לקוחות ותיקי מימון במערכת." />} />
+      <Route path="cases" element={user.role === "SUPER_ADMIN" ? <AdminCasesView /> : <AdminSectionPage title="תיקים" description="אין הרשאה לצפייה בתיקים." />} />
+      <Route path="cases/:id" element={user.role === "SUPER_ADMIN" ? <AdminCaseDetailView /> : <AdminSectionPage title="תיק" description="אין הרשאה לצפייה בתיק." />} />
+      <Route path="clients" element={<Navigate to="/admin/cases" replace />} />
       <Route path="lenders" element={<AdminFinancingCompaniesView />} />
       <Route path="company-submissions" element={<AdminCompanySubmissionsView />} />
       <Route path="email-logs" element={<AdminEmailLogsView />} />

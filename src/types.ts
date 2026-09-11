@@ -380,6 +380,8 @@ export interface FinancingCompanyAdmin {
   interestedCount: number;
   notInterestedCount: number;
   expiredCount: number;
+  responseRate: number | null;
+  avgResponseSeconds: number | null;
 }
 
 export interface BusinessCalendarExceptionRecord {
@@ -429,4 +431,97 @@ export interface ExternalPortalDocument {
   mimeType: string;
   sizeBytes: number;
   createdAt: string;
+}
+
+export type AdminStatsPeriod = "today" | "7d" | "30d" | "month" | "all";
+
+export interface AdminDashboardStats {
+  total_advisors: number;
+  active_advisor_accounts: number;
+  new_advisors: number;
+  total_cases: number;
+  new_cases: number;
+  total_requested: number;
+  avg_requested: number;
+  sent_in_period: number;
+  waiting_for_response: number;
+  with_interest: number;
+  expired_no_response: number;
+  financing_in_sent_cases: number;
+  financing_in_interested_cases: number;
+}
+
+export interface AdminActivityPoint {
+  bucket: string;
+  new_advisors: number;
+  new_cases: number;
+  cases_sent: number;
+  interested: number;
+}
+
+export interface AdminRecentActivityItem {
+  type: string;
+  at: string;
+  entityType: string;
+  entityId: number;
+  label: string;
+}
+
+export interface AdminAttention {
+  staleDrafts: number;
+  pastDeadlineNoResponse: number;
+  failedEmails: number;
+  problemAdvisorAccounts: number;
+  openPrivacyRequests: number;
+}
+
+export interface AdvisorCaseStats {
+  advisorId: number;
+  clientCount: number;
+  sentCount: number;
+  interestedCount: number;
+  totalRequested: number;
+  avgRequested: number;
+}
+
+export interface AdminCaseListItem {
+  id: number;
+  publicCaseNumber: string;
+  status: string;
+  caseStage: string;
+  createdAt: string;
+  updatedAt: string;
+  advisorName: string;
+  clientName: string;
+  requestedAmount: number;
+  propertyValue: number;
+  purpose: string;
+  submissionCount: number;
+  respondedCount: number;
+  interestedCount: number;
+  earliestDeadline: string | null;
+  readiness: {ready: boolean; blockerCount: number} | null;
+}
+
+export interface AdminCaseListResponse {
+  items: AdminCaseListItem[];
+  total: number;
+}
+
+export interface AdminCaseDetail {
+  id: number;
+  publicCaseNumber: string;
+  status: string;
+  caseStage: string;
+  createdAt: string;
+  updatedAt: string;
+  advisor: {name: string; email: string};
+  property: {type: string; city: string; value: number};
+  loanRequest: {purpose: string; requestedAmount: number; requestedTermMonths: number; loanToValue: number};
+  documents: Array<{id: number; documentType: string; customTitle: string | null; mimeType: string; sizeBytes: number; createdAt: string}>;
+  versions: Array<{id: number; versionNumber: number; status: string; createdAt: string}>;
+  submissions: Array<{id: number; publicId: string; companyName: string; deliveryStatus: string; decisionStatus: string; responseDeadlineAt: string; decisionAt: string | null; createdAt: string}>;
+  timeline: Array<{type: string; actorType: string; metadata: Record<string, unknown>; createdAt: string}>;
+  emailHistory: Array<{id: number; template: string; recipientMasked: string; status: string; sentAt: string | null; createdAt: string}>;
+  readiness: {ready: boolean; blockers: Array<{code: string; category: string; label: string; hint: string; action: string}>} | null;
 }

@@ -1,7 +1,7 @@
 import { createUserWithEmailAndPassword, deleteUser, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import {requireFrontendConfig} from "../config/frontend";
-import type { AdminEmailLogRecord, AdminLegalDocumentOverview, AdminLegalDocumentVersion, AdminPrivacyRequest, AdvisorAdminRecord, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LegalDocumentAcceptanceRecord, LegalDocumentType, LegalDocumentVersion, MissingRequiredDocument, NotificationRecord, PrivacyRequestStatus, PrivacyRequestType, UserAuditEvent } from "../types";
+import type { AdminActivityPoint, AdminAttention, AdminCaseDetail, AdminCaseListResponse, AdminDashboardStats, AdminEmailLogRecord, AdminLegalDocumentOverview, AdminLegalDocumentVersion, AdminPrivacyRequest, AdminRecentActivityItem, AdminStatsPeriod, AdvisorAdminRecord, AdvisorCaseStats, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LegalDocumentAcceptanceRecord, LegalDocumentType, LegalDocumentVersion, MissingRequiredDocument, NotificationRecord, PrivacyRequestStatus, PrivacyRequestType, UserAuditEvent } from "../types";
 import type { AdvisorRegistrationInput } from "../domain/advisorRegistration";
 
 const API_URL = requireFrontendConfig().apiBaseUrl;
@@ -200,6 +200,7 @@ export const api = {
   markAllNotificationsRead: () => authFetch<{read: true; count: number}>("/api/notifications/read-all", {method: "PATCH"}),
   updateAdvisorProfile: (values: {firstName: string; lastName: string; phone: string; businessName: string}) => authFetch<CurrentUser>("/api/advisor/profile", {method: "PATCH", body: JSON.stringify(values)}),
   adminAdvisors: (includeArchived = false) => authFetch<AdvisorAdminRecord[]>(`/api/admin/advisors${includeArchived ? "?includeArchived=1" : ""}`),
+  adminAdvisorStats: () => authFetch<AdvisorCaseStats[]>("/api/admin/advisors/stats"),
   adminEmailLogs: () => authFetch<AdminEmailLogRecord[]>("/api/admin/email-logs"),
   updateAdvisorStatus: (id: number, status: "ACTIVE" | "SUSPENDED" | "DISABLED", reason?: string) => authFetch<AdvisorAdminRecord>(`/api/admin/advisors/${id}/status`, {method: "PATCH", body: JSON.stringify({status, reason})}),
   adminResendAdvisorVerification: (id: number) => authFetch<{success: true; verificationEmailSent: true}>(`/api/admin/advisors/${id}/resend-verification`, {method: "POST"}),
@@ -245,6 +246,18 @@ export const api = {
   adminCompanySubmission: (publicId: string) => authFetch<CompanyResponse>(`/api/admin/company-submissions/${encodeURIComponent(publicId)}`),
   adminCompanySubmissionPdf: (publicId: string, kind: "masked-pdf" | "full-pdf") => authBlob(`/api/admin/company-submissions/${encodeURIComponent(publicId)}/${kind}`),
   adminCompanySubmissionAction: (publicId: string, action: string, values: Record<string, unknown> = {}) => authFetch<CompanyResponse>(`/api/admin/company-submissions/${encodeURIComponent(publicId)}/${action}`, {method: "POST", body: JSON.stringify(values)}),
+  adminStats: (period: AdminStatsPeriod) => authFetch<AdminDashboardStats>(`/api/admin/stats?period=${period}`),
+  adminActivityStats: (period: AdminStatsPeriod) => authFetch<AdminActivityPoint[]>(`/api/admin/stats/activity?period=${period}`),
+  adminRecentActivity: () => authFetch<AdminRecentActivityItem[]>("/api/admin/stats/recent-activity"),
+  adminAttention: () => authFetch<AdminAttention>("/api/admin/stats/attention"),
+  adminCases: (query: {page: number; pageSize: number; status?: string; advisorId?: number; search?: string}) => {
+    const params = new URLSearchParams({page: String(query.page), pageSize: String(query.pageSize)});
+    if (query.status) params.set("status", query.status);
+    if (query.advisorId) params.set("advisorId", String(query.advisorId));
+    if (query.search) params.set("search", query.search);
+    return authFetch<AdminCaseListResponse>(`/api/admin/cases?${params.toString()}`);
+  },
+  adminCaseDetail: (id: number) => authFetch<AdminCaseDetail>(`/api/admin/cases/${id}`),
   externalReview: (token: string) => externalFetch<ExternalReview>(`/api/external/review/${encodeURIComponent(token)}`),
   externalMaskedPdf: (token: string, download = false) => externalBlob(`/api/external/review/${encodeURIComponent(token)}/masked-pdf${download ? "?download=1" : ""}`),
   externalNotInterested: (token: string, csrfToken: string) => externalFetch<{decisionStatus: string}>(`/api/external/review/${encodeURIComponent(token)}/not-interested`, {method: "POST", body: "{}"}, csrfToken),

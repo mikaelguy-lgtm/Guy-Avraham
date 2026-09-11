@@ -8,18 +8,18 @@ function parts(formatter: Intl.DateTimeFormat, date: Date): Record<string, strin
   return Object.fromEntries(formatter.formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
 }
 
-function dateKey(date: Date): string {
+export function dateKey(date: Date): string {
   const value = parts(gregorianFormatter, date);
   return `${value.year}-${value.month}-${value.day}`;
 }
 
-function addDays(key: string, days: number): string {
+export function addDays(key: string, days: number): string {
   const [year, month, day] = key.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day + days));
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
 }
 
-function atLocalTime(key: string, hour: number, minute: number): Date {
+export function atLocalTime(key: string, hour: number, minute: number): Date {
   const [year, month, day] = key.split("-").map(Number);
   const desired = Date.UTC(year, month - 1, day, hour, minute);
   let candidate = desired;

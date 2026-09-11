@@ -2,7 +2,14 @@ import {useCallback, useEffect, useState, type FormEvent} from "react";
 import {Building2, Edit3, Mail, Plus, Power, Trash2, UserPlus, X} from "lucide-react";
 import type {FinancingCompanyAdmin, FinancingCompanyContact} from "../types";
 import {ApiError, api} from "../utils/apiClient";
-import {formatDate} from "../utils/formatters";
+import {formatDate, formatPercentage} from "../utils/formatters";
+
+function formatResponseTime(seconds: number | null): string {
+  if (seconds === null) return "אין נתונים";
+  const days = seconds / 86_400;
+  if (days >= 1) return `${days.toFixed(1)} ימים`;
+  return `${(seconds / 3600).toFixed(1)} שעות`;
+}
 
 const emptyCompany = {name: "", legalName: "", companyNumber: "", phone: "", address: "", website: "", activityAreas: "", adminNotes: "", active: false};
 const emptyContact = {firstName: "", lastName: "", roleTitle: "", email: "", phone: "", isPrimary: false, active: true};
@@ -37,6 +44,7 @@ export default function AdminFinancingCompaniesView() {
     {message && <p className="form-message success" role="status">{message}</p>}{error && <p className="form-message error" role="alert">{error}</p>}
     <section className="admin-company-grid">{companies.map((company) => <article className="content-card admin-company-card" key={company.id}><header><span className="lender-logo"><Building2 /></span><div><h2>{company.name}</h2><p>{company.legalName || "שם משפטי לא הוגדר"}</p></div><span className={`status-badge ${company.active ? "status-active" : "status-draft"}`}>{company.active ? "פעילה" : "לא פעילה"}</span></header>
       <div className="company-stat-row"><span><strong>{company.submissionCount}</strong> תיקים</span><span><strong>{company.interestedCount}</strong> מעוניינת</span><span><strong>{company.notInterestedCount}</strong> לא מעוניינת</span><span><strong>{company.expiredCount}</strong> פגו</span></div>
+      <div className="company-stat-row"><span><strong>{company.responseRate === null ? "אין נתונים" : formatPercentage(company.responseRate * 100)}</strong> אחוז מענה</span><span><strong>{formatResponseTime(company.avgResponseSeconds)}</strong> זמן מענה ממוצע</span></div>
       <p className="activity-tags">{company.activityAreas.length ? company.activityAreas.map((area) => <span key={area}>{area}</span>) : "לא הוגדרו תחומי פעילות"}</p><p>שליחה אחרונה: {company.lastSentAt ? formatDate(company.lastSentAt) : "טרם נשלח תיק"}</p>
       <section className="company-contacts"><header><h3>אנשי קשר ({company.activeContactCount} פעילים)</h3><button type="button" className="text-action" onClick={() => openContact(company)}><UserPlus />הוספה</button></header>{company.contacts.map((contact) => <article key={contact.id}><span className={contact.active ? "contact-state active" : "contact-state"} /><div><strong>{contact.firstName} {contact.lastName}{contact.isPrimary ? " · ראשי" : ""}</strong><small>{contact.roleTitle} · {contact.email}</small></div><button type="button" className="icon-action" aria-label={`עריכת ${contact.firstName}`} onClick={() => openContact(company, contact)}><Edit3 /></button><button type="button" className="icon-action danger" aria-label={`מחיקת ${contact.firstName}`} onClick={() => {if (window.confirm("למחוק את איש הקשר?")) void api.deleteFinancingContact(company.id, contact.id).then(load).catch(failure);}}><Trash2 /></button></article>)}</section>
       <footer><button type="button" className="secondary-action" onClick={() => openCompany(company)}><Edit3 />עריכה</button><label className="secondary-action logo-upload">העלאת לוגו<input type="file" accept="image/png,image/jpeg" onChange={(event) => {const file = event.target.files?.[0]; if (file) void api.uploadFinancingCompanyLogo(company.id, file).then(load).catch(failure); event.target.value = "";}} /></label><button type="button" className="secondary-action" onClick={() => void toggleCompany(company)}><Power />{company.active ? "השבתה" : "הפעלה"}</button><button type="button" className="danger-action" onClick={() => {if (window.confirm("מחיקה זו תשבית את החברה ואת אנשי הקשר. להמשיך?")) void api.deleteFinancingCompany(company.id).then(load).catch(failure);}}><Trash2 />מחיקה</button></footer>

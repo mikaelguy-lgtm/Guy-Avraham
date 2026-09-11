@@ -20,7 +20,7 @@ import {createFullCasePdf, createMaskedCasePdf, PDF_RENDERER_VERSION} from "./pd
 import {loadPdfHebrewFonts} from "./pdfFonts.js";
 import type {StorageService} from "./storage.js";
 import {DeliveryTokenService} from "./deliveryTokens.js";
-import {IsraelBusinessCalendarService} from "./israelBusinessCalendar.js";
+import {IsraelBusinessCalendarService, addDays, atLocalTime, dateKey} from "./israelBusinessCalendar.js";
 import {deliveryEmailTemplates, type DeliveryEmailContent} from "./deliveryEmailTemplates.js";
 import type {DeliveryEventBroker} from "./deliveryEvents.js";
 
@@ -41,6 +41,8 @@ export interface AdminDeliveryActor {
   userId: number;
 }
 
+export type AdminStatsPeriod = "today" | "7d" | "30d" | "month" | "all";
+
 export interface PortalSessionResult {
   sessionToken: string;
   expiresAt: Date;
@@ -49,6 +51,7 @@ export interface PortalSessionResult {
 export interface LenderDeliveryApplication {
   listAdvisorCompanies(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryCompanySummary[]>;
   preflight(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryPreflight>;
+  getCaseReadiness(clientId: number): Promise<DeliveryPreflight>;
   preview(clientId: number, actor: AdvisorDeliveryActor): Promise<DeliveryPreview>;
   send(clientId: number, input: {idempotencyKey: string; previewConfirmation: string}, actor: AdvisorDeliveryActor, context: DeliveryContext): Promise<Record<string, unknown>>;
   listClientResponses(clientId: number, actor: AdvisorDeliveryActor): Promise<unknown[]>;
@@ -67,6 +70,13 @@ export interface LenderDeliveryApplication {
   deleteCalendarException(id: number, actor: AdminDeliveryActor, context: DeliveryContext): Promise<void>;
   listAdminSubmissions(): Promise<unknown[]>;
   getAdminSubmission(publicId: string): Promise<unknown>;
+  getAdminStats(period: AdminStatsPeriod): Promise<Record<string, number>>;
+  getAdminActivityStats(period: AdminStatsPeriod): Promise<Array<Record<string, unknown>>>;
+  getAdminRecentActivity(limit?: number): Promise<Array<Record<string, unknown>>>;
+  getAdminAttention(): Promise<Record<string, unknown>>;
+  listAdminCases(query: {page: number; pageSize: number; status?: string; advisorId?: number; search?: string}): Promise<{items: Array<Record<string, unknown>>; total: number}>;
+  getAdminCaseDetail(clientId: number): Promise<Record<string, unknown>>;
+  getAdvisorCaseStats(): Promise<Array<Record<string, unknown>>>;
   getAdminPdf(publicId: string, kind: "masked" | "full", actor: AdminDeliveryActor, context: DeliveryContext): Promise<{body: Buffer; filename: string}>;
   adminAction(publicId: string, action: string, values: Record<string, unknown>, actor: AdminDeliveryActor, context: DeliveryContext): Promise<unknown>;
   getReview(token: string, context: DeliveryContext): Promise<unknown>;
@@ -340,6 +350,18 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     return {ready: blockers.length === 0, blockers};
   }
 
+  // Admin-facing readiness check (SUPER ADMIN Control Center Cases screen) —
+  // reuses the exact same loadFullSnapshot()/collectDeliveryBlockers() pair
+  // that gates the advisor's own send flow (preflight() above), just without
+  // the advisorId ownership filter, since SUPER_ADMIN may inspect any case.
+  // This guarantees the "Ready"/"Incomplete" badge can never drift from what
+  // the real send screen would show for the same case.
+  async getCaseReadiness(clientId: number): Promise<DeliveryPreflight> {
+    const snapshot = await this.loadFullSnapshot(clientId);
+    const blockers = collectDeliveryBlockers(snapshot);
+    return {ready: blockers.length === 0, blockers};
+  }
+
   // Server-determined target list (section 4/77 of the product brief): the
   // advisor never selects lender companies. Every send targets every
   // currently-active lender company that has at least one active contact.
@@ -517,17 +539,43 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
   }
 
   async listCompaniesForAdmin(): Promise<unknown[]> {
-    const result = await this.pool.query(`select l.*, count(distinct c.id) filter(where c.deleted_at is null)::int contact_count,
+    // Response-rate/response-time are computed in a standalone per-company
+    // CTE, deliberately NOT alongside the lender_contacts join below — that
+    // join fan-outs one row per (contact × submission), and while COUNT
+    // DISTINCT is safe under that fan-out, an AVG over a duplicated set is
+    // fragile to reason about (only correct because every row in a group is
+    // duplicated by the same uniform factor); keeping it in its own
+    // single-join subquery avoids relying on that non-obvious invariant.
+    // Response rate denominator = submissions actually delivered
+    // (delivery_status='SENT') and never cancelled — a submission that
+    // failed to send or was cancelled was never in a position to respond.
+    const result = await this.pool.query(`with response_stats as (
+        select company_id,
+          count(*) filter(where delivery_status='SENT' and cancelled_at is null) as delivered_count,
+          count(*) filter(where delivery_status='SENT' and cancelled_at is null and decision_status in ('INTERESTED','NOT_INTERESTED')) as decided_count,
+          avg(extract(epoch from (decision_at - created_at))) filter(where decision_at is not null) as avg_response_seconds
+        from company_submissions group by company_id
+      )
+      select l.*, count(distinct c.id) filter(where c.deleted_at is null)::int contact_count,
       count(distinct c.id) filter(where c.active=true and c.deleted_at is null)::int active_contact_count,
       count(distinct cs.id)::int submission_count,
       count(distinct cs.id) filter(where cs.decision_status='INTERESTED')::int interested_count,
       count(distinct cs.id) filter(where cs.decision_status='NOT_INTERESTED')::int not_interested_count,
       count(distinct cs.id) filter(where cs.decision_status='EXPIRED')::int expired_count,
-      max(cs.created_at) last_sent_at
+      max(cs.created_at) last_sent_at,
+      rs.delivered_count, rs.decided_count, rs.avg_response_seconds
       from lenders l left join lender_contacts c on c.lender_id=l.id left join company_submissions cs on cs.company_id=l.id
-      where l.deleted_at is null group by l.id order by l.name`);
+      left join response_stats rs on rs.company_id=l.id
+      where l.deleted_at is null group by l.id, rs.delivered_count, rs.decided_count, rs.avg_response_seconds order by l.name`);
     const contacts = await this.pool.query("select * from lender_contacts where deleted_at is null order by lender_id,is_primary desc,id");
-    return result.rows.map((row) => ({id: Number(row.id), name: row.name, legalName: row.legal_name, companyNumber: row.company_number, phone: row.phone, address: row.address, website: row.website, activityAreas: row.activity_areas ?? [], adminNotes: this.decrypt(row.admin_notes_encrypted), active: row.active, contactCount: Number(row.contact_count), activeContactCount: Number(row.active_contact_count), submissionCount: Number(row.submission_count), interestedCount: Number(row.interested_count), notInterestedCount: Number(row.not_interested_count), expiredCount: Number(row.expired_count), lastSentAt: row.last_sent_at, contacts: contacts.rows.filter((contact) => contact.lender_id === row.id).map((contact) => this.publicContact(contact))}));
+    return result.rows.map((row) => {
+      const deliveredCount = Number(row.delivered_count ?? 0);
+      const decidedCount = Number(row.decided_count ?? 0);
+      return {id: Number(row.id), name: row.name, legalName: row.legal_name, companyNumber: row.company_number, phone: row.phone, address: row.address, website: row.website, activityAreas: row.activity_areas ?? [], adminNotes: this.decrypt(row.admin_notes_encrypted), active: row.active, contactCount: Number(row.contact_count), activeContactCount: Number(row.active_contact_count), submissionCount: Number(row.submission_count), interestedCount: Number(row.interested_count), notInterestedCount: Number(row.not_interested_count), expiredCount: Number(row.expired_count), lastSentAt: row.last_sent_at,
+        responseRate: deliveredCount > 0 ? decidedCount / deliveredCount : null,
+        avgResponseSeconds: row.avg_response_seconds === null ? null : Number(row.avg_response_seconds),
+        contacts: contacts.rows.filter((contact) => contact.lender_id === row.id).map((contact) => this.publicContact(contact))};
+    });
   }
 
   private publicContact(row: Row): Record<string, unknown> {
@@ -990,6 +1038,288 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       where sci.company_submission_id=$1 order by lc.is_primary desc,lc.id`, [row.id]);
     const timeline = await this.pool.query("select event_type,actor_type,metadata_safe,created_at,request_id from submission_events where company_submission_id=$1 order by created_at", [row.id]);
     return {...this.publicSubmission(row), publicCaseNumber: row.public_case_number, maskedSnapshot: row.masked_snapshot, invitations: invitations.rows.map((item) => ({publicId: item.public_id, status: item.status, contactName: `${item.first_name} ${item.last_name}`, contactRole: item.role_title, recipientMasked: maskEmailAddress(item.email), createdAt: item.created_at, emailSentAt: item.email_sent_at, emailFailedAt: item.email_failed_at, lastAttemptAt: item.last_attempt_at, smtpStatus: item.smtp_status ?? "NOT_CREATED", attempts: Number(item.attempts ?? 0), resent: Number(item.outbox_count ?? 0) > 1, safeFailureReason: item.sanitized_error ?? null, requestId: item.request_id ?? (item.latest_outbox_id ? `job-${item.latest_outbox_id}` : null), resendEligible: item.status === "FAILED" && Number(item.successful ?? 0) === 0, openedAt: item.opened_at, lastOpenedAt: item.last_opened_at, openCount: Number(item.open_count), maskedPdfViewedAt: item.masked_pdf_viewed_at, maskedPdfDownloadedAt: item.masked_pdf_downloaded_at, reminderOneSentAt: item.reminder_one_sent_at, reminderTwoSentAt: item.reminder_two_sent_at, closedAt: item.closed_at})), timeline: timeline.rows.map((item) => ({type: item.event_type, actorType: item.actor_type, metadata: item.metadata_safe, createdAt: item.created_at, requestId: item.request_id}))};
+  }
+
+  // Period cutoff for the SUPER_ADMIN dashboard time filter. DST-safe: reuses
+  // the same Israel-local-midnight construction already proven correct in
+  // israelBusinessCalendar.ts's deadline math, rather than a naive UTC offset.
+  private periodSince(period: AdminStatsPeriod): Date | null {
+    if (period === "all") return null;
+    const todayKey = dateKey(new Date());
+    if (period === "today") return atLocalTime(todayKey, 0, 0);
+    if (period === "7d") return atLocalTime(addDays(todayKey, -6), 0, 0);
+    if (period === "30d") return atLocalTime(addDays(todayKey, -29), 0, 0);
+    const [year, month] = todayKey.split("-");
+    return atLocalTime(`${year}-${month}-01`, 0, 0);
+  }
+
+  // Dashboard KPIs — every count/sum here is computed at most once per
+  // client_id (case), never via a direct join to company_submissions, so a
+  // case sent to 5 companies is never counted as 5 (see docs/DECISIONS.md-
+  // adjacent plan notes on KPI double-counting). "Total"/"active" advisor
+  // counts are all-time, independent of the period filter; "new X" counts
+  // and financial sums are scoped to the period by their own defining event
+  // (registration date, case-creation date, first-send date).
+  async getAdminStats(period: AdminStatsPeriod): Promise<Record<string, number>> {
+    const since = this.periodSince(period);
+    const advisors = await this.pool.query(
+      `select count(*) filter (where role='ADVISOR') as total_advisors,
+              count(*) filter (where role='ADVISOR' and status='ACTIVE') as active_advisor_accounts,
+              count(*) filter (where role='ADVISOR' and created_at >= coalesce($1::timestamptz,'-infinity'::timestamptz)) as new_advisors
+       from users`, [since]);
+    const cases = await this.pool.query(
+      `select count(*) as total_cases,
+              count(*) filter (where created_at >= coalesce($1::timestamptz,'-infinity'::timestamptz)) as new_cases
+       from clients where deleted_at is null`, [since]);
+    const financial = await this.pool.query(
+      `select coalesce(sum(lr.requested_amount),0) as total_requested, coalesce(avg(lr.requested_amount),0) as avg_requested
+       from clients c join loan_requests lr on lr.client_id=c.id
+       where c.deleted_at is null and c.created_at >= coalesce($1::timestamptz,'-infinity'::timestamptz)`, [since]);
+    const decisions = await this.pool.query(
+      `with case_sends as (select distinct client_id, min(created_at) as first_sent_at from case_versions group by client_id),
+            case_decisions as (
+              select cv.client_id,
+                bool_or(cs.decision_status='INTERESTED') as has_interested,
+                bool_or(cs.decision_status='EXPIRED') as has_expired,
+                bool_or(cs.decision_status in ('PENDING','PENDING_VERIFICATION')) as has_waiting
+              from company_submissions cs join case_versions cv on cv.id=cs.case_version_id
+              group by cv.client_id)
+       select
+         (select count(*) from case_sends where first_sent_at >= coalesce($1::timestamptz,'-infinity'::timestamptz)) as sent_in_period,
+         (select count(*) from case_decisions where has_waiting) as waiting_for_response,
+         (select count(*) from case_decisions where has_interested) as with_interest,
+         (select count(*) from case_decisions where has_expired and not has_interested) as expired_no_response,
+         (select coalesce(sum(lr.requested_amount),0) from loan_requests lr where lr.client_id in (select client_id from case_sends)) as financing_in_sent_cases,
+         (select coalesce(sum(lr.requested_amount),0) from loan_requests lr where lr.client_id in (select client_id from case_decisions where has_interested)) as financing_in_interested_cases`, [since]);
+    const row = {...advisors.rows[0], ...cases.rows[0], ...financial.rows[0], ...decisions.rows[0]};
+    return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)]));
+  }
+
+  // Activity graph — day-granularity buckets (week-granularity for "all" to
+  // keep the point count sane over a long history). Each series counts a
+  // distinct business event on its own defining date; cases-sent is
+  // deduplicated per client_id per bucket via the same case_sends pattern
+  // used in getAdminStats, so a 5-company send still contributes 1.
+  async getAdminActivityStats(period: AdminStatsPeriod): Promise<Array<Record<string, unknown>>> {
+    const since = this.periodSince(period) ?? new Date(0);
+    const bucket = period === "all" ? "week" : "day";
+    const result = await this.pool.query(
+      `with buckets as (
+         select date_trunc($2, generate_series(coalesce($1::timestamptz,(select min(created_at) from users)), now(), ('1 '||$2)::interval)) as bucket
+       ),
+       new_advisors as (select date_trunc($2, created_at) as bucket, count(*) as value from users where role='ADVISOR' and created_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1),
+       new_cases as (select date_trunc($2, created_at) as bucket, count(*) as value from clients where deleted_at is null and created_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1),
+       cases_sent as (select date_trunc($2, first_sent_at) as bucket, count(*) as value from (select client_id, min(created_at) as first_sent_at from case_versions group by client_id) sends where first_sent_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1),
+       interested as (select date_trunc($2, decision_at) as bucket, count(*) as value from company_submissions where decision_status='INTERESTED' and decision_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1)
+       select to_char(buckets.bucket, 'YYYY-MM-DD') as bucket,
+              coalesce(new_advisors.value,0)::int as new_advisors,
+              coalesce(new_cases.value,0)::int as new_cases,
+              coalesce(cases_sent.value,0)::int as cases_sent,
+              coalesce(interested.value,0)::int as interested
+       from buckets
+       left join new_advisors on new_advisors.bucket=buckets.bucket
+       left join new_cases on new_cases.bucket=buckets.bucket
+       left join cases_sent on cases_sent.bucket=buckets.bucket
+       left join interested on interested.bucket=buckets.bucket
+       order by buckets.bucket`, [since, bucket]);
+    return result.rows;
+  }
+
+  // Recent activity feed — a UNION of genuinely-recorded business events only
+  // (never fabricated): advisor registrations and case creations from the
+  // audit log, submission decisions from company_submissions, failed emails
+  // from email_outbox, and new privacy requests. Each row carries
+  // entityType/entityId for a deep link.
+  async getAdminRecentActivity(limit = 30): Promise<Array<Record<string, unknown>>> {
+    const result = await this.pool.query(
+      `(select 'ADVISOR_REGISTERED' as type, al.created_at as at, al.entity_id as entity_id, 'user' as entity_type,
+               u.first_name||' '||u.last_name as label
+        from audit_logs al join users u on u.id=al.entity_id where al.action='ADVISOR_REGISTERED')
+       union all
+       (select 'CASE_CREATED', al.created_at, al.entity_id, 'client', c.public_case_number
+        from audit_logs al join clients c on c.id=al.entity_id where al.action='CLIENT_CREATED')
+       union all
+       (select case when cs.decision_status='INTERESTED' then 'LENDER_INTERESTED' when cs.decision_status='NOT_INTERESTED' then 'LENDER_NOT_INTERESTED' when cs.decision_status='EXPIRED' then 'DEADLINE_PASSED' end,
+               coalesce(cs.decision_at, cs.response_deadline_at), cv.client_id, 'client', c.public_case_number||' · '||l.name
+        from company_submissions cs join case_versions cv on cv.id=cs.case_version_id join clients c on c.id=cv.client_id join lenders l on l.id=cs.company_id
+        where cs.decision_status in ('INTERESTED','NOT_INTERESTED','EXPIRED'))
+       union all
+       (select 'EMAIL_FAILED', eo.updated_at, eo.id, 'email_outbox', eo.template
+        from email_outbox eo where eo.status='FAILED')
+       union all
+       (select 'PRIVACY_REQUEST', pr.created_at, pr.id, 'privacy_request', pr.name
+        from privacy_requests pr where pr.status='NEW')
+       order by at desc limit $1`, [limit]);
+    return result.rows.map((row) => ({type: row.type, at: row.at, entityType: row.entity_type, entityId: Number(row.entity_id), label: row.label}));
+  }
+
+  // Requires-attention widget — every item here has a real, currently-true
+  // condition in the database; nothing is inferred or estimated.
+  async getAdminAttention(): Promise<Record<string, unknown>> {
+    const staleDrafts = await this.pool.query(`select count(*)::int as count from clients where deleted_at is null and status='DRAFT' and updated_at < now() - interval '14 days'`);
+    const pastDeadline = await this.pool.query(`select count(*)::int as count from company_submissions where decision_status in ('PENDING','PENDING_VERIFICATION') and response_deadline_at < now()`);
+    const failedEmails = await this.pool.query(`select count(*)::int as count from email_outbox where status='FAILED'`);
+    const problemUsers = await this.pool.query(`select count(*)::int as count from users where role='ADVISOR' and (status in ('PENDING','SUSPENDED'))`);
+    const openPrivacyRequests = await this.pool.query(`select count(*)::int as count from privacy_requests where status='NEW'`);
+    return {
+      staleDrafts: staleDrafts.rows[0].count, pastDeadlineNoResponse: pastDeadline.rows[0].count,
+      failedEmails: failedEmails.rows[0].count, problemAdvisorAccounts: problemUsers.rows[0].count,
+      openPrivacyRequests: openPrivacyRequests.rows[0].count
+    };
+  }
+
+  // Single-badge case stage shown in the Cases list/detail — the same
+  // outcome buckets the status filter pills use (listAdminCases' having
+  // clauses), collapsed into one priority order: an interested response is
+  // always the most actionable news, then "still waiting", then the two
+  // terminal negative outcomes. DRAFT/ARCHIVED pass through the raw client
+  // status unchanged (a case only reaches these branches once SUBMITTED).
+  private computeCaseStage(status: string, submissionCount: number, respondedCount: number, interestedCount: number, expiredCount: number): string {
+    if (status !== "SUBMITTED" || submissionCount === 0) return status;
+    if (interestedCount > 0) return "INTERESTED";
+    if (respondedCount < submissionCount) return "WAITING";
+    return expiredCount > 0 ? "EXPIRED" : "NOT_INTERESTED";
+  }
+
+  // Cases list — server-side paginated. Global status filters are computed
+  // purely from clients.status/company_submissions.decision_status (no
+  // decrypt at all). "Ready"/"Incomplete" is intentionally NOT a global
+  // filter (would require decrypting every DRAFT row before pagination,
+  // diverging from paging cost bounds) — it is computed per-row, only for
+  // the DRAFT rows on the current page, via the shared getCaseReadiness().
+  async listAdminCases(query: {page: number; pageSize: number; status?: string; advisorId?: number; search?: string}): Promise<{items: Array<Record<string, unknown>>; total: number}> {
+    const page = Math.max(1, query.page);
+    const pageSize = Math.min(100, Math.max(1, query.pageSize));
+    const offset = (page - 1) * pageSize;
+    const conditions: string[] = ["c.deleted_at is null"];
+    const params: unknown[] = [];
+    if (query.advisorId) { params.push(query.advisorId); conditions.push(`c.advisor_id=$${params.length}`); }
+    if (query.search) { params.push(`%${query.search}%`); conditions.push(`(c.public_case_number ilike $${params.length} or u.first_name ilike $${params.length} or u.last_name ilike $${params.length})`); }
+    const statusFilter = query.status;
+    let havingClause = "";
+    if (statusFilter === "DRAFT" || statusFilter === "SUBMITTED" || statusFilter === "ARCHIVED") { params.push(statusFilter); conditions.push(`c.status=$${params.length}`); }
+    else if (statusFilter === "WAITING") havingClause = "having bool_or(cs.decision_status in ('PENDING','PENDING_VERIFICATION'))";
+    else if (statusFilter === "INTERESTED") havingClause = "having bool_or(cs.decision_status='INTERESTED')";
+    else if (statusFilter === "NOT_INTERESTED") havingClause = "having bool_and(cs.decision_status='NOT_INTERESTED') and count(cs.id) > 0";
+    else if (statusFilter === "EXPIRED") havingClause = "having bool_or(cs.decision_status='EXPIRED') and not bool_or(cs.decision_status='INTERESTED')";
+    else if (statusFilter === "CLOSED") havingClause = "having count(cs.id) > 0 and not bool_or(cs.decision_status in ('PENDING','PENDING_VERIFICATION'))";
+    const where = conditions.join(" and ");
+    const countResult = await this.pool.query(
+      `select count(*) from (
+         select c.id from clients c join advisor_profiles ap on ap.id=c.advisor_id join users u on u.id=ap.user_id
+         left join case_versions cv on cv.client_id=c.id left join company_submissions cs on cs.case_version_id=cv.id
+         where ${where} group by c.id ${havingClause}
+       ) counted`, params);
+    const rows = await this.pool.query(
+      `select c.id, c.public_case_number, c.status, c.created_at, c.updated_at,
+              u.first_name as advisor_first_name, u.last_name as advisor_last_name,
+              lr.requested_amount, p.estimated_value, lr.purpose,
+              c.first_name_encrypted, c.last_name_encrypted,
+              count(cs.id)::int as submission_count,
+              count(cs.id) filter (where cs.decision_status not in ('PENDING','PENDING_VERIFICATION'))::int as responded_count,
+              count(cs.id) filter (where cs.decision_status='INTERESTED')::int as interested_count,
+              count(cs.id) filter (where cs.decision_status='EXPIRED')::int as expired_count,
+              min(cs.response_deadline_at) as earliest_deadline
+       from clients c join advisor_profiles ap on ap.id=c.advisor_id join users u on u.id=ap.user_id
+       join properties p on p.client_id=c.id join loan_requests lr on lr.client_id=c.id
+       left join case_versions cv on cv.client_id=c.id left join company_submissions cs on cs.case_version_id=cv.id
+       where ${where}
+       group by c.id, u.first_name, u.last_name, lr.requested_amount, p.estimated_value, lr.purpose
+       ${havingClause}
+       order by c.created_at desc limit ${pageSize} offset ${offset}`, params);
+    const items = rows.rows.map((row) => {
+      const submissionCount = Number(row.submission_count);
+      const respondedCount = Number(row.responded_count);
+      const interestedCount = Number(row.interested_count);
+      const expiredCount = Number(row.expired_count);
+      const caseStage = this.computeCaseStage(row.status, submissionCount, respondedCount, interestedCount, expiredCount);
+      return {
+        id: Number(row.id), publicCaseNumber: row.public_case_number, status: row.status, caseStage,
+        createdAt: row.created_at, updatedAt: row.updated_at,
+        advisorName: `${row.advisor_first_name} ${row.advisor_last_name}`.trim(),
+        clientName: `${this.decrypt(row.first_name_encrypted)} ${this.decrypt(row.last_name_encrypted)}`.trim(),
+        requestedAmount: Number(row.requested_amount), propertyValue: Number(row.estimated_value), purpose: row.purpose,
+        submissionCount, respondedCount, interestedCount,
+        earliestDeadline: row.earliest_deadline
+      };
+    });
+    return {items, total: Number(countResult.rows[0].count)};
+  }
+
+  // Case detail (admin, read-only) — client/property/loan-request core
+  // fields, documents, immutable case_versions + their submissions, full
+  // event timeline, and email history joined ONLY through the real FK chain
+  // (company_submission_id / invitation_id), never by recipient address —
+  // so a contact linked to multiple cases never leaks another case's mail.
+  async getAdminCaseDetail(clientId: number): Promise<Record<string, unknown>> {
+    const clientResult = await this.pool.query(
+      `select c.*, u.first_name as advisor_first_name, u.last_name as advisor_last_name, u.email as advisor_email,
+              p.property_type, p.city as property_city, p.estimated_value,
+              lr.purpose, lr.requested_amount, lr.requested_term_months, lr.loan_to_value
+       from clients c join advisor_profiles ap on ap.id=c.advisor_id join users u on u.id=ap.user_id
+       join properties p on p.client_id=c.id join loan_requests lr on lr.client_id=c.id
+       where c.id=$1 and c.deleted_at is null`, [clientId]);
+    const row = clientResult.rows[0];
+    if (!row) throw new DeliveryError("CLIENT_NOT_FOUND", 404, "התיק לא נמצא.");
+    const documents = await this.pool.query(`select id, document_type, custom_title, mime_type, size_bytes, created_at from documents where client_id=$1 and deleted_at is null order by created_at`, [clientId]);
+    const versions = await this.pool.query(`select id, version_number, status, created_at from case_versions where client_id=$1 order by version_number`, [clientId]);
+    const submissions = await this.pool.query(
+      `select cs.id, cs.public_id, cs.delivery_status, cs.decision_status, cs.response_deadline_at, cs.decision_at, cs.created_at, l.name as company_name
+       from company_submissions cs join case_versions cv on cv.id=cs.case_version_id join lenders l on l.id=cs.company_id
+       where cv.client_id=$1 order by cs.created_at`, [clientId]);
+    const timeline = await this.pool.query(
+      `select se.event_type, se.actor_type, se.metadata_safe, se.created_at
+       from submission_events se join company_submissions cs on cs.id=se.company_submission_id join case_versions cv on cv.id=cs.case_version_id
+       where cv.client_id=$1 order by se.created_at`, [clientId]);
+    const emailHistory = await this.pool.query(
+      `select eo.id, eo.template, eo.recipient, eo.status, eo.sent_at, eo.created_at
+       from email_outbox eo
+       where eo.company_submission_id in (select cs.id from company_submissions cs join case_versions cv on cv.id=cs.case_version_id where cv.client_id=$1)
+          or eo.invitation_id in (select sci.id from submission_contact_invitations sci join company_submissions cs on cs.id=sci.company_submission_id join case_versions cv on cv.id=cs.case_version_id where cv.client_id=$1)
+       order by eo.created_at`, [clientId]);
+    const submissionRows = submissions.rows;
+    const respondedCount = submissionRows.filter((s) => s.decision_status !== "PENDING" && s.decision_status !== "PENDING_VERIFICATION").length;
+    const interestedCount = submissionRows.filter((s) => s.decision_status === "INTERESTED").length;
+    const expiredCount = submissionRows.filter((s) => s.decision_status === "EXPIRED").length;
+    const caseStage = this.computeCaseStage(row.status, submissionRows.length, respondedCount, interestedCount, expiredCount);
+    return {
+      id: Number(row.id), publicCaseNumber: row.public_case_number, status: row.status, caseStage,
+      createdAt: row.created_at, updatedAt: row.updated_at,
+      advisor: {name: `${row.advisor_first_name} ${row.advisor_last_name}`.trim(), email: row.advisor_email},
+      property: {type: row.property_type, city: row.property_city, value: Number(row.estimated_value)},
+      loanRequest: {purpose: row.purpose, requestedAmount: Number(row.requested_amount), requestedTermMonths: Number(row.requested_term_months), loanToValue: Number(row.loan_to_value)},
+      documents: documents.rows.map((document) => ({id: Number(document.id), documentType: document.document_type, customTitle: document.custom_title, mimeType: document.mime_type, sizeBytes: Number(document.size_bytes), createdAt: document.created_at})),
+      versions: versions.rows.map((version) => ({id: Number(version.id), versionNumber: Number(version.version_number), status: version.status, createdAt: version.created_at})),
+      submissions: submissionRows.map((submission) => ({id: Number(submission.id), publicId: submission.public_id, companyName: submission.company_name, deliveryStatus: submission.delivery_status, decisionStatus: submission.decision_status, responseDeadlineAt: submission.response_deadline_at, decisionAt: submission.decision_at, createdAt: submission.created_at})),
+      timeline: timeline.rows.map((event) => ({type: event.event_type, actorType: event.actor_type, metadata: event.metadata_safe, createdAt: event.created_at})),
+      emailHistory: emailHistory.rows.map((email) => ({id: Number(email.id), template: email.template, recipientMasked: maskEmailAddress(email.recipient), status: email.status, sentAt: email.sent_at, createdAt: email.created_at}))
+    };
+  }
+
+  // Per-advisor KPI row for the Advisors admin screen — one aggregated query
+  // for every advisor at once (no N+1), each metric counted once per
+  // client_id via the same case_sends/case_decisions pattern as
+  // getAdminStats(), never multiplied by a company_submissions fan-out.
+  async getAdvisorCaseStats(): Promise<Array<Record<string, unknown>>> {
+    const result = await this.pool.query(
+      `with case_decisions as (
+         select cv.client_id,
+           bool_or(cs.decision_status='INTERESTED') as has_interested,
+           bool_or(cv.client_id is not null) as sent
+         from case_versions cv left join company_submissions cs on cs.case_version_id=cv.id
+         group by cv.client_id)
+       select c.advisor_id,
+         count(distinct c.id)::int as client_count,
+         count(distinct c.id) filter (where cd.sent)::int as sent_count,
+         count(distinct c.id) filter (where cd.has_interested)::int as interested_count,
+         coalesce(sum(lr.requested_amount),0) as total_requested,
+         coalesce(avg(lr.requested_amount),0) as avg_requested
+       from clients c
+       join loan_requests lr on lr.client_id=c.id
+       left join case_decisions cd on cd.client_id=c.id
+       where c.deleted_at is null
+       group by c.advisor_id`);
+    return result.rows.map((row) => ({advisorId: Number(row.advisor_id), clientCount: Number(row.client_count), sentCount: Number(row.sent_count), interestedCount: Number(row.interested_count), totalRequested: Number(row.total_requested), avgRequested: Number(row.avg_requested)}));
   }
 
   async getAdminPdf(publicId: string, kind: "masked" | "full", actor: AdminDeliveryActor, context: DeliveryContext): Promise<{body: Buffer; filename: string}> {

@@ -129,6 +129,13 @@ const deliveryEventLabels: Record<string, string> = {
   FULL_CASE_VIEWED: "התיק המלא נפתח", FULL_CASE_ZIP_DOWNLOADED: "הורד תיק מלא", OFFER_SUBMITTED: "הוגשה הצעת מימון", FULL_ACCESS_EXPIRED: "הגישה המלאה פגה", ADMIN_ACCESS_EXTENDED: "מנהל האריך את הגישה", ADMIN_ACCESS_REVOKED: "מנהל ביטל את הגישה", INVITATION_CANCELLED: "ההזמנה בוטלה"
 };
 
+// Admin Cases list/detail single-badge stage — same outcome buckets the
+// status filter pills use (see listAdminCases' computeCaseStage), so the
+// badge a case shows always matches the pill an admin would click to find it.
+export const caseStageLabels: Record<string, string> = {
+  DRAFT: "טיוטה", SUBMITTED: "נשלח לחברות מימון", WAITING: "ממתין לתשובה",
+  INTERESTED: "עם עניין", NOT_INTERESTED: "ללא עניין", EXPIRED: "פג ללא מענה", ARCHIVED: "בארכיון"
+};
 const deliveryStatusLabels: Record<string, string> = {PENDING: "ממתין", QUEUED: "בתור לשליחה", PARTIALLY_SENT: "נשלח חלקית", SENT: "נשלח לשרת הדואר", FAILED: "שליחה נכשלה"};
 const decisionStatusLabels: Record<string, string> = {PENDING: "ממתינה לתגובה", PENDING_VERIFICATION: "ממתינה לאימות", INTERESTED: "מעוניינת", NOT_INTERESTED: "לא מעוניינת", EXPIRED: "פג תוקף", CANCELLED: "בוטלה"};
 const accessStatusLabels: Record<string, string> = {NONE: "ללא גישה", ACTIVE: "גישה מלאה פעילה", EXPIRED: "הגישה פגה", REVOKED: "הגישה בוטלה"};

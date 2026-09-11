@@ -17,6 +17,7 @@ function fakeDelivery(overrides: Partial<LenderDeliveryApplication> = {}): Lende
     listClientResponses: vi.fn().mockResolvedValue([]), getClientResponse: vi.fn().mockResolvedValue({publicId: "submission-public", timeline: []}),
     listCompaniesForAdmin: vi.fn().mockResolvedValue([]), createCompany: vi.fn().mockResolvedValue({id: 1}), updateCompany: vi.fn(), deleteCompany: vi.fn(), createContact: vi.fn(), updateContact: vi.fn(), deleteContact: vi.fn(),
     listCalendar: vi.fn().mockResolvedValue([]), createCalendarException: vi.fn(), updateCalendarException: vi.fn(), deleteCalendarException: vi.fn(), listAdminSubmissions: vi.fn().mockResolvedValue([]), getAdminSubmission: vi.fn(), getAdminPdf: vi.fn().mockResolvedValue({body: Buffer.from("%PDF-secure"), filename: "תיק-מימון-ראשוני.pdf"}), adminAction: vi.fn(),
+    getAdminStats: vi.fn().mockResolvedValue({total_advisors: 1}), getAdminActivityStats: vi.fn().mockResolvedValue([]), getAdminRecentActivity: vi.fn().mockResolvedValue([]), getAdminAttention: vi.fn().mockResolvedValue({}), listAdminCases: vi.fn().mockResolvedValue({items: [], total: 0}), getAdminCaseDetail: vi.fn().mockResolvedValue({status: "SUBMITTED"}), getCaseReadiness: vi.fn().mockResolvedValue({ready: true, blockers: []}), getAdvisorCaseStats: vi.fn().mockResolvedValue([]),
     getReview: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, maskedSnapshot: {borrowers: [{label: "לווה 1"}]}, closed: false}),
     getMaskedPdf: vi.fn().mockResolvedValue({body: Buffer.from("%PDF-test"), filename: "תיק-ראשוני.pdf"}), decideNotInterested: vi.fn().mockResolvedValue({decisionStatus: "NOT_INTERESTED"}), startInterest: vi.fn(), resendInterestCode: vi.fn(), verifyInterest: vi.fn(),
     getAccess: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, expiresAt: new Date().toISOString(), requiresOtp: true}), sendAccessCode: vi.fn(), verifyAccessCode: vi.fn(), getPortalCase: vi.fn(), getPortalPdf: vi.fn(), listPortalDocuments: vi.fn(), getPortalDocument: vi.fn(), getPortalZip: vi.fn(), logoutPortal: vi.fn(), inspectTestFlow: vi.fn(), expireTestPortalSessions: vi.fn(), processJobs: vi.fn()
@@ -176,5 +177,54 @@ describe("secure lender delivery API", () => {
     const payload = {idempotencyKey: "74c435a1-f2ab-44b7-b348-bf8baae6fe8c", amount: 900000};
 
     await request(app).post("/api/external/portal/offers").set("Cookie", [csrfCookie, "syncash_portal_session=portal-session"]).set("x-csrf-token", review.body.csrfToken).send(payload).expect(404);
+  });
+});
+
+describe("SUPER ADMIN Control Center — Release A endpoints are SUPER_ADMIN only", () => {
+  const routes: Array<[string, string]> = [
+    ["get", "/api/admin/stats"],
+    ["get", "/api/admin/stats/activity"],
+    ["get", "/api/admin/stats/recent-activity"],
+    ["get", "/api/admin/stats/attention"],
+    ["get", "/api/admin/cases"],
+    ["get", "/api/admin/cases/1"],
+    ["get", "/api/admin/advisors/stats"]
+  ];
+
+  for (const [method, path] of routes) {
+    it(`blocks ADVISOR and LENDER, and requires SUPER_ADMIN (not just ADMIN), for ${method.toUpperCase()} ${path}`, async () => {
+      const app = application(fakeDelivery());
+      await request(app)[method as "get"](path).set("authorization", "Bearer advisor").expect(403);
+      await request(app)[method as "get"](path).set("authorization", "Bearer lender").expect(403);
+      await request(app)[method as "get"](path).set("authorization", "Bearer admin").expect(403);
+      await request(app)[method as "get"](path).set("authorization", "Bearer super").expect(200);
+    });
+  }
+
+  it("only computes the readiness badge for a DRAFT case, and reuses the shared getCaseReadiness for it", async () => {
+    const getCaseReadiness = vi.fn().mockResolvedValue({ready: false, blockers: [{code: "DEAL_DETAILS_REQUIRED", category: "FIELD", label: "חסר פירוט עסקה", hint: "יש להשלים בעריכת התיק.", action: "edit"}]});
+    const listAdminCases = vi.fn().mockResolvedValue({items: [{id: 1, status: "DRAFT"}, {id: 2, status: "SUBMITTED"}], total: 2});
+    const app = application(fakeDelivery({listAdminCases, getCaseReadiness}));
+
+    const response = await request(app).get("/api/admin/cases").set("authorization", "Bearer super").expect(200);
+
+    expect(getCaseReadiness).toHaveBeenCalledExactlyOnceWith(1);
+    expect(response.body.items[0]).toEqual(expect.objectContaining({id: 1, readiness: {ready: false, blockerCount: 1}}));
+    expect(response.body.items[1]).toEqual(expect.objectContaining({id: 2, readiness: null}));
+  });
+
+  it("attaches full readiness (with blockers) to a DRAFT case detail, and null for a SUBMITTED one", async () => {
+    const getCaseReadiness = vi.fn().mockResolvedValue({ready: true, blockers: []});
+    const draftDetail = vi.fn().mockResolvedValue({status: "DRAFT", id: 1});
+    const submittedDetail = vi.fn().mockResolvedValue({status: "SUBMITTED", id: 2});
+
+    const draftApp = application(fakeDelivery({getAdminCaseDetail: draftDetail, getCaseReadiness}));
+    const draftResponse = await request(draftApp).get("/api/admin/cases/1").set("authorization", "Bearer super").expect(200);
+    expect(getCaseReadiness).toHaveBeenCalledExactlyOnceWith(1);
+    expect(draftResponse.body.readiness).toEqual({ready: true, blockers: []});
+
+    const submittedApp = application(fakeDelivery({getAdminCaseDetail: submittedDetail, getCaseReadiness}));
+    const submittedResponse = await request(submittedApp).get("/api/admin/cases/2").set("authorization", "Bearer super").expect(200);
+    expect(submittedResponse.body.readiness).toBeNull();
   });
 });

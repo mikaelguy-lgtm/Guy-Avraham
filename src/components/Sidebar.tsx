@@ -4,7 +4,7 @@ import LegalFooterLinks from "./LegalFooterLinks";
 const links = [
   {to: "/admin", label: "לוח בקרה", end: true},
   {to: "/admin/advisors", label: "יועצים"},
-  {to: "/admin/clients", label: "לקוחות"},
+  {to: "/admin/cases", label: "תיקים"},
   {to: "/admin/lenders", label: "חברות מימון"},
   {to: "/admin/company-submissions", label: "שליחות לחברות"},
   {to: "/admin/email-logs", label: "יומן דוא״ל"},

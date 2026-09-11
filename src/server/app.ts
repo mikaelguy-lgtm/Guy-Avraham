@@ -1503,6 +1503,51 @@ export function createApp(services: AppServices) {
     }));
     for (const action of ["resend-failed", "send-reminder", "cancel-invitation", "reissue", "extend-access", "revoke-access"]) app.post(`/api/admin/company-submissions/:id/${action}`, ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.json(await delivery.adminAction(routeParam(request, "id"), action, z.record(z.string(), z.unknown()).parse(request.body ?? {}), adminActor(request), context(request))); }));
 
+    // SUPER ADMIN Control Center — Release A (read-only, no migration).
+    const statsPeriodSchema = z.enum(["today", "7d", "30d", "month", "all"]);
+    app.get("/api/admin/stats", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+      const period = statsPeriodSchema.catch("30d").parse(request.query.period);
+      response.json(await delivery.getAdminStats(period));
+    }));
+    app.get("/api/admin/stats/activity", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+      const period = statsPeriodSchema.catch("30d").parse(request.query.period);
+      response.json(await delivery.getAdminActivityStats(period));
+    }));
+    app.get("/api/admin/stats/recent-activity", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+      response.json(await delivery.getAdminRecentActivity(Math.min(100, Number(request.query.limit) || 30)));
+    }));
+    app.get("/api/admin/stats/attention", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
+      response.json(await delivery.getAdminAttention());
+    }));
+    app.get("/api/admin/cases", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+      const page = Math.max(1, Number(request.query.page) || 1);
+      const pageSize = Math.min(100, Math.max(1, Number(request.query.pageSize) || 25));
+      const status = typeof request.query.status === "string" && request.query.status ? request.query.status : undefined;
+      const advisorId = request.query.advisorId ? Number(request.query.advisorId) : undefined;
+      const search = typeof request.query.search === "string" ? request.query.search.slice(0, 100) : undefined;
+      const result = await delivery.listAdminCases({page, pageSize, status, advisorId, search});
+      // Ready/Incomplete is a per-row badge, computed only for the DRAFT
+      // rows actually on this page — never a global filter (see the Control
+      // Center plan: readiness uses the same decrypt-heavy Source of Truth
+      // as the real send screen and is not denormalized/indexed).
+      const items = await Promise.all(result.items.map(async (item) => {
+        const record = item as {status?: string; id: number};
+        if (record.status !== "DRAFT") return {...item, readiness: null};
+        const readiness = await delivery.getCaseReadiness(record.id).catch(() => null);
+        return {...item, readiness: readiness ? {ready: readiness.ready, blockerCount: readiness.blockers.length} : null};
+      }));
+      response.json({...result, items});
+    }));
+    app.get("/api/admin/advisors/stats", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
+      response.json(await delivery.getAdvisorCaseStats());
+    }));
+    app.get("/api/admin/cases/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+      const clientId = Number(request.params.id);
+      const detail = await delivery.getAdminCaseDetail(clientId);
+      const readiness = (detail as {status?: string}).status === "DRAFT" ? await delivery.getCaseReadiness(clientId) : null;
+      response.json({...detail, readiness});
+    }));
+
     app.get("/api/delivery/events", ...authenticated, asyncRoute(async (request, response) => {
       if (!services.deliveryEvents) throw new DeliveryError("REALTIME_UNAVAILABLE", 503, "עדכונים בזמן אמת אינם זמינים כרגע.");
       response.writeHead(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no"});
