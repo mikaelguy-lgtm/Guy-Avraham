@@ -292,6 +292,8 @@ export interface NotificationRecord {
   body: string;
   readAt: string | null;
   createdAt: string;
+  entityType: string | null;
+  entityId: number | null;
 }
 
 export interface DeliveryCompany {
@@ -482,6 +484,41 @@ export interface AdvisorCaseStats {
   interestedCount: number;
   totalRequested: number;
   avgRequested: number;
+}
+
+export interface AdminSystemHealth {
+  api: "GREEN" | "RED";
+  worker: "GREEN" | "YELLOW" | "RED";
+  workerHeartbeatAt: string | null;
+  postgres: "GREEN" | "RED";
+  redis: "GREEN" | "RED";
+  minio: "GREEN" | "RED";
+  failedEmailCount: number;
+  pendingEmailCount: number;
+  lastBackup: string;
+}
+
+export interface AdminNotificationSettings {
+  email: string | null;
+  notifyNewAdvisor: boolean;
+  notifyNewCase: boolean;
+  notifyLenderInterested: boolean;
+  notifyEmailFailed: boolean;
+  notifyDeadlinePassed: boolean;
+  notifyPrivacyRequest: boolean;
+}
+
+export interface AuditLogEntry {
+  id: number;
+  actorUserId: number | null;
+  actorName: string | null;
+  actorRole: string | null;
+  action: string;
+  entityType: string | null;
+  entityId: number | null;
+  caseNumber: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
 }
 
 export interface AdminCaseListItem {

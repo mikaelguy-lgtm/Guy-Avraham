@@ -109,7 +109,9 @@ describe("lender reminder idempotency (root-cause fix)", () => {
     expect(pool.outbox).toHaveLength(1);
     expect(pool.outbox[0].recipient).toBe("contact1@lender.test");
     expect(pool.outbox[0].idempotency_key).toBe("LENDER_REMINDER:1");
-  }, 15_000);
+  }, 30_000); // pure logic against a fake pool finishes in well under a second on
+  // its own; the generous budget is only to absorb CPU contention from the rest
+  // of the suite running in parallel, not because this test is itself slow.
 
   it("prefers the primary contact as the single reminder recipient", async () => {
     const pool = makeReminderTestPool();

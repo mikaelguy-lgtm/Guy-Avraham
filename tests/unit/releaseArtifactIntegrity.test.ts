@@ -87,5 +87,8 @@ describe("scripts/build-release-artifact.sh", () => {
     } finally {
       rmSync(output, {force: true});
     }
-  });
+  }, 30_000); // git archive + a full hash-object walk of every tracked file genuinely
+  // takes a few seconds; under parallel-worker CPU contention with the rest of
+  // this suite it exceeds vitest's 5s default, though it always completes well
+  // under this budget — a real hang would still fail long before 30s.
 });

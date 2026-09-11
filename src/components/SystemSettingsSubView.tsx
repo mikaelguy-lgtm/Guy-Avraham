@@ -7,6 +7,7 @@ export default function SystemSettingsSubView({user}: {user: CurrentUser}) {
       <Link className="settings-link" to="/admin/settings/smtp"><strong>דואר יוצא</strong><span>הגדרות SMTP ושליחת הודעת בדיקה</span></Link>
       <Link className="settings-link" to="/admin/settings/legal"><strong>מסמכים משפטיים</strong><span>תנאי שימוש, מדיניות פרטיות ו-DPA — עריכה, תצוגה מקדימה ופרסום גרסאות</span></Link>
       <Link className="settings-link" to="/admin/settings/privacy-requests"><strong>בקשות פרטיות</strong><span>עיון/תיקון/מחיקה/סגירת חשבון שהתקבלו ממרכז המסמכים המשפטיים</span></Link>
-    </> : <p className="permission-note">הגדרות דואר יוצא, מסמכים משפטיים ובקשות פרטיות זמינות לסופר אדמין בלבד.</p>}
+      <Link className="settings-link" to="/admin/settings/notifications"><strong>התראות מנהל</strong><span>כתובת מייל לעדכוני מנהל, והפעלה/כיבוי לפי סוג אירוע</span></Link>
+    </> : <p className="permission-note">הגדרות דואר יוצא, מסמכים משפטיים, בקשות פרטיות והתראות מנהל זמינות לסופר אדמין בלבד.</p>}
   </section></main>;
 }

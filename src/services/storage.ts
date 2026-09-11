@@ -21,6 +21,7 @@ export interface StorageService {
   get(key: string): Promise<StoredObject>;
   signedDownloadUrl(key: string, expiresInSeconds?: number): Promise<string>;
   delete(key: string): Promise<void>;
+  ping(): Promise<boolean>;
 }
 
 export class S3StorageService implements StorageService {
@@ -71,6 +72,14 @@ export class S3StorageService implements StorageService {
 
   async delete(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({Bucket: this.env.S3_BUCKET, Key: key}));
+  }
+
+  // Live connectivity check for the System Health screen only — a fresh
+  // HeadBucketCommand every call (unlike initialize(), never cached), and
+  // never exposes the endpoint/credentials, just whether it succeeded.
+  async ping(): Promise<boolean> {
+    try { await this.client.send(new HeadBucketCommand({Bucket: this.env.S3_BUCKET})); return true; }
+    catch { return false; }
   }
 }
 

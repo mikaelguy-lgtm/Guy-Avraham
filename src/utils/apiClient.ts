@@ -1,7 +1,7 @@
 import { createUserWithEmailAndPassword, deleteUser, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import {requireFrontendConfig} from "../config/frontend";
-import type { AdminActivityPoint, AdminAttention, AdminCaseDetail, AdminCaseListResponse, AdminDashboardStats, AdminEmailLogRecord, AdminLegalDocumentOverview, AdminLegalDocumentVersion, AdminPrivacyRequest, AdminRecentActivityItem, AdminStatsPeriod, AdvisorAdminRecord, AdvisorCaseStats, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LegalDocumentAcceptanceRecord, LegalDocumentType, LegalDocumentVersion, MissingRequiredDocument, NotificationRecord, PrivacyRequestStatus, PrivacyRequestType, UserAuditEvent } from "../types";
+import type { AdminActivityPoint, AdminAttention, AdminCaseDetail, AdminCaseListResponse, AdminDashboardStats, AdminEmailLogRecord, AdminLegalDocumentOverview, AdminLegalDocumentVersion, AdminNotificationSettings, AdminPrivacyRequest, AdminRecentActivityItem, AdminStatsPeriod, AdminSystemHealth, AdvisorAdminRecord, AdvisorCaseStats, AuditLogEntry, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LegalDocumentAcceptanceRecord, LegalDocumentType, LegalDocumentVersion, MissingRequiredDocument, NotificationRecord, PrivacyRequestStatus, PrivacyRequestType, UserAuditEvent } from "../types";
 import type { AdvisorRegistrationInput } from "../domain/advisorRegistration";
 
 const API_URL = requireFrontendConfig().apiBaseUrl;
@@ -258,6 +258,19 @@ export const api = {
     return authFetch<AdminCaseListResponse>(`/api/admin/cases?${params.toString()}`);
   },
   adminCaseDetail: (id: number) => authFetch<AdminCaseDetail>(`/api/admin/cases/${id}`),
+  adminSystemHealth: () => authFetch<AdminSystemHealth>("/api/admin/system-health"),
+  adminNotificationSettings: () => authFetch<AdminNotificationSettings>("/api/admin/settings/notifications"),
+  updateAdminNotificationSettings: (values: Partial<AdminNotificationSettings>) => authFetch<AdminNotificationSettings>("/api/admin/settings/notifications", {method: "PATCH", body: JSON.stringify(values)}),
+  adminAuditLogs: (query: {limit?: number; actorUserId?: number; action?: string; entityType?: string; since?: string; until?: string} = {}) => {
+    const params = new URLSearchParams();
+    if (query.limit) params.set("limit", String(query.limit));
+    if (query.actorUserId) params.set("actorUserId", String(query.actorUserId));
+    if (query.action) params.set("action", query.action);
+    if (query.entityType) params.set("entityType", query.entityType);
+    if (query.since) params.set("since", query.since);
+    if (query.until) params.set("until", query.until);
+    return authFetch<AuditLogEntry[]>(`/api/admin/audit-logs?${params.toString()}`);
+  },
   externalReview: (token: string) => externalFetch<ExternalReview>(`/api/external/review/${encodeURIComponent(token)}`),
   externalMaskedPdf: (token: string, download = false) => externalBlob(`/api/external/review/${encodeURIComponent(token)}/masked-pdf${download ? "?download=1" : ""}`),
   externalNotInterested: (token: string, csrfToken: string) => externalFetch<{decisionStatus: string}>(`/api/external/review/${encodeURIComponent(token)}/not-interested`, {method: "POST", body: "{}"}, csrfToken),

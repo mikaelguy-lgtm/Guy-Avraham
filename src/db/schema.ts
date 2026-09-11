@@ -366,8 +366,11 @@ export const notifications = pgTable("notifications", {
   title: varchar("title", {length: 200}).notNull(),
   body: text("body").notNull(),
   readAt: timestamp("read_at", {withTimezone: true}),
+  entityType: varchar("entity_type", {length: 80}),
+  entityId: integer("entity_id"),
+  idempotencyKey: varchar("idempotency_key", {length: 160}),
   ...timestamps
-});
+}, (table) => [uniqueIndex("notifications_idempotency_key_idx").on(table.idempotencyKey)]);
 
 export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),

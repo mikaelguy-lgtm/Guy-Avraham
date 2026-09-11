@@ -77,6 +77,7 @@ export interface LenderDeliveryApplication {
   listAdminCases(query: {page: number; pageSize: number; status?: string; advisorId?: number; search?: string}): Promise<{items: Array<Record<string, unknown>>; total: number}>;
   getAdminCaseDetail(clientId: number): Promise<Record<string, unknown>>;
   getAdvisorCaseStats(): Promise<Array<Record<string, unknown>>>;
+  getSystemHealth(): Promise<{postgres: "GREEN" | "RED"; failedEmailCount: number; pendingEmailCount: number; workerHeartbeatAt: string | null; workerStatus: "GREEN" | "YELLOW" | "RED"}>;
   getAdminPdf(publicId: string, kind: "masked" | "full", actor: AdminDeliveryActor, context: DeliveryContext): Promise<{body: Buffer; filename: string}>;
   adminAction(publicId: string, action: string, values: Record<string, unknown>, actor: AdminDeliveryActor, context: DeliveryContext): Promise<unknown>;
   getReview(token: string, context: DeliveryContext): Promise<unknown>;
@@ -139,6 +140,7 @@ interface DeliveryServiceOptions {
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
 const safeText = (value: unknown, maximum = 255) => String(value ?? "").replace(/[\r\n\t]/g, " ").slice(0, maximum);
 const localDateTime = formatIsraelDateTime;
+const formatCurrencyIls = (value: number) => new Intl.NumberFormat("he-IL", {style: "currency", currency: "ILS", maximumFractionDigits: 0}).format(Number.isFinite(value) ? value : 0);
 const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 // node-postgres parses a `date` column into a Date built from local
 // year/month/day (see postgres-date's parseDate). Reading it back with the
@@ -266,6 +268,34 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
 
   private async event(client: Pool | PoolClient, values: {submissionId: number; invitationId?: number | null; contactId?: number | null; actorType: string; actorId?: number | null; type: string; metadata?: Record<string, unknown>}, context: DeliveryContext): Promise<void> {
     await client.query("insert into submission_events(company_submission_id, contact_invitation_id, contact_id, actor_type, actor_id, event_type, metadata_safe, ip_hash, user_agent_summary, request_id) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", [values.submissionId, values.invitationId ?? null, values.contactId ?? null, values.actorType, values.actorId ?? null, values.type, values.metadata ?? {}, context.ip ? sha256(context.ip) : null, context.userAgent ? safeText(context.userAgent) : null, context.requestId]);
+  }
+
+  // Raw-SQL twin of PostgresStore.notifySuperAdmins/enqueueSuperAdminEmail —
+  // this service never depends on the Drizzle-backed store, so the same
+  // DB-level idempotency (unique index, ON CONFLICT DO NOTHING) is
+  // reimplemented directly against the pool, exactly like every other
+  // audit/email-outbox write in this file already is. Only called after
+  // the triggering transaction has committed (see verifyInterest()).
+  private async notifySuperAdminsOfInterest(publicCaseNumber: string, companyName: string, advisorFirstName: string, submissionId: number, clientId: number): Promise<void> {
+    const admins = await this.pool.query("select id from users where role='SUPER_ADMIN' and status='ACTIVE'");
+    const title = "חברת מימון הביעה עניין";
+    const body = `חברת ${companyName} הביעה עניין בתיק ${publicCaseNumber} (יועץ: ${advisorFirstName}).`;
+    for (const admin of admins.rows) {
+      await this.pool.query(
+        `insert into notifications(user_id,type,title,body,entity_type,entity_id,idempotency_key) values($1,'SUPER_ADMIN_LENDER_INTERESTED',$2,$3,'client',$4,$5) on conflict(idempotency_key) do nothing`,
+        [admin.id, title, body, clientId, `SUPER_ADMIN_NOTIFICATION:LENDER_INTERESTED:${submissionId}:${admin.id}`]
+      );
+    }
+    const settings = await this.pool.query("select key,value from system_settings where category='ADMIN_NOTIFICATIONS'");
+    const value = (key: string) => settings.rows.find((row) => row.key === key)?.value ?? null;
+    const email = value("admin_notification_email");
+    const enabled = value("admin_notify_lender_interested");
+    if (email && enabled !== "false") {
+      await this.pool.query(
+        `insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at) values($1,'SUPER_ADMIN_LENDER_INTERESTED',$2,$3,'PENDING',now()) on conflict(idempotency_key) do nothing`,
+        [`SUPER_ADMIN_EMAIL:LENDER_INTERESTED:${submissionId}`, email, {submissionId}]
+      );
+    }
   }
 
   private async loadFullSnapshot(clientId: number, advisorId?: number): Promise<FullCaseSnapshot> {
@@ -864,6 +894,15 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       this.broker.publish({type: "COMPANY_INTERESTED", advisorId: Number(row.advisor_id), clientId: Number(row.client_id), submissionPublicId: row.submission_public_id});
       this.broker.publish({type: "COMPANY_FULL_ACCESS_OPENED", advisorId: Number(row.advisor_id), clientId: Number(row.client_id), submissionPublicId: row.submission_public_id});
       this.scheduleJobs();
+      // Post-commit only, per spec: the SUPER_ADMIN notification/email must
+      // never fire before the decision is durably INTERESTED — the decisive
+      // action (access grant + portal session) is already committed above,
+      // so a failure here is best-effort and must never turn into an error
+      // response for the lender contact whose action already succeeded.
+      try {
+        const advisorName = await this.pool.query("select u.first_name from advisor_profiles ap join users u on u.id=ap.user_id where ap.id=$1", [row.advisor_id]);
+        await this.notifySuperAdminsOfInterest(row.public_case_number, row.company_name, advisorName.rows[0]?.first_name ?? "", Number(row.submission_id), Number(row.client_id));
+      } catch { /* best-effort: the INTERESTED decision itself already committed successfully */ }
       return {...session, decisionStatus: "INTERESTED", accessStatus: "ACTIVE", fullAccessExpiresAt: accessExpiresAt};
     } catch (error) { await connection.query(error instanceof DeliveryError && error.code.startsWith("OTP_") ? "commit" : "rollback"); throw error; } finally { connection.release(); }
   }
@@ -1391,6 +1430,21 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       const values = {advisorFirstName: row.first_name, companyName: row.company_name, publicCaseNumber: row.public_case_number, url: `${this.appUrl}/advisor/clients/${row.client_id}?tab=company-responses`};
       return {content: item.template === "ADVISOR_DELIVERY_FAILURE" ? deliveryEmailTemplates.advisorDeliveryFailure(values) : deliveryEmailTemplates.advisorExpired(values), submissionId: Number(row.id)};
     }
+    if (item.template === "SUPER_ADMIN_ADVISOR_REGISTERED") {
+      const advisor = await this.pool.query("select u.first_name,u.last_name,ap.business_name,u.created_at from advisor_profiles ap join users u on u.id=ap.user_id where u.id=$1", [payload.advisorId]);
+      const row = advisor.rows[0]; if (!row) throw new Error("ADVISOR_MISSING");
+      return {content: deliveryEmailTemplates.superAdminAdvisorRegistered({advisorName: `${row.first_name} ${row.last_name}`, businessName: row.business_name, registeredAt: localDateTime(new Date(row.created_at)), url: `${this.appUrl}/admin/advisors`})};
+    }
+    if (item.template === "SUPER_ADMIN_CASE_CREATED") {
+      const result = await this.pool.query("select c.public_case_number,c.created_at,c.advisor_id,lr.requested_amount,u.first_name,u.last_name from clients c join loan_requests lr on lr.client_id=c.id join advisor_profiles ap on ap.id=c.advisor_id join users u on u.id=ap.user_id where c.id=$1", [payload.clientId]);
+      const row = result.rows[0]; if (!row) throw new Error("CLIENT_MISSING");
+      return {content: deliveryEmailTemplates.superAdminCaseCreated({publicCaseNumber: row.public_case_number, advisorName: `${row.first_name} ${row.last_name}`, requestedAmount: formatCurrencyIls(Number(row.requested_amount)), createdAt: localDateTime(new Date(row.created_at)), url: `${this.appUrl}/admin/cases/${payload.clientId}`})};
+    }
+    if (item.template === "SUPER_ADMIN_LENDER_INTERESTED") {
+      const result = await this.pool.query("select c.public_case_number,c.id client_id,l.name company_name,cs.decision_at,u.first_name,u.last_name from company_submissions cs join lenders l on l.id=cs.company_id join case_versions cv on cv.id=cs.case_version_id join clients c on c.id=cv.client_id join advisor_profiles ap on ap.id=cs.advisor_id join users u on u.id=ap.user_id where cs.id=$1", [payload.submissionId]);
+      const row = result.rows[0]; if (!row) throw new Error("SUBMISSION_MISSING");
+      return {content: deliveryEmailTemplates.superAdminLenderInterested({publicCaseNumber: row.public_case_number, companyName: row.company_name, advisorName: `${row.first_name} ${row.last_name}`, decidedAt: localDateTime(new Date(row.decision_at)), url: `${this.appUrl}/admin/cases/${row.client_id}`})};
+    }
     throw new Error("UNKNOWN_OUTBOX_TEMPLATE");
   }
 
@@ -1458,9 +1512,35 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     try {
       const lock = await connection.query("select pg_try_advisory_lock(8247331) locked"); if (!lock.rows[0].locked) return;
       try {
+        // Pure DB write, no side effects of any kind (no audit/event/
+        // notification/email) — this is the System Health screen's only
+        // source of truth for "is the worker alive", read back via
+        // getSystemHealth() below. Every tick overwrites the same row.
+        await connection.query("insert into system_settings(key,value,category) values('admin_worker_heartbeat_at',$1,'SYSTEM_HEALTH') on conflict(key) do update set value=excluded.value,updated_at=now()", [this.now().toISOString()]);
         await this.processSchedules();
         if (options.processEmail !== false) await this.processOutbox();
       } finally { await connection.query("select pg_advisory_unlock(8247331)"); }
     } finally { connection.release(); }
+  }
+
+  // System Health screen (SUPER_ADMIN only) — live Postgres check (this
+  // query itself succeeding IS the check), email-queue/failure counts, and
+  // worker-heartbeat freshness. Never returns credentials, hosts, or
+  // connection strings — only counts and a timestamp.
+  async getSystemHealth(): Promise<{postgres: "GREEN" | "RED"; failedEmailCount: number; pendingEmailCount: number; workerHeartbeatAt: string | null; workerStatus: "GREEN" | "YELLOW" | "RED"}> {
+    try {
+      const [emailCounts, heartbeat] = await Promise.all([
+        this.pool.query("select count(*) filter (where status='FAILED')::int failed, count(*) filter (where status in ('PENDING','PROCESSING'))::int pending from email_outbox"),
+        this.pool.query("select value from system_settings where key='admin_worker_heartbeat_at'")
+      ]);
+      const heartbeatAt = heartbeat.rows[0]?.value ?? null;
+      const ageSeconds = heartbeatAt ? (this.now().getTime() - new Date(heartbeatAt).getTime()) / 1000 : Infinity;
+      // Worker ticks every 30s (see worker.ts) — GREEN within 2 missed
+      // ticks, YELLOW within 5, RED (or never seen) beyond that.
+      const workerStatus = ageSeconds <= 90 ? "GREEN" : ageSeconds <= 180 ? "YELLOW" : "RED";
+      return {postgres: "GREEN", failedEmailCount: emailCounts.rows[0].failed, pendingEmailCount: emailCounts.rows[0].pending, workerHeartbeatAt: heartbeatAt, workerStatus};
+    } catch {
+      return {postgres: "RED", failedEmailCount: 0, pendingEmailCount: 0, workerHeartbeatAt: null, workerStatus: "RED"};
+    }
   }
 }

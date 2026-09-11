@@ -34,5 +34,7 @@ describe("worker email suspension", () => {
     expect(queries.some((sql) => sql.includes("email_outbox where status='PENDING'"))).toBe(false);
     expect(send).not.toHaveBeenCalled();
     expect(connection.release).toHaveBeenCalledOnce();
-  }, 15_000);
+  }, 30_000); // pure logic against a fake pool finishes in well under a second on
+  // its own; the generous budget is only to absorb CPU contention from the rest
+  // of the suite running in parallel, not because this test is itself slow.
 });

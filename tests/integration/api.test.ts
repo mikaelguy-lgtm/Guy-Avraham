@@ -554,10 +554,12 @@ describe("focused client updates", () => {
     expect(updateClientLiabilities).not.toHaveBeenCalled();
   });
 
-  it("enforces authentication, advisor role and client ownership", async () => {
+  it("enforces authentication and advisor-to-advisor client ownership", async () => {
     await request(app()).patch("/api/clients/1/property").send(property).expect(401);
     await request(app()).patch("/api/clients/1/property").set("authorization", "Bearer advisor2").send(property).expect(403);
-    await request(app()).patch("/api/clients/1/property").set("authorization", "Bearer super").send(property).expect(403);
+    // SUPER_ADMIN is intentionally allowed through this route (Release B
+    // case editing, reusing the advisor endpoint verbatim) — see the
+    // dedicated authorization coverage in adminReleaseBSecurity.test.ts.
   });
 
   it("returns Hebrew field validation errors without calling the store", async () => {

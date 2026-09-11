@@ -25,6 +25,7 @@ export const users: Record<string, DatabaseUser> = {
   suspended: {id: 3, firebaseUid: "suspended", email: "suspended@test", firstName: "S", lastName: "User", role: "ADVISOR", roleLabel: "Advisor", status: "SUSPENDED", emailVerified: true, deletedAt: null, advisorId: 10, lenderId: null},
   admin: {id: 4, firebaseUid: "admin", email: "admin@test", firstName: "Admin", lastName: "User", role: "ADMIN", roleLabel: "Admin", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: null},
   super: {id: 5, firebaseUid: "super", email: "super@test", firstName: "Super", lastName: "Admin", role: "SUPER_ADMIN", roleLabel: "Super Admin", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: null},
+  super2: {id: 9, firebaseUid: "super2", email: "super2@test", firstName: "Super", lastName: "Two", role: "SUPER_ADMIN", roleLabel: "Super Admin", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: null},
   lender: {id: 6, firebaseUid: "lender", email: "lender@test", firstName: "L", lastName: "One", role: "LENDER_UNDERWRITER", roleLabel: "Underwriter", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: 100},
   lender2: {id: 7, firebaseUid: "lender2", email: "lender2@test", firstName: "L", lastName: "Two", role: "LENDER_UNDERWRITER", roleLabel: "Underwriter", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: 200},
   pending: {id: 8, firebaseUid: "pending", email: "pending@test", firstName: "Pending", lastName: "Advisor", role: "ADVISOR", roleLabel: "Advisor", status: "PENDING", emailVerified: false, deletedAt: null, advisorId: 30, lenderId: null}
@@ -91,8 +92,12 @@ export function makeStore(overrides: Partial<AppStore> = {}): AppStore {
     createLenderResponse: async () => ({id: 1}),
     createIdentityRequest: async () => ({id: 1}),
     notifyAdvisor: async () => undefined,
+    notifySuperAdmins: async () => 0,
+    listAuditLogs: async () => [],
     addAudit: async () => undefined,
     getSettings: async () => [],
+    getAdminNotificationSettings: async () => ({email: null, notifyNewAdvisor: true, notifyNewCase: true, notifyLenderInterested: true, notifyEmailFailed: false, notifyDeadlinePassed: false, notifyPrivacyRequest: false}),
+    enqueueSuperAdminEmail: async () => true,
     setSettings: async () => undefined,
     listEmailConfigurations: async () => [],
     getEmailConfiguration: async () => null,
@@ -159,11 +164,13 @@ export class MemoryStorage implements StorageService {
   async get(key: string) { return this.values.get(key) ?? {body: Buffer.from("%PDF-test"), contentType: "application/pdf"}; }
   async signedDownloadUrl(key: string) { return `memory://${key}`; }
   async delete(key: string) { this.values.delete(key); }
+  async ping() { return true; }
 }
 
 export class MemoryLimiter implements RateLimitStore {
   private counts = new Map<string, number>();
   async increment(key: string) { const value = (this.counts.get(key) ?? 0) + 1; this.counts.set(key, value); return value; }
+  async ping() { return true; }
 }
 
 export const secrets = new InMemorySecretProvider({"syncash-smtp-password": "configured"});

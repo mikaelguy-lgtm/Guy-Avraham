@@ -46,5 +46,24 @@ export const deliveryEmailTemplates = {
     const subject = `מועד תגובת חברה הסתיים | SynCash | תיק ${values.publicCaseNumber}`;
     const text = `שלום ${values.advisorFirstName},\nחברת ${values.companyName} לא השלימה תגובה לתיק ${values.publicCaseNumber} במועד.\n${values.url}`;
     return {subject, text, html: shell(`<p>שלום ${escapeHtml(values.advisorFirstName)},</p><p>חברת ${escapeHtml(values.companyName)} לא השלימה תגובה לתיק ${escapeHtml(values.publicCaseNumber)} במועד.</p>${button("מעבר לסטטוס החברות בתיק", values.url)}`)};
+  },
+  // The 3 SUPER_ADMIN alert emails — intentionally minimal content per the
+  // approved spec: no identity numbers, no documents, no detailed income,
+  // no OTP/tokens, and the link goes only to the internal, authenticated
+  // admin screen (never an active lender-portal link).
+  superAdminAdvisorRegistered(values: {advisorName: string; businessName: string | null; registeredAt: string; url: string}): DeliveryEmailContent {
+    const subject = "יועץ חדש נרשם | SynCash";
+    const text = `יועץ חדש נרשם למערכת.\nשם: ${values.advisorName}${values.businessName ? `\nחברה: ${values.businessName}` : ""}\nזמן הרשמה: ${values.registeredAt}\n${values.url}`;
+    return {subject, text, html: shell(`<p>יועץ חדש נרשם למערכת.</p><p><strong>שם:</strong> ${escapeHtml(values.advisorName)}</p>${values.businessName ? `<p><strong>חברה:</strong> ${escapeHtml(values.businessName)}</p>` : ""}<p><strong>זמן הרשמה:</strong> ${escapeHtml(values.registeredAt)}</p>${button("מעבר לניהול יועצים", values.url)}`)};
+  },
+  superAdminCaseCreated(values: {publicCaseNumber: string; advisorName: string; requestedAmount: string; createdAt: string; url: string}): DeliveryEmailContent {
+    const subject = `תיק חדש נוצר | SynCash | תיק ${values.publicCaseNumber}`;
+    const text = `נוצר תיק מימון חדש.\nמספר תיק: ${values.publicCaseNumber}\nיועץ: ${values.advisorName}\nסכום מבוקש: ${values.requestedAmount}\nזמן יצירה: ${values.createdAt}\n${values.url}`;
+    return {subject, text, html: shell(`<p>נוצר תיק מימון חדש.</p><p><strong>מספר תיק:</strong> ${escapeHtml(values.publicCaseNumber)}</p><p><strong>יועץ:</strong> ${escapeHtml(values.advisorName)}</p><p><strong>סכום מבוקש:</strong> ${escapeHtml(values.requestedAmount)}</p><p><strong>זמן יצירה:</strong> ${escapeHtml(values.createdAt)}</p>${button("מעבר לתיק", values.url)}`)};
+  },
+  superAdminLenderInterested(values: {publicCaseNumber: string; companyName: string; advisorName: string; decidedAt: string; url: string}): DeliveryEmailContent {
+    const subject = `חברת מימון הביעה עניין | SynCash | תיק ${values.publicCaseNumber}`;
+    const text = `חברת ${values.companyName} הביעה עניין בתיק.\nמספר תיק: ${values.publicCaseNumber}\nיועץ: ${values.advisorName}\nזמן האירוע: ${values.decidedAt}\n${values.url}`;
+    return {subject, text, html: shell(`<p>חברת ${escapeHtml(values.companyName)} הביעה עניין בתיק.</p><p><strong>מספר תיק:</strong> ${escapeHtml(values.publicCaseNumber)}</p><p><strong>יועץ:</strong> ${escapeHtml(values.advisorName)}</p><p><strong>זמן האירוע:</strong> ${escapeHtml(values.decidedAt)}</p>${button("מעבר לתיק", values.url)}`)};
   }
 };

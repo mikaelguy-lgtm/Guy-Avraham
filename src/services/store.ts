@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, ilike, inArray, isNull, max, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, max, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   advisorProfiles,
@@ -11,6 +11,7 @@ import {
   documents,
   emailConfigurations,
   emailLogs,
+  emailOutbox,
   employmentRecords,
   identityRevealRequests,
   incomeSources,
@@ -308,6 +309,38 @@ export interface CreditIndicationRecord {
   mortgageArrears: boolean | null;
 }
 
+export interface AdminNotificationSettings {
+  email: string | null;
+  notifyNewAdvisor: boolean;
+  notifyNewCase: boolean;
+  notifyLenderInterested: boolean;
+  notifyEmailFailed: boolean;
+  notifyDeadlinePassed: boolean;
+  notifyPrivacyRequest: boolean;
+}
+
+export interface AuditLogQuery {
+  limit: number;
+  actorUserId?: number;
+  action?: string;
+  entityType?: string;
+  since?: Date;
+  until?: Date;
+}
+
+export interface AuditLogEntry {
+  id: number;
+  actorUserId: number | null;
+  actorName: string | null;
+  actorRole: string | null;
+  action: string;
+  entityType: string | null;
+  entityId: number | null;
+  caseNumber: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: Date;
+}
+
 export interface DocumentRecord {
   id: number;
   clientId: number;
@@ -437,6 +470,8 @@ export interface AppStore extends AuthorizationDirectory {
   upsertCreditIndication(clientId: number, values: CreditIndicationRecord): Promise<CreditIndicationRecord>;
   getSettings(category: string): Promise<Array<{key: string; value: string | null; isSecret: boolean}>>;
   setSettings(category: string, values: Record<string, string>, userId: number): Promise<void>;
+  getAdminNotificationSettings(): Promise<AdminNotificationSettings>;
+  enqueueSuperAdminEmail(template: string, idempotencyKey: string, recipient: string, payload: Record<string, unknown>): Promise<boolean>;
   listEmailConfigurations(): Promise<EmailConfigurationRecord[]>;
   getEmailConfiguration(id: number): Promise<EmailConfigurationRecord | null>;
   getActiveEmailConfiguration(): Promise<EmailConfigurationRecord | null>;
@@ -452,10 +487,11 @@ export interface AppStore extends AuthorizationDirectory {
   addAudit(userId: number | null, action: string, entityType: string | null, entityId: number | null, metadata: Record<string, unknown> | null, requestId?: string, ipAddress?: string, userAgent?: string): Promise<void>;
   addAiLog(values: {clientId: number; userId: number; model: string; promptCharacters: number; status: string; durationMs?: number; error?: string}): Promise<void>;
   notifyAdvisor(clientId: number, type: string, title: string, body: string): Promise<void>;
+  notifySuperAdmins(type: string, title: string, body: string, entityType: string | null, entityId: number | null, idempotencyKeyPrefix: string): Promise<number>;
   listNotifications(userId: number): Promise<unknown[]>;
   markNotificationRead(id: number, userId: number): Promise<boolean>;
   markAllNotificationsRead(userId: number): Promise<number>;
-  listAuditLogs(limit: number): Promise<unknown[]>;
+  listAuditLogs(query: AuditLogQuery): Promise<AuditLogEntry[]>;
   listUserAuditEvents(userId: number, actions: string[]): Promise<Array<{action: string; metadata: Record<string, unknown> | null; createdAt: Date; actorUserId: number | null}>>;
   listLegalDocumentVersions(documentType: LegalDocumentType): Promise<LegalDocumentVersionRecord[]>;
   getLegalDocumentVersion(id: number): Promise<LegalDocumentVersionRecord | null>;
@@ -1378,6 +1414,34 @@ export class PostgresStore implements AppStore {
     });
   }
 
+  // Core-3 events (new advisor/case/lender-interested) default ON when the
+  // toggle has never been set; the optional/noisy events (email failed,
+  // deadline passed, privacy request) default OFF — matching the approved
+  // spec exactly, so a fresh install behaves correctly with zero configuration.
+  async getAdminNotificationSettings(): Promise<AdminNotificationSettings> {
+    const rows = await this.getSettings("ADMIN_NOTIFICATIONS");
+    const value = (key: string) => rows.find((row) => row.key === key)?.value ?? null;
+    const flag = (key: string, fallback: boolean) => { const raw = value(key); return raw === null ? fallback : raw === "true"; };
+    return {
+      email: value("admin_notification_email"),
+      notifyNewAdvisor: flag("admin_notify_new_advisor", true),
+      notifyNewCase: flag("admin_notify_new_case", true),
+      notifyLenderInterested: flag("admin_notify_lender_interested", true),
+      notifyEmailFailed: flag("admin_notify_email_failed", false),
+      notifyDeadlinePassed: flag("admin_notify_deadline_passed", false),
+      notifyPrivacyRequest: flag("admin_notify_privacy_request", false)
+    };
+  }
+
+  // Reuses the email_outbox idempotency mechanism verbatim (unique index +
+  // ON CONFLICT DO NOTHING) — a worker retry or a duplicate business-event
+  // call can never enqueue a second email for the same event.
+  async enqueueSuperAdminEmail(template: string, idempotencyKey: string, recipient: string, payload: Record<string, unknown>): Promise<boolean> {
+    const [row] = await db.insert(emailOutbox).values({idempotencyKey, template, recipient, payload})
+      .onConflictDoNothing({target: emailOutbox.idempotencyKey}).returning({id: emailOutbox.id});
+    return Boolean(row);
+  }
+
   async addEmailLog(values: {recipient: string; template?: string; userId?: number; requestId?: string; messageId?: string; status: "SENT" | "FAILED"; sanitizedError?: string}): Promise<void> {
     await db.insert(emailLogs).values({
       recipient: values.recipient,
@@ -1416,10 +1480,58 @@ export class PostgresStore implements AppStore {
     await db.insert(aiAnalysisLogs).values({clientId: values.clientId, requestedByUserId: values.userId, model: values.model, promptCharacters: values.promptCharacters, status: values.status, durationMs: values.durationMs, sanitizedError: values.error});
   }
 
+  async listAuditLogs(query: AuditLogQuery): Promise<AuditLogEntry[]> {
+    const conditions = [];
+    if (query.actorUserId) conditions.push(eq(auditLogs.actorUserId, query.actorUserId));
+    if (query.action) conditions.push(eq(auditLogs.action, query.action));
+    if (query.entityType) conditions.push(eq(auditLogs.entityType, query.entityType));
+    if (query.since) conditions.push(gte(auditLogs.createdAt, query.since));
+    if (query.until) conditions.push(lte(auditLogs.createdAt, query.until));
+    const rows = await db.select({
+      id: auditLogs.id, actorUserId: auditLogs.actorUserId, actorFirstName: users.firstName, actorLastName: users.lastName, actorRole: users.role,
+      action: auditLogs.action, entityType: auditLogs.entityType, entityId: auditLogs.entityId, metadata: auditLogs.metadata, createdAt: auditLogs.createdAt
+    }).from(auditLogs).leftJoin(users, eq(users.id, auditLogs.actorUserId))
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(auditLogs.createdAt)).limit(Math.min(query.limit, 500));
+    // Best-effort case-number resolution for client-entity rows only — never
+    // decrypts anything (public_case_number is plaintext), so safe to join.
+    const clientIds = [...new Set(rows.filter((row) => row.entityType === "client" && row.entityId).map((row) => row.entityId as number))];
+    const caseNumbers = clientIds.length
+      ? new Map((await db.select({id: clients.id, publicCaseNumber: clients.publicCaseNumber}).from(clients).where(inArray(clients.id, clientIds))).map((row) => [row.id, row.publicCaseNumber]))
+      : new Map<number, string>();
+    return rows.map((row) => ({
+      id: row.id, actorUserId: row.actorUserId,
+      actorName: row.actorFirstName ? `${row.actorFirstName} ${row.actorLastName}`.trim() : null, actorRole: row.actorRole,
+      action: row.action, entityType: row.entityType, entityId: row.entityId,
+      caseNumber: row.entityType === "client" && row.entityId ? caseNumbers.get(row.entityId) ?? null : null,
+      metadata: row.metadata as Record<string, unknown> | null, createdAt: row.createdAt
+    }));
+  }
+
   async notifyAdvisor(clientId: number, type: string, title: string, body: string): Promise<void> {
     const [advisor] = await db.select({userId: advisorProfiles.userId}).from(clients)
       .innerJoin(advisorProfiles, eq(advisorProfiles.id, clients.advisorId)).where(eq(clients.id, clientId)).limit(1);
     if (advisor) await db.insert(notifications).values({userId: advisor.userId, type, title, body});
+  }
+
+  // Fan-out to every ACTIVE SUPER_ADMIN with one notification row each.
+  // Idempotency is DB-level (unique index on idempotency_key), never
+  // check-then-insert: each admin's row key includes their own user id, so
+  // re-delivery of the same business event (worker retry, duplicate
+  // request) can never create a second row for the same admin, and
+  // multiple admins each still get exactly one. Returns how many rows were
+  // actually newly created (0 means every admin already had this event).
+  async notifySuperAdmins(type: string, title: string, body: string, entityType: string | null, entityId: number | null, idempotencyKeyPrefix: string): Promise<number> {
+    const admins = await db.select({id: users.id}).from(users).where(and(eq(users.role, "SUPER_ADMIN"), eq(users.status, "ACTIVE")));
+    let created = 0;
+    for (const admin of admins) {
+      const [row] = await db.insert(notifications)
+        .values({userId: admin.id, type, title, body, entityType, entityId, idempotencyKey: `${idempotencyKeyPrefix}:${admin.id}`})
+        .onConflictDoNothing({target: notifications.idempotencyKey})
+        .returning({id: notifications.id});
+      if (row) created += 1;
+    }
+    return created;
   }
 
   async listNotifications(userId: number): Promise<unknown[]> {
@@ -1540,11 +1652,6 @@ export class PostgresStore implements AppStore {
     const rows = await db.update(notifications).set({readAt: new Date(), updatedAt: new Date()})
       .where(and(eq(notifications.userId, userId), isNull(notifications.readAt))).returning({id: notifications.id});
     return rows.length;
-  }
-
-  async listAuditLogs(limit: number): Promise<unknown[]> {
-    return db.select({id: auditLogs.id, actorUserId: auditLogs.actorUserId, action: auditLogs.action, entityType: auditLogs.entityType, entityId: auditLogs.entityId, metadata: auditLogs.metadata, requestId: auditLogs.requestId, createdAt: auditLogs.createdAt})
-      .from(auditLogs).orderBy(desc(auditLogs.createdAt)).limit(Math.min(limit, 500));
   }
 
   async listUserAuditEvents(userId: number, actions: string[]): Promise<Array<{action: string; metadata: Record<string, unknown> | null; createdAt: Date; actorUserId: number | null}>> {

@@ -18,6 +18,7 @@ function fakeDelivery(overrides: Partial<LenderDeliveryApplication> = {}): Lende
     listCompaniesForAdmin: vi.fn().mockResolvedValue([]), createCompany: vi.fn().mockResolvedValue({id: 1}), updateCompany: vi.fn(), deleteCompany: vi.fn(), createContact: vi.fn(), updateContact: vi.fn(), deleteContact: vi.fn(),
     listCalendar: vi.fn().mockResolvedValue([]), createCalendarException: vi.fn(), updateCalendarException: vi.fn(), deleteCalendarException: vi.fn(), listAdminSubmissions: vi.fn().mockResolvedValue([]), getAdminSubmission: vi.fn(), getAdminPdf: vi.fn().mockResolvedValue({body: Buffer.from("%PDF-secure"), filename: "תיק-מימון-ראשוני.pdf"}), adminAction: vi.fn(),
     getAdminStats: vi.fn().mockResolvedValue({total_advisors: 1}), getAdminActivityStats: vi.fn().mockResolvedValue([]), getAdminRecentActivity: vi.fn().mockResolvedValue([]), getAdminAttention: vi.fn().mockResolvedValue({}), listAdminCases: vi.fn().mockResolvedValue({items: [], total: 0}), getAdminCaseDetail: vi.fn().mockResolvedValue({status: "SUBMITTED"}), getCaseReadiness: vi.fn().mockResolvedValue({ready: true, blockers: []}), getAdvisorCaseStats: vi.fn().mockResolvedValue([]),
+    getSystemHealth: vi.fn().mockResolvedValue({postgres: "GREEN", failedEmailCount: 0, pendingEmailCount: 0, workerHeartbeatAt: null, workerStatus: "GREEN"}),
     getReview: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, maskedSnapshot: {borrowers: [{label: "לווה 1"}]}, closed: false}),
     getMaskedPdf: vi.fn().mockResolvedValue({body: Buffer.from("%PDF-test"), filename: "תיק-ראשוני.pdf"}), decideNotInterested: vi.fn().mockResolvedValue({decisionStatus: "NOT_INTERESTED"}), startInterest: vi.fn(), resendInterestCode: vi.fn(), verifyInterest: vi.fn(),
     getAccess: vi.fn().mockResolvedValue({companyName: "מימון בטוח", publicCaseNumber: "SC-MASKED", versionNumber: 1, expiresAt: new Date().toISOString(), requiresOtp: true}), sendAccessCode: vi.fn(), verifyAccessCode: vi.fn(), getPortalCase: vi.fn(), getPortalPdf: vi.fn(), listPortalDocuments: vi.fn(), getPortalDocument: vi.fn(), getPortalZip: vi.fn(), logoutPortal: vi.fn(), inspectTestFlow: vi.fn(), expireTestPortalSessions: vi.fn(), processJobs: vi.fn()
@@ -188,7 +189,8 @@ describe("SUPER ADMIN Control Center — Release A endpoints are SUPER_ADMIN onl
     ["get", "/api/admin/stats/attention"],
     ["get", "/api/admin/cases"],
     ["get", "/api/admin/cases/1"],
-    ["get", "/api/admin/advisors/stats"]
+    ["get", "/api/admin/advisors/stats"],
+    ["get", "/api/admin/system-health"]
   ];
 
   for (const [method, path] of routes) {

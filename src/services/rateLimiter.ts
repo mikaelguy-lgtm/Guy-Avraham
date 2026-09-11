@@ -3,6 +3,7 @@ import { Redis } from "ioredis";
 
 export interface RateLimitStore {
   increment(key: string, windowSeconds: number): Promise<number>;
+  ping(): Promise<boolean>;
 }
 
 export class RedisRateLimitStore implements RateLimitStore {
@@ -14,6 +15,15 @@ export class RedisRateLimitStore implements RateLimitStore {
     const count = await this.redis.incr(key);
     if (count === 1) await this.redis.expire(key, windowSeconds);
     return count;
+  }
+
+  // Live connectivity check for the System Health screen only — never
+  // exposes the connection string/host, just whether the ping succeeded.
+  async ping(): Promise<boolean> {
+    try {
+      if (this.redis.status === "wait") await this.redis.connect();
+      return (await this.redis.ping()) === "PONG";
+    } catch { return false; }
   }
 }
 

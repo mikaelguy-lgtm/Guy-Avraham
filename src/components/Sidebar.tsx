@@ -9,6 +9,8 @@ const links = [
   {to: "/admin/company-submissions", label: "שליחות לחברות"},
   {to: "/admin/email-logs", label: "יומן דוא״ל"},
   {to: "/admin/business-calendar", label: "לוח ימי עסקים"},
+  {to: "/admin/notifications", label: "התראות"},
+  {to: "/admin/system-health", label: "בריאות מערכת"},
   {to: "/admin/settings", label: "הגדרות מערכת"},
   {to: "/admin/audit", label: "יומן פעילות"}
 ];

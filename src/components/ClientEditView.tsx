@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Check } from "lucide-react";
-import { Navigate, useNavigate, useParams } from "react-router-dom";
+import { AlertTriangle, ArrowLeft, ArrowRight, Check } from "lucide-react";
+import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import type { Client } from "../types";
 import { ApiError, api } from "../utils/apiClient";
 import {
@@ -25,6 +25,12 @@ export default function ClientEditView() {
   const clientId = Number(id);
   const section = sectionParam as ClientEditSection | undefined;
   const navigate = useNavigate();
+  // This component is reused verbatim (same validation, same submit calls)
+  // for SUPER_ADMIN under /admin/cases/:id/edit — see App.tsx. The two
+  // contexts differ only in where "back"/"cancel" navigate to, since the
+  // admin area has no per-tab client view to return to.
+  const isAdmin = useLocation().pathname.startsWith("/admin");
+  const backTarget = (tab: ClientEditSection | "summary") => isAdmin ? `/admin/cases/${clientId}` : clientTabPath(clientId, tab);
   const [client, setClient] = useState<Client | null>(null);
   const [form, setForm] = useState<ClientFormState | null>(null);
   const [initialForm, setInitialForm] = useState<ClientFormState | null>(null);
@@ -55,7 +61,7 @@ export default function ClientEditView() {
 
   useEffect(() => { window.scrollTo({top: 0, behavior: "smooth"}); }, [step]);
 
-  if (section && !validSections.has(section)) return <Navigate to={`/advisor/clients/${clientId}/edit`} replace />;
+  if (section && !validSections.has(section)) return <Navigate to={isAdmin ? `/admin/cases/${clientId}/edit` : `/advisor/clients/${clientId}/edit`} replace />;
   if (!client || !form) return <main className="advisor-page"><div className="empty-state">{message || "טוען את פרטי התיק לעריכה…"}</div></main>;
 
   const clearError = (key: string) => setErrors((current) => {
@@ -98,7 +104,7 @@ export default function ClientEditView() {
   };
 
   const returnTab = section ?? "summary";
-  const leave = () => navigate(clientTabPath(client.id, returnTab), {replace: true});
+  const leave = () => navigate(backTarget(returnTab), {replace: true});
   const cancel = () => dirty ? setConfirmExit(true) : leave();
   const save = async () => {
     const nextErrors = section ? validateClientFormSection(form, section) : validateClientForm(form);
@@ -112,7 +118,7 @@ export default function ClientEditView() {
       else if (section === "property") await api.updateClientProperty(client.id, clientPropertyPayload(form));
       else if (section === "deal-details") await api.updateClientDealDetails(client.id, clientDealDetailsPayload(form));
       else await api.updateClient(client.id, clientFormPayload(form));
-      navigate(clientTabPath(client.id, returnTab), {replace: true, state: {toast: "השינויים נשמרו בהצלחה."}});
+      navigate(backTarget(returnTab), {replace: true, state: {toast: "השינויים נשמרו בהצלחה."}});
     } catch (caught) {
       if (caught instanceof ApiError) {
         setErrors(caught.fieldErrors);
@@ -128,8 +134,9 @@ export default function ClientEditView() {
 
   const title = section ? `עריכת ${editSectionLabels[section]}` : "עריכת תיק מימון";
   return <main className="advisor-page wizard-page client-edit-page">
-    {section && <nav className="client-edit-breadcrumb" aria-label="פירורי לחם"><button type="button" onClick={() => navigate("/advisor/clients")}>לקוחות</button><span>&gt;</span><button type="button" onClick={cancel}>{client.firstName} {client.lastName}</button><span>&gt;</span><strong>עריכת {editSectionLabels[section]}</strong></nav>}
+    {section && <nav className="client-edit-breadcrumb" aria-label="פירורי לחם"><button type="button" onClick={() => navigate(isAdmin ? "/admin/cases" : "/advisor/clients")}>{isAdmin ? "תיקים" : "לקוחות"}</button><span>&gt;</span><button type="button" onClick={cancel}>{client.firstName} {client.lastName}</button><span>&gt;</span><strong>עריכת {editSectionLabels[section]}</strong></nav>}
     <section className="page-title"><div><span className="eyebrow">תיק {client.publicCaseNumber}</span><h1>{title}</h1><p>{section ? `עדכון ממוקד של ${editSectionLabels[section]} בתיק הלקוח.` : "עדכון פרטי הלווים, ההכנסות, ההתחייבויות, הנכס ובקשת המימון"}</p></div></section>
+    {isAdmin && client.status === "SUBMITTED" && <p className="submitted-edit-warning" role="note"><AlertTriangle size={18} aria-hidden="true" />השינויים יחולו על התיק הנוכחי בלבד ואינם משנים גרסאות שכבר נשלחו לחברות המימון.</p>}
     <section className="wizard-shell content-card">
       {!section && <div className="wizard-progress" aria-label={`שלב ${step} מתוך 3`}><div className="progress-track"><span style={{inlineSize: progress}} /></div><ol>{steps.map((item) => <li className={item.number === step ? "current" : item.number < step ? "complete" : ""} key={item.number}><span>{item.number < step ? <Check size={17} /> : item.number}</span><div><strong>{item.title}</strong><small>{item.description}</small></div></li>)}</ol></div>}
       <form className="wizard-form" onSubmit={(event) => { event.preventDefault(); if (!section && step < 3) next(); else void save(); }} noValidate>

@@ -18,7 +18,7 @@ import { createAnonymousPdf } from "../services/pdf.js";
 import { rateLimit, type RateLimitStore } from "../services/rateLimiter.js";
 import { buildAnonymousSubmissionSnapshot } from "../services/snapshot.js";
 import type {
-  AppStore, ClientIncomeMutationRecord, ClientLiabilitiesMutationRecord, ClientMutationRecord,
+  AdminNotificationSettings, AppStore, ClientIncomeMutationRecord, ClientLiabilitiesMutationRecord, ClientMutationRecord,
   ClientPersonalMutationRecord, ClientPropertyMutationRecord, EmailConfigurationRecord, LiabilityMutationRecord
 } from "../services/store.js";
 import type { StorageService } from "../services/storage.js";
@@ -492,6 +492,20 @@ export function createApp(services: AppServices) {
     }
     next();
   };
+  // Shared hook for the 3 core SUPER_ADMIN business events. The in-app
+  // notification is unconditional (per-admin DB-level idempotency via the
+  // notifications.idempotency_key unique index); the email is additionally
+  // gated by its settings toggle and only enqueued once per business event
+  // (email_outbox's own idempotency_key), reusing the exact same outbox
+  // mechanism and worker every other transactional email already goes
+  // through — never sent from here directly.
+  async function notifySuperAdminsOfEvent(type: string, title: string, body: string, entityType: string, entityId: number, idempotencyKeySuffix: string, emailToggle: (settings: AdminNotificationSettings) => boolean, emailTemplate: string, emailPayload: Record<string, unknown>): Promise<void> {
+    await services.store.notifySuperAdmins(type, title, body, entityType, entityId, `SUPER_ADMIN_NOTIFICATION:${idempotencyKeySuffix}`);
+    services.deliveryEvents?.publish({type, advisorId: -1, clientId: entityId, submissionPublicId: ""});
+    const settings = await services.store.getAdminNotificationSettings();
+    if (settings.email && emailToggle(settings)) await services.store.enqueueSuperAdminEmail(emailTemplate, `SUPER_ADMIN_EMAIL:${idempotencyKeySuffix}`, settings.email, emailPayload);
+  }
+
   const requirePublicRegistration = (request: Request, response: Response, next: NextFunction): void => {
     if (!services.env.PUBLIC_REGISTRATION_ENABLED) {
       response.status(503).json({error: "PUBLIC_REGISTRATION_DISABLED", message: "ההרשמה הציבורית אינה פעילה כעת.", requestId: request.requestId});
@@ -591,6 +605,7 @@ export function createApp(services: AppServices) {
         const active = await services.store.getActiveLegalDocumentVersion(documentType);
         if (active) await services.store.recordLegalDocumentAcceptance(account.id, documentType, active.id, {ip: request.ip, userAgent: request.header("user-agent")});
       }
+      await notifySuperAdminsOfEvent("SUPER_ADMIN_ADVISOR_REGISTERED", "יועץ חדש נרשם", `${account.firstName} ${account.lastName}${account.businessName ? ` (${account.businessName})` : ""} נרשם/ה כיועץ/ת חדש/ה.`, "user", account.id, `ADVISOR_REGISTERED:${account.id}`, (settings) => settings.notifyNewAdvisor, "SUPER_ADMIN_ADVISOR_REGISTERED", {advisorId: account.id});
     } catch (error: unknown) {
       const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
       await services.store.addAudit(null, "ADVISOR_REGISTRATION_FAILED", "user", null, {reason: code === "23505" ? "DUPLICATE_ACCOUNT" : "DATABASE_ERROR"}, request.requestId, request.ip, request.header("user-agent"));
@@ -700,6 +715,7 @@ export function createApp(services: AppServices) {
       publicCaseNumber, advisorId, ...clientMutationRecord(input, services.encryption, request.user!.id)
     });
     await services.store.addAudit(request.user!.id, "CLIENT_CREATED", "client", client.id, {publicCaseNumber}, request.requestId, request.ip, request.header("user-agent"));
+    await notifySuperAdminsOfEvent("SUPER_ADMIN_CASE_CREATED", "תיק חדש נוצר", `תיק ${publicCaseNumber} נוצר על ידי ${request.user!.firstName} ${request.user!.lastName}.`, "client", client.id, `CASE_CREATED:${client.id}`, (settings) => settings.notifyNewCase, "SUPER_ADMIN_CASE_CREATED", {clientId: client.id});
     response.status(201).json(await publicClient(client, services.store, services.encryption));
   }));
 
@@ -708,7 +724,7 @@ export function createApp(services: AppServices) {
     response.json(await publicClient(client, services.store, services.encryption));
   }));
 
-  app.patch("/api/clients/:id", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+  app.patch("/api/clients/:id", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientInputSchema.parse(request.body);
     const existing = await publicClient(await services.store.getClient(request.authorizedClientId!), services.store, services.encryption);
     if (!existing) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
@@ -722,7 +738,7 @@ export function createApp(services: AppServices) {
     response.json({active: await services.email.isDeliveryActive()});
   }));
 
-  app.patch("/api/clients/:id/personal", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+  app.patch("/api/clients/:id/personal", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientPersonalInputSchema.parse(request.body);
     const existing = await publicClient(await services.store.getClient(request.authorizedClientId!), services.store, services.encryption);
     if (!existing) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
@@ -733,7 +749,7 @@ export function createApp(services: AppServices) {
     response.json(await publicClient(client, services.store, services.encryption));
   }));
 
-  app.patch("/api/clients/:id/income", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+  app.patch("/api/clients/:id/income", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientIncomeInputSchema.parse(request.body);
     const existing = await publicClient(await services.store.getClient(request.authorizedClientId!), services.store, services.encryption);
     if (!existing) { response.status(404).json({error: "CLIENT_NOT_FOUND", requestId: request.requestId}); return; }
@@ -744,7 +760,7 @@ export function createApp(services: AppServices) {
     response.json(await publicClient(client, services.store, services.encryption));
   }));
 
-  app.patch("/api/clients/:id/liabilities", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+  app.patch("/api/clients/:id/liabilities", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientLiabilitiesInputSchema.parse(request.body);
     const client = await services.store.updateClientLiabilities(request.authorizedClientId!, liabilitiesMutationRecord(input, services.encryption));
     if (!client) { response.status(400).json({error: "CLIENT_LIABILITIES_UPDATE_FAILED", requestId: request.requestId}); return; }
@@ -752,7 +768,7 @@ export function createApp(services: AppServices) {
     response.json(await publicClient(client, services.store, services.encryption));
   }));
 
-  app.patch("/api/clients/:id/credit-indication", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+  app.patch("/api/clients/:id/credit-indication", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input: CreditIndicationInput = creditIndicationInputSchema.parse(request.body);
     await services.store.upsertCreditIndication(request.authorizedClientId!, input);
     await services.store.addAudit(request.user!.id, "CLIENT_CREDIT_INDICATION_UPDATED", "client", request.authorizedClientId!, {section: "credit-indication"}, request.requestId);
@@ -761,7 +777,7 @@ export function createApp(services: AppServices) {
     response.json(await publicClient(client, services.store, services.encryption));
   }));
 
-  app.patch("/api/clients/:id/property", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+  app.patch("/api/clients/:id/property", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientPropertyInputSchema.parse(request.body);
     const client = await services.store.updateClientProperty(request.authorizedClientId!, propertyMutationRecord(input, services.encryption));
     if (!client) { response.status(400).json({error: "CLIENT_PROPERTY_UPDATE_FAILED", requestId: request.requestId}); return; }
@@ -769,7 +785,7 @@ export function createApp(services: AppServices) {
     response.json(await publicClient(client, services.store, services.encryption));
   }));
 
-  app.patch("/api/clients/:id/deal-details", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+  app.patch("/api/clients/:id/deal-details", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
     const input = clientDealDetailsInputSchema.parse(request.body);
     const client = await services.store.updateClientDealDetails(request.authorizedClientId!, services.encryption.encrypt(input.dealDetails), request.user!.id);
     if (!client) { response.status(400).json({error: "CLIENT_DEAL_DETAILS_UPDATE_FAILED", requestId: request.requestId}); return; }
@@ -1409,8 +1425,62 @@ export function createApp(services: AppServices) {
     }
   }
 
+  const auditLogQuerySchema = z.object({
+    limit: z.coerce.number().int().positive().max(500).optional(),
+    actorUserId: z.string().optional(),
+    action: z.string().max(100).optional(),
+    entityType: z.string().max(80).optional(),
+    since: z.string().optional(),
+    until: z.string().optional()
+  });
   app.get("/api/admin/audit-logs", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
-    response.json(await services.store.listAuditLogs(Number(request.query.limit) || 100));
+    const query = auditLogQuerySchema.parse(request.query);
+    response.json(await services.store.listAuditLogs({
+      limit: query.limit ?? 100,
+      actorUserId: query.actorUserId ? Number(query.actorUserId) : undefined,
+      action: query.action || undefined,
+      entityType: query.entityType || undefined,
+      since: query.since ? new Date(query.since) : undefined,
+      until: query.until ? new Date(query.until) : undefined
+    }));
+  }));
+
+  app.get("/api/admin/settings/notifications", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
+    response.json(await services.store.getAdminNotificationSettings());
+  }));
+  const adminNotificationSettingsSchema = z.object({
+    email: z.string().trim().email().max(320).nullable().optional(),
+    notifyNewAdvisor: z.boolean().optional(),
+    notifyNewCase: z.boolean().optional(),
+    notifyLenderInterested: z.boolean().optional(),
+    notifyEmailFailed: z.boolean().optional(),
+    notifyDeadlinePassed: z.boolean().optional(),
+    notifyPrivacyRequest: z.boolean().optional()
+  }).strict();
+  app.patch("/api/admin/settings/notifications", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const input = adminNotificationSettingsSchema.parse(request.body);
+    const before = await services.store.getAdminNotificationSettings();
+    const values: Record<string, string> = {};
+    if (input.email !== undefined) values.admin_notification_email = input.email ?? "";
+    if (input.notifyNewAdvisor !== undefined) values.admin_notify_new_advisor = String(input.notifyNewAdvisor);
+    if (input.notifyNewCase !== undefined) values.admin_notify_new_case = String(input.notifyNewCase);
+    if (input.notifyLenderInterested !== undefined) values.admin_notify_lender_interested = String(input.notifyLenderInterested);
+    if (input.notifyEmailFailed !== undefined) values.admin_notify_email_failed = String(input.notifyEmailFailed);
+    if (input.notifyDeadlinePassed !== undefined) values.admin_notify_deadline_passed = String(input.notifyDeadlinePassed);
+    if (input.notifyPrivacyRequest !== undefined) values.admin_notify_privacy_request = String(input.notifyPrivacyRequest);
+    await services.store.setSettings("ADMIN_NOTIFICATIONS", values, request.user!.id);
+    // Privacy allow-list (see plan section 3): the notification email is a
+    // free-text address — never log its old/new value, only that it
+    // changed. The toggles are plain booleans, which the allow-list
+    // explicitly permits to carry a real old/new value.
+    const changedFields: string[] = [];
+    if (input.email !== undefined) changedFields.push("email");
+    const toggleChanges: Record<string, {old: boolean; new: boolean}> = {};
+    for (const key of ["notifyNewAdvisor", "notifyNewCase", "notifyLenderInterested", "notifyEmailFailed", "notifyDeadlinePassed", "notifyPrivacyRequest"] as const) {
+      if (input[key] !== undefined && input[key] !== before[key]) toggleChanges[key] = {old: before[key], new: input[key]};
+    }
+    await services.store.addAudit(request.user!.id, "ADMIN_NOTIFICATION_SETTINGS_UPDATED", "system_settings", null, {changedFields: changedFields.length ? changedFields : undefined, toggleChanges: Object.keys(toggleChanges).length ? toggleChanges : undefined}, request.requestId, request.ip, request.header("user-agent"));
+    response.json(await services.store.getAdminNotificationSettings());
   }));
 
   app.post("/api/admin/security/encryption-test", ...authenticated, auth.requireSuperAdmin, (request, response) => {
@@ -1466,17 +1536,17 @@ export function createApp(services: AppServices) {
     app.get("/api/advisor/financing-companies", ...authenticated, auth.requireRole("ADVISOR"), asyncRoute(async (request, response) => {
       const clientId = z.coerce.number().int().positive().parse(request.query.clientId); response.json(await delivery.listAdvisorCompanies(clientId, advisorActor(request)));
     }));
-    app.get("/api/clients/:clientId/delivery/preflight", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    app.get("/api/clients/:clientId/delivery/preflight", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
       response.json(await delivery.preflight(request.authorizedClientId!, advisorActor(request)));
     }));
-    app.post("/api/clients/:clientId/delivery/preview", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
+    app.post("/api/clients/:clientId/delivery/preview", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => {
       z.object({}).strict().parse(request.body ?? {}); response.json(await delivery.preview(request.authorizedClientId!, advisorActor(request)));
     }));
-    app.post("/api/clients/:clientId/delivery/send", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, requireEmailDelivery, rateLimit(services.limiter, "lender-delivery-send", 10, 60), asyncRoute(async (request, response) => {
+    app.post("/api/clients/:clientId/delivery/send", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, requireEmailDelivery, rateLimit(services.limiter, "lender-delivery-send", 10, 60), asyncRoute(async (request, response) => {
       const input = z.object({idempotencyKey: z.string().uuid(), previewConfirmation: z.string().min(40).max(4000)}).strict().parse(request.body); response.status(201).json(await delivery.send(request.authorizedClientId!, input, advisorActor(request), context(request)));
     }));
-    app.get("/api/clients/:clientId/company-responses", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.listClientResponses(request.authorizedClientId!, advisorActor(request))); }));
-    app.get("/api/clients/:clientId/company-responses/:submissionId", ...authenticated, auth.requireRole("ADVISOR"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.getClientResponse(request.authorizedClientId!, routeParam(request, "submissionId"), advisorActor(request))); }));
+    app.get("/api/clients/:clientId/company-responses", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.listClientResponses(request.authorizedClientId!, advisorActor(request))); }));
+    app.get("/api/clients/:clientId/company-responses/:submissionId", ...authenticated, auth.requireRole("ADVISOR", "SUPER_ADMIN"), auth.requireAdvisorClientAccess, asyncRoute(async (request, response) => { response.json(await delivery.getClientResponse(request.authorizedClientId!, routeParam(request, "submissionId"), advisorActor(request))); }));
 
     app.get("/api/admin/financing-companies", ...authenticated, auth.requireAdmin, asyncRoute(async (_request, response) => { response.json(await delivery.listCompaniesForAdmin()); }));
     app.post("/api/admin/financing-companies", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => { response.status(201).json(await delivery.createCompany(companySchema.parse(request.body), adminActor(request), context(request))); }));
@@ -1540,6 +1610,22 @@ export function createApp(services: AppServices) {
     }));
     app.get("/api/admin/advisors/stats", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
       response.json(await delivery.getAdvisorCaseStats());
+    }));
+    app.get("/api/admin/system-health", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
+      const [core, redisUp, minioUp] = await Promise.all([delivery.getSystemHealth(), services.limiter.ping(), services.storage.ping()]);
+      // Only GREEN/YELLOW/RED + counts + a timestamp ever leave this route —
+      // never a host, connection string, credential, or secret value.
+      response.json({
+        api: "GREEN",
+        worker: core.workerStatus,
+        workerHeartbeatAt: core.workerHeartbeatAt,
+        postgres: core.postgres,
+        redis: redisUp ? "GREEN" : "RED",
+        minio: minioUp ? "GREEN" : "RED",
+        failedEmailCount: core.failedEmailCount,
+        pendingEmailCount: core.pendingEmailCount,
+        lastBackup: "לא זמין באפליקציה — יש לבדוק בשרת"
+      });
     }));
     app.get("/api/admin/cases/:id", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
       const clientId = Number(request.params.id);

@@ -4,6 +4,7 @@ import { AlertTriangle, Banknote, Briefcase, Clock3, Handshake, Mail, ShieldAler
 import type { CurrentUser } from "../types";
 import type { AdminActivityPoint, AdminAttention, AdminDashboardStats, AdminRecentActivityItem, AdminStatsPeriod } from "../types";
 import { api } from "../utils/apiClient";
+import { adminEntityLink } from "../utils/adminEntityLink";
 import { formatCurrency, formatIsraelDateTime } from "../utils/formatters";
 import {useIsraelTimeGreeting} from "../hooks/useIsraelTimeGreeting";
 
@@ -27,11 +28,7 @@ const activityTypeLabel: Record<string, string> = {
 };
 
 function activityLink(item: AdminRecentActivityItem): string {
-  if (item.entityType === "client") return `/admin/cases/${item.entityId}`;
-  if (item.entityType === "user") return "/admin/advisors";
-  if (item.entityType === "privacy_request") return "/admin/settings/privacy-requests";
-  if (item.entityType === "email_outbox") return "/admin/email-logs";
-  return "/admin";
+  return adminEntityLink(item.entityType, item.entityId);
 }
 
 // גרף SVG קליל ללא תלות בספריית chart — הפרויקט אינו כולל כרגע ספריית

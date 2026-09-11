@@ -36,6 +36,10 @@ import AdminCompanySubmissionsView from "./components/AdminCompanySubmissionsVie
 import AdminEmailLogsView from "./components/AdminEmailLogsView";
 import AdminCasesView from "./components/AdminCasesView";
 import AdminCaseDetailView from "./components/AdminCaseDetailView";
+import AdminNotificationsView from "./components/AdminNotificationsView";
+import AdminNotificationSettingsView from "./components/AdminNotificationSettingsView";
+import AdminSystemHealthView from "./components/AdminSystemHealthView";
+import AdminAuditLogView from "./components/AdminAuditLogView";
 import {requireFrontendConfig} from "./config/frontend";
 
 const productionConfig = requireFrontendConfig();
@@ -83,6 +87,8 @@ export default function App() {
       <Route path="advisors" element={user.role === "SUPER_ADMIN" ? <AdminAdvisorsView /> : <AdminSectionPage title="יועצים" description="אין הרשאה לניהול יועצים." />} />
       <Route path="cases" element={user.role === "SUPER_ADMIN" ? <AdminCasesView /> : <AdminSectionPage title="תיקים" description="אין הרשאה לצפייה בתיקים." />} />
       <Route path="cases/:id" element={user.role === "SUPER_ADMIN" ? <AdminCaseDetailView /> : <AdminSectionPage title="תיק" description="אין הרשאה לצפייה בתיק." />} />
+      <Route path="cases/:id/edit" element={user.role === "SUPER_ADMIN" ? <ClientEditView /> : <AdminSectionPage title="עריכת תיק" description="אין הרשאה לעריכת תיק." />} />
+      <Route path="cases/:id/edit/:section" element={user.role === "SUPER_ADMIN" ? <ClientEditView /> : <AdminSectionPage title="עריכת תיק" description="אין הרשאה לעריכת תיק." />} />
       <Route path="clients" element={<Navigate to="/admin/cases" replace />} />
       <Route path="lenders" element={<AdminFinancingCompaniesView />} />
       <Route path="company-submissions" element={<AdminCompanySubmissionsView />} />
@@ -92,7 +98,10 @@ export default function App() {
       <Route path="settings/smtp" element={canAccessSmtpSettings(user.role) ? <AdminDashboard userEmail={user.email} /> : <Navigate to="/admin/settings" replace />} />
       <Route path="settings/legal" element={user.role === "SUPER_ADMIN" ? <AdminLegalDocumentsView /> : <Navigate to="/admin/settings" replace />} />
       <Route path="settings/privacy-requests" element={user.role === "SUPER_ADMIN" ? <AdminPrivacyRequestsView /> : <Navigate to="/admin/settings" replace />} />
-      <Route path="audit" element={user.role === "SUPER_ADMIN" ? <AdminSectionPage title="יומן פעילות" description="מעקב אחר פעולות מערכת ואירועי אבטחה." /> : <AdminSectionPage title="יומן פעילות" description="אין הרשאה לצפייה ביומן הפעילות." />} />
+      <Route path="settings/notifications" element={user.role === "SUPER_ADMIN" ? <AdminNotificationSettingsView /> : <Navigate to="/admin/settings" replace />} />
+      <Route path="notifications" element={user.role === "SUPER_ADMIN" ? <AdminNotificationsView /> : <AdminSectionPage title="התראות" description="אין הרשאה לצפייה בהתראות." />} />
+      <Route path="system-health" element={user.role === "SUPER_ADMIN" ? <AdminSystemHealthView /> : <AdminSectionPage title="בריאות מערכת" description="אין הרשאה לצפייה בבריאות המערכת." />} />
+      <Route path="audit" element={user.role === "SUPER_ADMIN" ? <AdminAuditLogView /> : <AdminSectionPage title="יומן פעילות" description="אין הרשאה לצפייה ביומן הפעילות." />} />
     </Route>
     <Route path="/advisor" element={user.role === "ADVISOR" ? <AdvisorLayout user={user} /> : <Navigate to={homePath} replace />}>
       <Route index element={<DashboardView user={user} />} />

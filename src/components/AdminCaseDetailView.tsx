@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, FileText } from "lucide-react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { AlertTriangle, CheckCircle2, FileText, X } from "lucide-react";
 import type { AdminCaseDetail } from "../types";
 import { api } from "../utils/apiClient";
 import { caseStageLabels, formatClientStatus, formatCurrency, formatDealType, formatDocumentType, formatFileSize, formatIsraelDateTime } from "../utils/formatters";
@@ -11,9 +11,17 @@ const decisionLabel: Record<string, string> = {
 
 export default function AdminCaseDetailView() {
   const {id} = useParams<{id: string}>();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [detail, setDetail] = useState<AdminCaseDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // ClientEditView (reused verbatim for admin case editing) navigates back
+  // here with {state: {toast: "..."}} exactly like it does for the advisor's
+  // own ClientDetailView — read the toast the same way, and re-fetch since
+  // location.key changes on every navigation (even a same-path replace)
+  // while the :id param does not.
+  const [toast, setToast] = useState<string | null>(() => (location.state as {toast?: string} | null)?.toast ?? null);
 
   useEffect(() => {
     if (!id) return;
@@ -24,15 +32,21 @@ export default function AdminCaseDetailView() {
       .catch(() => { if (!cancelled) setError("לא ניתן לטעון את התיק."); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, location.key]);
+
+  useEffect(() => {
+    if (!toast) return;
+    navigate(location.pathname, {replace: true, state: null});
+  }, [location.pathname, navigate, toast]);
 
   if (loading) return <main className="admin-page"><div className="empty-state">טוען תיק…</div></main>;
   if (error || !detail) return <main className="admin-page"><div className="empty-state">{error || "התיק לא נמצא."}</div></main>;
 
   return <main className="admin-page case-detail-page">
+    {toast && <div className="toast success" role="status"><strong>{toast}</strong><button type="button" aria-label="סגירת הודעה" onClick={() => setToast(null)}><X size={16} /></button></div>}
     <nav className="breadcrumbs" aria-label="פירורי לחם"><Link to="/admin">לוח הבקרה</Link><span>›</span><Link to="/admin/cases">תיקים</Link><span>›</span><span aria-current="page">{detail.publicCaseNumber}</span></nav>
 
-    <section className="panel"><header className="section-heading compact"><div><span className="eyebrow">תיק {detail.publicCaseNumber}</span><h1>{detail.property.city} · {formatDealType(detail.loanRequest.purpose)}</h1><p>יועץ: {detail.advisor.name} · {detail.advisor.email}</p></div><span className={`status-badge status-${detail.caseStage.toLowerCase()}`}>{caseStageLabels[detail.caseStage] ?? formatClientStatus(detail.caseStage)}</span></header>
+    <section className="panel"><header className="section-heading compact"><div><span className="eyebrow">תיק {detail.publicCaseNumber}</span><h1>{detail.property.city} · {formatDealType(detail.loanRequest.purpose)}</h1><p>יועץ: {detail.advisor.name} · {detail.advisor.email}</p></div><div className="header-actions"><span className={`status-badge status-${detail.caseStage.toLowerCase()}`}>{caseStageLabels[detail.caseStage] ?? formatClientStatus(detail.caseStage)}</span><Link to={`/admin/cases/${detail.id}/edit`} className="secondary-button">עריכת תיק</Link></div></header>
 
       {detail.status === "SUBMITTED" && <p className="submitted-edit-warning" role="note"><AlertTriangle size={18} aria-hidden="true" />השינויים יחולו על התיק הנוכחי בלבד ואינם משנים גרסאות שכבר נשלחו לחברות המימון.</p>}
 

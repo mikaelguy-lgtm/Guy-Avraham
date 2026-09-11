@@ -134,6 +134,13 @@
       "when": 1788190118426,
       "tag": "0018_cute_excalibur",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789131667727,
+      "tag": "0019_powerful_the_professor",
+      "breakpoints": true
     }
   ]
 }
