@@ -1,21 +1,23 @@
 # SynCash — Production Handoff
 
 Compiled 2026-08-28, updated through the 2026-09-11 Production deployment of
-`2eed389` (no migration — SUPER ADMIN Control Center Release A: read-only
-dashboard/cases/case-detail screens; see section 4 below). This supersedes
-the earlier `ec6ab3d` deploy (no migration — UX-only addition of a 48-hour
-expectation-setting note under the delivery-success screen), the `c2c2fac`
-deploy before it (fixes the remaining PDF section-title orphans that
-survived the `92b4ba3` layout redesign), the `92b4ba3` deploy before that
-(PDF layout redesign, download-filename root-cause fix, and the
-preview-expired blob-URL fix), and the `fa885d4` deploy before that
+`79b3ab7` (migration `0019`, additive-only — SUPER ADMIN Control Center
+Release B: case editing, notifications, System Health; see section 4
+below). This supersedes the earlier `2eed389` deploy (no migration —
+SUPER ADMIN Control Center Release A: read-only dashboard/cases/case-detail
+screens), the `ec6ab3d` deploy before it (no migration — UX-only addition
+of a 48-hour expectation-setting note under the delivery-success screen),
+the `c2c2fac` deploy before it (fixes the remaining PDF section-title
+orphans that survived the `92b4ba3` layout redesign), the `92b4ba3` deploy
+before that (PDF layout redesign, download-filename root-cause fix, and
+the preview-expired blob-URL fix), and the `fa885d4` deploy before that
 (migration `0018`, pilot-feedback fixes: per-borrower housing status with
 married-couple inheritance, loan-purpose OTHER, optional property street
 address, title deed no longer required, three legacy additional-income
 options dropped for new cases, and the reminder-duplication root-cause
 fix), whose sections below are kept for history but no longer reflect the
 live active release. Everything below reflects live-verified state as of
-the `2eed389` deployment unless marked otherwise.
+the `79b3ab7` deployment unless marked otherwise.
 
 ## 1. Architecture
 
@@ -66,7 +68,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `2eed3895c9ea6a95711999a847790dc1f9915e88` |
+| Active release | `/opt/syncash/current` (symlink) → `79b3ab71853c1f434b426f8993c7459527c24e88` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -141,21 +143,27 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-09-11 (post `2eed389` deploy)
+## 4. Operational state — live-verified 2026-09-11 (post `79b3ab7` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/2eed3895c9ea6a95711999a847790dc1f9915e88` |
-| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `2eed389...`), `postgres:17-alpine`, `redis:7-alpine`, `minio` |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/79b3ab71853c1f434b426f8993c7459527c24e88` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `79b3ab7...`), `postgres:17-alpine`, `redis:7-alpine`, `minio` |
 | Health checks | `http://127.0.0.1:3181/api/health` → `200`, `http://127.0.0.1:3180/healthz` → `200` (the exact checks `deploy-production.sh` itself gates on) |
-| Migrations | None — Release A is read-only against the existing schema (the migrate step still runs and reports completion with nothing pending) |
+| Migration | `0019` — additive only (`notifications` gains nullable `entity_type`, `entity_id`, `idempotency_key` + a unique index on `idempotency_key`); applied exactly once, `notifications` row count unchanged before/after (29 → 29), schema and unique index verified live |
 | API/Worker error logs (post-deploy) | Zero error markers in either |
-| New-route smoke test | `GET /api/admin/stats` and `GET /api/admin/cases` both return `401` (registered + auth-gated) rather than `404`, without authenticating with real production credentials |
-| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release (`syncash-20260911T123847Z-2eed3895c9ea6a95711999a847790dc1f9915e88.tar.gz.gpg`) |
-| Scope of this release | SUPER ADMIN Control Center Release A (read-only, no schema change): a real Dashboard (KPIs, activity graph, requires-attention panel, recent-activity feed, all server-computed and de-duplicated per case) with a today/7d/30d/month/all period filter; a new paginated Cases screen (status filters, case-number/advisor search, per-row draft-readiness badge reusing the same delivery-preflight Source of Truth as the real send screen); a new read-only Case Detail view (documents, submissions, timeline, email history joined only via real submission/invitation foreign keys); Advisors/Financing-companies screens extended with per-entity KPIs (case counts, response rate, average response time). Verified via real Playwright screenshots and a headless E2E run at both a 1440×900 desktop viewport and a 390×844 mobile viewport, RTL. Release B (case editing, notification center, admin email alerts, system health, audit UI, and its accompanying migration) is intentionally not part of this release |
+| New-route smoke test | `GET /api/admin/settings/notifications`, `GET /api/admin/audit-logs`, `GET /api/admin/system-health` all return `401` (registered + auth-gated) rather than `404`, without authenticating with real production credentials |
+| Worker heartbeat | Confirmed written on the worker's first tick after deploy (`system_settings.admin_worker_heartbeat_at`), the System Health screen's real source of truth |
+| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release (`syncash-20260911T142112Z-79b3ab71853c1f434b426f8993c7459527c24e88.tar.gz.gpg`) |
+| Scope of this release | SUPER ADMIN Control Center Release B: SUPER_ADMIN case editing (reuses the advisor's existing PATCH endpoints/form verbatim, with a SUBMITTED-case warning banner; a real-Postgres test proves editing never retroactively changes an existing case_version/company_submission); a privacy-safe audit allow-list (free-text fields log only `{field, changed:true}`, never the value); a Notification Center (bell + list) for SUPER_ADMIN reusing the existing generic, per-user-scoped `/api/notifications*` routes and SSE; three core business events (advisor registered, case created, lender interested) that always create an in-app notification and optionally one alert email, each DB-level idempotent under concurrent duplicate calls (proven, not assumed); a Notification Settings page (one configurable admin email address, per-event toggles); a System Health screen (live Postgres/Redis/MinIO checks, a real DB-backed worker heartbeat, email failure/queue counts, an honest "check the server" for backup status — never a guess); and a new Audit Log screen with filters. A real end-to-end email was sent through the local Mailpit dev environment for a live case-created event during verification and confirmed correctly addressed, idempotent, and free of extra PII (see the delivered report for detail); production itself was not used to send a test email. Release A (dashboard/cases/case-detail) is unchanged by this deploy |
 | Rollback required | No |
 
-Previous release, `ec6ab3dd64a4bcfe0f1f39e7c466bb3a575fb6b8` (2026-09-08, 48h
+Previous release, `2eed3895c9ea6a95711999a847790dc1f9915e88` (2026-09-11,
+SUPER ADMIN Control Center Release A — read-only dashboard/cases/case-detail
+screens): remains on disk for rollback; its own operational-state evidence
+is preserved in this file's Git history rather than duplicated here.
+
+Earlier release, `ec6ab3dd64a4bcfe0f1f39e7c466bb3a575fb6b8` (2026-09-08, 48h
 expectation-setting note on the delivery success screen): remains on disk
 for rollback; its own operational-state evidence is preserved in this
 file's Git history rather than duplicated here.
@@ -173,12 +181,13 @@ rather than duplicated here.
 
 ## 5. Git / release state — in sync as of 2026-09-11
 
-Production active release: `2eed3895c9ea6a95711999a847790dc1f9915e88`.
+Production active release: `79b3ab71853c1f434b426f8993c7459527c24e88`.
 Local HEAD and `origin/codex-syncash-production-rebuild`: same SHA
-(`2eed3895c9ea6a95711999a847790dc1f9915e88`) — fully in sync as of this
+(`79b3ab71853c1f434b426f8993c7459527c24e88`) — fully in sync as of this
 deploy, confirmed a descendant of the prior active release via
 `git merge-base --is-ancestor` before deploying. Never merged to `main`.
-Prior releases `ec6ab3dd64a4bcfe0f1f39e7c466bb3a575fb6b8`,
+Prior releases `2eed3895c9ea6a95711999a847790dc1f9915e88`,
+`ec6ab3dd64a4bcfe0f1f39e7c466bb3a575fb6b8`,
 `c2c2fac31946cb0eb603bb0cd66c919164f58460`,
 `92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423`, and
 `fa885d467308f2c4d0b4ee46c196eb44c43c8252` remain on disk under
