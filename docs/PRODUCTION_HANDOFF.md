@@ -1,23 +1,27 @@
 # SynCash — Production Handoff
 
 Compiled 2026-08-28, updated through the 2026-09-11 Production deployment of
-`79b3ab7` (migration `0019`, additive-only — SUPER ADMIN Control Center
-Release B: case editing, notifications, System Health; see section 4
-below). This supersedes the earlier `2eed389` deploy (no migration —
-SUPER ADMIN Control Center Release A: read-only dashboard/cases/case-detail
-screens), the `ec6ab3d` deploy before it (no migration — UX-only addition
-of a 48-hour expectation-setting note under the delivery-success screen),
-the `c2c2fac` deploy before it (fixes the remaining PDF section-title
-orphans that survived the `92b4ba3` layout redesign), the `92b4ba3` deploy
-before that (PDF layout redesign, download-filename root-cause fix, and
-the preview-expired blob-URL fix), and the `fa885d4` deploy before that
-(migration `0018`, pilot-feedback fixes: per-borrower housing status with
-married-couple inheritance, loan-purpose OTHER, optional property street
-address, title deed no longer required, three legacy additional-income
-options dropped for new cases, and the reminder-duplication root-cause
-fix), whose sections below are kept for history but no longer reflect the
-live active release. Everything below reflects live-verified state as of
-the `79b3ab7` deployment unless marked otherwise.
+`fbdb285` (no migration — failure-isolation fix: the SUPER_ADMIN
+notification/email side effects added in Release B could 500 an
+already-successful advisor-registration or case-creation request; see
+section 4 below). This supersedes the earlier `79b3ab7` deploy (migration
+`0019`, additive-only — SUPER ADMIN Control Center Release B: case editing,
+notifications, System Health), the `2eed389` deploy before it (no
+migration — SUPER ADMIN Control Center Release A: read-only
+dashboard/cases/case-detail screens), the `ec6ab3d` deploy before it (no
+migration — UX-only addition of a 48-hour expectation-setting note under
+the delivery-success screen), the `c2c2fac` deploy before it (fixes the
+remaining PDF section-title orphans that survived the `92b4ba3` layout
+redesign), the `92b4ba3` deploy before that (PDF layout redesign,
+download-filename root-cause fix, and the preview-expired blob-URL fix),
+and the `fa885d4` deploy before that (migration `0018`, pilot-feedback
+fixes: per-borrower housing status with married-couple inheritance,
+loan-purpose OTHER, optional property street address, title deed no
+longer required, three legacy additional-income options dropped for new
+cases, and the reminder-duplication root-cause fix), whose sections below
+are kept for history but no longer reflect the live active release.
+Everything below reflects live-verified state as of the `fbdb285`
+deployment unless marked otherwise.
 
 ## 1. Architecture
 
@@ -68,7 +72,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `79b3ab71853c1f434b426f8993c7459527c24e88` |
+| Active release | `/opt/syncash/current` (symlink) → `fbdb2854e45b483861619dc86cc2fd9f55508f84` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -143,22 +147,26 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-09-11 (post `79b3ab7` deploy)
+## 4. Operational state — live-verified 2026-09-11 (post `fbdb285` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/79b3ab71853c1f434b426f8993c7459527c24e88` |
-| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `79b3ab7...`), `postgres:17-alpine`, `redis:7-alpine`, `minio` |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/fbdb2854e45b483861619dc86cc2fd9f55508f84` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `fbdb285...`), `postgres:17-alpine`, `redis:7-alpine`, `minio` |
 | Health checks | `http://127.0.0.1:3181/api/health` → `200`, `http://127.0.0.1:3180/healthz` → `200` (the exact checks `deploy-production.sh` itself gates on) |
-| Migration | `0019` — additive only (`notifications` gains nullable `entity_type`, `entity_id`, `idempotency_key` + a unique index on `idempotency_key`); applied exactly once, `notifications` row count unchanged before/after (29 → 29), schema and unique index verified live |
+| Migration | None — pure code fix against the existing (`0019`) schema |
 | API/Worker error logs (post-deploy) | Zero error markers in either |
-| New-route smoke test | `GET /api/admin/settings/notifications`, `GET /api/admin/audit-logs`, `GET /api/admin/system-health` all return `401` (registered + auth-gated) rather than `404`, without authenticating with real production credentials |
-| Worker heartbeat | Confirmed written on the worker's first tick after deploy (`system_settings.admin_worker_heartbeat_at`), the System Health screen's real source of truth |
-| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release (`syncash-20260911T142112Z-79b3ab71853c1f434b426f8993c7459527c24e88.tar.gz.gpg`) |
-| Scope of this release | SUPER ADMIN Control Center Release B: SUPER_ADMIN case editing (reuses the advisor's existing PATCH endpoints/form verbatim, with a SUBMITTED-case warning banner; a real-Postgres test proves editing never retroactively changes an existing case_version/company_submission); a privacy-safe audit allow-list (free-text fields log only `{field, changed:true}`, never the value); a Notification Center (bell + list) for SUPER_ADMIN reusing the existing generic, per-user-scoped `/api/notifications*` routes and SSE; three core business events (advisor registered, case created, lender interested) that always create an in-app notification and optionally one alert email, each DB-level idempotent under concurrent duplicate calls (proven, not assumed); a Notification Settings page (one configurable admin email address, per-event toggles); a System Health screen (live Postgres/Redis/MinIO checks, a real DB-backed worker heartbeat, email failure/queue counts, an honest "check the server" for backup status — never a guess); and a new Audit Log screen with filters. A real end-to-end email was sent through the local Mailpit dev environment for a live case-created event during verification and confirmed correctly addressed, idempotent, and free of extra PII (see the delivered report for detail); production itself was not used to send a test email. Release A (dashboard/cases/case-detail) is unchanged by this deploy |
+| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release |
+| Scope of this release | Failure-isolation fix for the 3 core SUPER_ADMIN notification hooks added in Release B. `POST /api/auth/register-advisor` and `POST /api/clients` previously awaited the admin-notification side effect unguarded — a DB hiccup in `notifySuperAdmins`/`getAdminNotificationSettings`/`enqueueSuperAdminEmail`, after the advisor/client row had already committed, could return `500` (or a false `409 ADVISOR_ALREADY_REGISTERED`) for an operation that had actually succeeded, risking a client-side retry that duplicates the record. Fixed by moving the try/catch inside the shared `notifySuperAdminsOfEvent` helper: it now always logs (event type, numeric entity id, requestId — no PII) and never throws, so this side effect can no longer affect the business response from any call site. `verifyInterest()`'s post-commit notification hook was already failure-isolated but logged nothing on failure — added the same operational-error log. Verified with 5 new tests: forced failures in each of `notifySuperAdmins`, `getAdminNotificationSettings`, and `enqueueSuperAdminEmail` for both HTTP routes (still return success), and a real-Postgres test proving the lender-interested `decision_status` commits to `INTERESTED` and the call still succeeds even when the post-commit notification query fails |
 | Rollback required | No |
 
-Previous release, `2eed3895c9ea6a95711999a847790dc1f9915e88` (2026-09-11,
+Previous release, `79b3ab71853c1f434b426f8993c7459527c24e88` (2026-09-11,
+migration `0019`, SUPER ADMIN Control Center Release B — case editing,
+notifications, System Health): remains on disk for rollback; its own
+operational-state evidence is preserved in this file's Git history rather
+than duplicated here.
+
+Earlier release, `2eed3895c9ea6a95711999a847790dc1f9915e88` (2026-09-11,
 SUPER ADMIN Control Center Release A — read-only dashboard/cases/case-detail
 screens): remains on disk for rollback; its own operational-state evidence
 is preserved in this file's Git history rather than duplicated here.
@@ -181,12 +189,13 @@ rather than duplicated here.
 
 ## 5. Git / release state — in sync as of 2026-09-11
 
-Production active release: `79b3ab71853c1f434b426f8993c7459527c24e88`.
+Production active release: `fbdb2854e45b483861619dc86cc2fd9f55508f84`.
 Local HEAD and `origin/codex-syncash-production-rebuild`: same SHA
-(`79b3ab71853c1f434b426f8993c7459527c24e88`) — fully in sync as of this
+(`fbdb2854e45b483861619dc86cc2fd9f55508f84`) — fully in sync as of this
 deploy, confirmed a descendant of the prior active release via
 `git merge-base --is-ancestor` before deploying. Never merged to `main`.
-Prior releases `2eed3895c9ea6a95711999a847790dc1f9915e88`,
+Prior releases `79b3ab71853c1f434b426f8993c7459527c24e88`,
+`2eed3895c9ea6a95711999a847790dc1f9915e88`,
 `ec6ab3dd64a4bcfe0f1f39e7c466bb3a575fb6b8`,
 `c2c2fac31946cb0eb603bb0cd66c919164f58460`,
 `92b4ba3410d18b7ae2cb7c64afe9139bfc8e9423`, and
