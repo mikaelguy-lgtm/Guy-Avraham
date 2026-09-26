@@ -1,7 +1,13 @@
 # SynCash — Production Handoff
 
-Compiled 2026-08-28, updated through the 2026-09-11 Production deployment of
-`fbdb285` (no migration — failure-isolation fix: the SUPER_ADMIN
+Compiled 2026-08-28, updated through the 2026-09-26 Production deployment of
+`2f0a7b5` (migration `0020`, additive-only — public marketing site for
+`syncash.co.il` served by the frontend container on `127.0.0.1:3182`, host
+vhost prepared but **not installed** pending the apex/www DNS change, see
+`docs/PUBLIC_SITE_ROLLOUT.md`; SUPER_ADMIN "האתר הציבורי" settings +
+`GET /api/public/site-settings`; favicon/manifest for the app; and the
+5-minute server-enforced idle timeout for all authenticated roles). This
+supersedes the `fbdb285` deploy (no migration — failure-isolation fix: the SUPER_ADMIN
 notification/email side effects added in Release B could 500 an
 already-successful advisor-registration or case-creation request; see
 section 4 below). This supersedes the earlier `79b3ab7` deploy (migration
@@ -72,13 +78,14 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `fbdb2854e45b483861619dc86cc2fd9f55508f84` |
+| Active release | `/opt/syncash/current` (symlink) → `2f0a7b5042be5ddd53e0ef18328853d2039ca9c6` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
 | Logs / locks | `/opt/syncash/shared/logs`, `/opt/syncash/shared/locks` |
 | Docker Compose project | `syncash-prod` (`compose.production.yml`) |
 | Domain | `app.syncash.co.il` → `169.58.83.2`, HTTPS via Certbot |
+| Public site | `syncash.co.il` / `www` — served from the `frontend` container on `127.0.0.1:3182` (second nginx block, `/healthz` → 200). **Not internet-reachable yet**: apex/www A records still point at LiveDNS parking (`62.219.78.222`); host vhost `nginx/syncash.co.il.conf` and the Let's Encrypt certificate are installed only after the owner approves the DNS change (`docs/PUBLIC_SITE_ROLLOUT.md`) |
 
 Apex domain warning: `syncash.co.il` and `www.syncash.co.il` still point at a
 different, legacy server (`62.219.78.222`, per `SERVER_AUDIT_SYNCASH.md`,
@@ -147,17 +154,26 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-09-11 (post `fbdb285` deploy)
+## 4. Operational state — live-verified 2026-09-26 (post `2f0a7b5` deploy)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/fbdb2854e45b483861619dc86cc2fd9f55508f84` |
-| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `fbdb285...`), `postgres:17-alpine`, `redis:7-alpine`, `minio` |
-| Health checks | `http://127.0.0.1:3181/api/health` → `200`, `http://127.0.0.1:3180/healthz` → `200` (the exact checks `deploy-production.sh` itself gates on) |
-| Migration | None — pure code fix against the existing (`0019`) schema |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/2f0a7b5042be5ddd53e0ef18328853d2039ca9c6` |
+| Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `2f0a7b5...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
+| Health checks | `http://127.0.0.1:3181/api/health` → `200`, `http://127.0.0.1:3180/healthz` → `200`, `http://127.0.0.1:3182/healthz` → `200` (public site block; `healthcheck-production.sh` now gates on all three). `https://app.syncash.co.il/api/health` → `200`, HTTP → 308 HTTPS, HSTS/nosniff/DENY/`X-Robots-Tag: noindex` intact, cert valid to 2026-10-26 |
+| Migration | `0020_idle_activity` — `ALTER TABLE users ADD COLUMN last_activity_at timestamptz` (nullable, additive). `users` row count 9 before and 9 after; column verified present; applied once by `deploy-production.sh` |
 | API/Worker error logs (post-deploy) | Zero error markers in either |
-| Backup | Pre-deploy encrypted backup taken automatically by `deploy-production.sh` before this release |
-| Scope of this release | Failure-isolation fix for the 3 core SUPER_ADMIN notification hooks added in Release B. `POST /api/auth/register-advisor` and `POST /api/clients` previously awaited the admin-notification side effect unguarded — a DB hiccup in `notifySuperAdmins`/`getAdminNotificationSettings`/`enqueueSuperAdminEmail`, after the advisor/client row had already committed, could return `500` (or a false `409 ADVISOR_ALREADY_REGISTERED`) for an operation that had actually succeeded, risking a client-side retry that duplicates the record. Fixed by moving the try/catch inside the shared `notifySuperAdminsOfEvent` helper: it now always logs (event type, numeric entity id, requestId — no PII) and never throws, so this side effect can no longer affect the business response from any call site. `verifyInterest()`'s post-commit notification hook was already failure-isolated but logged nothing on failure — added the same operational-error log. Verified with 5 new tests: forced failures in each of `notifySuperAdmins`, `getAdminNotificationSettings`, and `enqueueSuperAdminEmail` for both HTTP routes (still return success), and a real-Postgres test proving the lender-interested `decision_status` commits to `INTERESTED` and the call still succeeds even when the post-commit notification query fails |
+| Backup | Pre-deploy encrypted backup `syncash-20260926T130910Z-2f0a7b5….tar.gz.gpg` taken automatically by `deploy-production.sh` |
+| New routes smoke | `POST /api/auth/activity`, `POST /api/auth/logout`, `GET /api/admin/settings/public-site` → `401` without a token; `GET /api/public/site-settings` → `200` with the allow-listed body only (`whatsappAvailable:false` while the placeholder number is stored); `3182/` → 200, `3182/nope/` → 404, `sitemap.xml`/`robots.txt`/`favicon.ico` → 200 |
+| Public site reachability | **Not yet** — `syncash.co.il`/`www` still resolve to the LiveDNS parking IP; host vhost + certificate are pending the owner's DNS decision (see `docs/PUBLIC_SITE_ROLLOUT.md`). `app.syncash.co.il` is unaffected |
+| Idle timeout side effect | Every user logged in at deploy time had `last_activity_at = NULL` and an `auth_time` older than 5 minutes → their next request returns `401 IDLE_EXPIRED` and they re-authenticate once (expected, one-off) |
+| Scope of this release | Public marketing site (static build in `marketing/`, 8 indexable pages + legal/privacy-request/404, self-hosted fonts, no third-party requests/cookies/storage, JSON-LD Organization/WebSite/WebPage/SoftwareApplication/Article, sitemap/robots/canonical/OG); favicon set for app + site generated from the brand logo; SUPER_ADMIN "האתר הציבורי" settings (`system_settings` category `PUBLIC_SITE`, WhatsApp number normalised to international digits and audited only as `{field, changed:true}`); server-enforced 5-minute idle timeout (`requireFreshSession` on every protected route, anchor = max(`last_activity_at`, Firebase `auth_time`), activity endpoint refuses expired sessions, logout revokes Firebase refresh tokens, SSE stream re-checked each minute) with the client warning modal at 4:30, logout at 5:00 and multi-tab sync. Verified with 34 new unit/integration tests, the real-Postgres suites, 5 Playwright idle scenarios (faked context clock) and browser QA of every public page at 1440×900 / 1366×768 / 390×844 / 360×740 |
+| Rollback required | No |
+
+Previous release, `fbdb2854e45b483861619dc86cc2fd9f55508f84` (2026-09-11, no
+migration, failure-isolation fix for the SUPER_ADMIN notification hooks):
+remains on disk for rollback; its own operational-state evidence is preserved
+in this file's Git history rather than duplicated here. Summary of that fix: failure-isolation fix for the 3 core SUPER_ADMIN notification hooks added in Release B. `POST /api/auth/register-advisor` and `POST /api/clients` previously awaited the admin-notification side effect unguarded — a DB hiccup in `notifySuperAdmins`/`getAdminNotificationSettings`/`enqueueSuperAdminEmail`, after the advisor/client row had already committed, could return `500` (or a false `409 ADVISOR_ALREADY_REGISTERED`) for an operation that had actually succeeded, risking a client-side retry that duplicates the record. Fixed by moving the try/catch inside the shared `notifySuperAdminsOfEvent` helper: it now always logs (event type, numeric entity id, requestId — no PII) and never throws, so this side effect can no longer affect the business response from any call site. `verifyInterest()`'s post-commit notification hook was already failure-isolated but logged nothing on failure — added the same operational-error log. Verified with 5 new tests: forced failures in each of `notifySuperAdmins`, `getAdminNotificationSettings`, and `enqueueSuperAdminEmail` for both HTTP routes (still return success), and a real-Postgres test proving the lender-interested `decision_status` commits to `INTERESTED` and the call still succeeds even when the post-commit notification query fails |
 | Rollback required | No |
 
 Previous release, `79b3ab71853c1f434b426f8993c7459527c24e88` (2026-09-11,
@@ -187,14 +203,15 @@ rollback; its own operational-state evidence is preserved in this file's Git
 history
 rather than duplicated here.
 
-## 5. Git / release state — in sync as of 2026-09-11
+## 5. Git / release state — in sync as of 2026-09-26
 
-Production active release: `fbdb2854e45b483861619dc86cc2fd9f55508f84`.
-Local HEAD and `origin/codex-syncash-production-rebuild`: same SHA
-(`fbdb2854e45b483861619dc86cc2fd9f55508f84`) — fully in sync as of this
-deploy, confirmed a descendant of the prior active release via
-`git merge-base --is-ancestor` before deploying. Never merged to `main`.
-Prior releases `79b3ab71853c1f434b426f8993c7459527c24e88`,
+Production active release: `2f0a7b5042be5ddd53e0ef18328853d2039ca9c6`.
+Local HEAD and `origin/codex-syncash-production-rebuild`: that SHA plus the
+docs-only commit recording this deployment — confirmed a descendant of the
+prior active release via `git merge-base --is-ancestor` before deploying.
+Never merged to `main`.
+Prior releases `fbdb2854e45b483861619dc86cc2fd9f55508f84`,
+`79b3ab71853c1f434b426f8993c7459527c24e88`,
 `2eed3895c9ea6a95711999a847790dc1f9915e88`,
 `ec6ab3dd64a4bcfe0f1f39e7c466bb3a575fb6b8`,
 `c2c2fac31946cb0eb603bb0cd66c919164f58460`,
