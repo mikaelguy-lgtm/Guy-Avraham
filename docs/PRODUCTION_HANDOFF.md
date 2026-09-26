@@ -1,10 +1,14 @@
 # SynCash — Production Handoff
 
-Compiled 2026-08-28, updated through the 2026-09-26 Production deployment of
-`2f0a7b5` (migration `0020`, additive-only — public marketing site for
-`syncash.co.il` served by the frontend container on `127.0.0.1:3182`, host
-vhost prepared but **not installed** pending the apex/www DNS change, see
-`docs/PUBLIC_SITE_ROLLOUT.md`; SUPER_ADMIN "האתר הציבורי" settings +
+Compiled 2026-08-28, updated through the 2026-09-26 Production deployments of
+`2f0a7b5` (migration `0020`) and `d875d23` (no migration — CSP-safe templates,
+webmanifest MIME, live vhost synced). **The public site is live at
+`https://syncash.co.il`** since 2026-09-26: the owner moved the apex/www A
+records to `169.58.83.2` at LiveDNS, the host vhost `nginx/syncash.co.il.conf`
+was installed and the Let's Encrypt certificate `syncash.co.il` +
+`www.syncash.co.il` (expires 2026-12-25, auto-renew dry-run OK) was issued —
+see `docs/PUBLIC_SITE_ROLLOUT.md`. `2f0a7b5` scope: public marketing site
+served by the frontend container on `127.0.0.1:3182`; SUPER_ADMIN "האתר הציבורי" settings +
 `GET /api/public/site-settings`; favicon/manifest for the app; and the
 5-minute server-enforced idle timeout for all authenticated roles). This
 supersedes the `fbdb285` deploy (no migration — failure-isolation fix: the SUPER_ADMIN
@@ -78,14 +82,14 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `2f0a7b5042be5ddd53e0ef18328853d2039ca9c6` |
+| Active release | `/opt/syncash/current` (symlink) → `d875d2338b885640f5d90845e0d4a35a8e715e19` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
 | Logs / locks | `/opt/syncash/shared/logs`, `/opt/syncash/shared/locks` |
 | Docker Compose project | `syncash-prod` (`compose.production.yml`) |
 | Domain | `app.syncash.co.il` → `169.58.83.2`, HTTPS via Certbot |
-| Public site | `syncash.co.il` / `www` — served from the `frontend` container on `127.0.0.1:3182` (second nginx block, `/healthz` → 200). **Not internet-reachable yet**: apex/www A records still point at LiveDNS parking (`62.219.78.222`); host vhost `nginx/syncash.co.il.conf` and the Let's Encrypt certificate are installed only after the owner approves the DNS change (`docs/PUBLIC_SITE_ROLLOUT.md`) |
+| Public site | `https://syncash.co.il` (canonical; `www` and HTTP → 301) — LiveDNS A records `syncash.co.il`/`www` → `169.58.83.2` since 2026-09-26; host vhost `/etc/nginx/sites-enabled/syncash.co.il.conf` (= `nginx/syncash.co.il.conf`) proxies to the `frontend` container's second block on `127.0.0.1:3182` and only three public API endpoints to `3181`; certificate `/etc/letsencrypt/live/syncash.co.il/` (apex + www, expires 2026-12-25, renewed by the same `certbot.timer` as the app). CSP `default-src 'self'`, no cookies/third-party requests |
 
 Apex domain warning: `syncash.co.il` and `www.syncash.co.il` still point at a
 different, legacy server (`62.219.78.222`, per `SERVER_AUDIT_SYNCASH.md`,
@@ -154,11 +158,13 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
-## 4. Operational state — live-verified 2026-09-26 (post `2f0a7b5` deploy)
+## 4. Operational state — live-verified 2026-09-26 (post `d875d23` deploy; `2f0a7b5` evidence retained below)
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/2f0a7b5042be5ddd53e0ef18328853d2039ca9c6` |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/d875d2338b885640f5d90845e0d4a35a8e715e19` (`2f0a7b5…` remains on disk for rollback) |
+| `d875d23` scope / checks | No migration. Removes inline `style` attributes from the marketing templates (they were blocked by the live CSP `style-src 'self'`), maps `.webmanifest` to `application/manifest+json`, syncs the installed host vhost into `nginx/syncash.co.il.conf`. Verified live: 13 public pages × 4 viewports, 0 CSP console errors, 0 cookies / storage / third-party requests, `www`/HTTP → 301 `https://syncash.co.il`, HSTS + security headers, real 404, favicon 200, `app.syncash.co.il` unchanged (health 200, `X-Robots-Tag: noindex`, cert to 2026-10-26), 6/6 healthy, `certbot renew --dry-run` succeeded for both certificates |
+| Public-site data caveat | `/legal/privacy/` and `/legal/dpa/` render the "document not available" fallback because only TERMS is published in Production's Legal Center; publishing them from `/admin/settings/legal` fixes it without a deploy |
 | Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `2f0a7b5...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
 | Health checks | `http://127.0.0.1:3181/api/health` → `200`, `http://127.0.0.1:3180/healthz` → `200`, `http://127.0.0.1:3182/healthz` → `200` (public site block; `healthcheck-production.sh` now gates on all three). `https://app.syncash.co.il/api/health` → `200`, HTTP → 308 HTTPS, HSTS/nosniff/DENY/`X-Robots-Tag: noindex` intact, cert valid to 2026-10-26 |
 | Migration | `0020_idle_activity` — `ALTER TABLE users ADD COLUMN last_activity_at timestamptz` (nullable, additive). `users` row count 9 before and 9 after; column verified present; applied once by `deploy-production.sh` |
@@ -205,12 +211,13 @@ rather than duplicated here.
 
 ## 5. Git / release state — in sync as of 2026-09-26
 
-Production active release: `2f0a7b5042be5ddd53e0ef18328853d2039ca9c6`.
+Production active release: `d875d2338b885640f5d90845e0d4a35a8e715e19`.
 Local HEAD and `origin/codex-syncash-production-rebuild`: that SHA plus the
 docs-only commit recording this deployment — confirmed a descendant of the
 prior active release via `git merge-base --is-ancestor` before deploying.
 Never merged to `main`.
-Prior releases `fbdb2854e45b483861619dc86cc2fd9f55508f84`,
+Prior releases `2f0a7b5042be5ddd53e0ef18328853d2039ca9c6`,
+`fbdb2854e45b483861619dc86cc2fd9f55508f84`,
 `79b3ab71853c1f434b426f8993c7459527c24e88`,
 `2eed3895c9ea6a95711999a847790dc1f9915e88`,
 `ec6ab3dd64a4bcfe0f1f39e7c466bb3a575fb6b8`,
