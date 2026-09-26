@@ -25,16 +25,25 @@ const steps = [
 
 const stepsHtml = (dark = false) => `<ol class="steps${dark ? " on-dark-steps" : ""}">${steps.map((step) => `<li><h3>${step.title}</h3><p>${step.text}</p></li>`).join("")}</ol>`;
 
-const demoFrame = `<div class="demo" role="img" aria-label="תצוגת דמו של תיק במערכת SynCash עם שלוש תשובות מגופי מימון (נתוני דמו בלבד)">
-  <div class="demo-bar"><span>תיק לדוגמה · נתוני דמו</span><span>SC-DEMO-0412</span></div>
+const demoFrame = `<div class="demo" role="img" aria-label="מסך תיק במערכת SynCash (נתוני דמו בלבד): פרטי התיק, מסמכים שהושלמו, ושלוש הגשות לגופי מימון עם המצב של כל אחת">
+  <div class="demo-topbar"><span class="demo-user"><span class="demo-avatar">י״ד</span>ישראל דמו · יועץ משכנתאות</span><span>SynCash · סביבת דמו</span></div>
   <div class="demo-body">
-    <div class="demo-case"><strong>רכישת דירה ראשונה</strong><span class="demo-tag">נשלח לשלושה גופי מימון</span></div>
+    <div class="demo-crumbs">לקוחות › <strong>תיק SC-DEMO-0412</strong></div>
+    <div class="demo-head"><div><h3>רכישת דירה ראשונה</h3><small>נפתח לפני 6 ימים · עודכן היום</small></div><span class="demo-pill sent">נשלח ל-3 גופי מימון</span></div>
+    <div class="demo-facts">
+      <div class="demo-fact"><span>סכום מבוקש</span><strong>₪1,150,000</strong></div>
+      <div class="demo-fact"><span>שווי נכס</span><strong>₪1,900,000</strong></div>
+      <div class="demo-fact"><span>שיעור מימון</span><strong>61%</strong></div>
+    </div>
+    <div class="demo-docs"><span>מסמכים 6/6</span><span class="demo-progress"><i></i></span><span>מוכן לשליחה</span></div>
+    <p class="demo-section-title">הגשות <span>עדכון אחרון: היום</span></p>
     <ul class="demo-list">
-      <li><span>חברת מימון א׳</span><span class="demo-status interested">מעוניינת</span></li>
-      <li><span>חברת מימון ב׳</span><span class="demo-status pending">בבדיקה</span></li>
-      <li><span>חברת מימון ג׳</span><span class="demo-status declined">לא רלוונטי</span></li>
+      <li><span>חברת מימון א׳</span><time>לפני שעתיים</time><span class="demo-status interested">מעוניינת</span></li>
+      <li><span>חברת מימון ב׳</span><time>אתמול</time><span class="demo-status pending">בבדיקה</span></li>
+      <li><span>חברת מימון ג׳</span><time>לפני 3 ימים</time><span class="demo-status declined">לא רלוונטי</span></li>
     </ul>
-    <p class="demo-note">שמות החברות והנתונים בתצוגה זו הם דמו בלבד. במערכת עצמה מופיעות חברות המימון הפעילות בה.</p>
+    <span class="demo-action">המשך טיפול מול חברת מימון א׳</span>
+    <p class="demo-note">נתוני דמו בלבד. במערכת מופיעות חברות המימון הפעילות בה.</p>
   </div>
 </div>`;
 
@@ -83,7 +92,7 @@ export const pages = [
     <div class="hero-in">
       <span class="eyebrow">מערכת ליועצי משכנתאות</span>
       <h1>תיק אחד. הגשה אחת. יותר אפשרויות מימון.</h1>
-      <p class="lede">SynCash מחברת יועצי משכנתאות לעולם המימון החוץ-בנקאי. מקימים תיק פעם אחת, מצרפים מסמכים ומאפשרים לגופי המימון הרלוונטיים לבחון אותו, במקום לרדוף אחרי כל חברה בנפרד.</p>
+      <p class="lede">SynCash מחברת יועצי משכנתאות לעולם המימון <span class="nowrap">החוץ-בנקאי</span>. מקימים תיק פעם אחת, מצרפים מסמכים ומאפשרים לגופי המימון הרלוונטיים לבחון אותו, במקום לרדוף אחרי כל חברה בנפרד.</p>
       <div class="cta-row">${ctaButtons(site, {whatsapp: false})}</div>
       <p class="free-note">חינם ליועצי משכנתאות. אין מנוי. אין עלות הרשמה.</p>
     </div>

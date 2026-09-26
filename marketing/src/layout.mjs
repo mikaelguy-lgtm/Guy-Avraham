@@ -9,14 +9,16 @@ export const logoSvg = (size = 40, id = "lg") => `<svg width="${size}" height="$
 
 const whatsappIcon = `<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.6.8-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.3-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 12 12 0 0 0 4.6 4.1c1.7.7 2.4.8 3.2.7a2.7 2.7 0 0 0 1.8-1.3 2.2 2.2 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg>`;
 
+// כל העמודים (פוטר + קישוריות פנימית). בהאדר מוצגים רק הארבעה המרכזיים (headerNav) — header של מוצר, לא סרגל SEO.
 const navItems = [
-  {href: "/how-it-works/", label: "איך זה עובד"},
-  {href: "/for-mortgage-advisors/", label: "ליועצי משכנתאות"},
-  {href: "/non-bank-financing/", label: "מימון חוץ בנקאי"},
-  {href: "/mortgage-reform-2026/", label: "רפורמת 2026"},
-  {href: "/faq/", label: "שאלות ותשובות"},
+  {href: "/how-it-works/", label: "איך זה עובד", header: true},
+  {href: "/for-mortgage-advisors/", label: "ליועצי משכנתאות", header: true},
+  {href: "/non-bank-financing/", label: "מימון חוץ בנקאי", header: true},
+  {href: "/mortgage-reform-2026/", label: "רפורמת המשכנתאות 2026"},
+  {href: "/faq/", label: "שאלות ותשובות", header: true},
   {href: "/about/", label: "על SynCash"}
 ];
+const headerNav = navItems.filter((item) => item.header);
 
 export function ctaButtons(site, {primaryClass = "btn btn-primary", secondaryClass = "btn btn-secondary", whatsapp = true} = {}) {
   return `<a class="${primaryClass}" href="${site.registerUrl}" data-cta="register">הרשמה חינם ליועצים</a>
@@ -80,13 +82,13 @@ ${robots}
 <a class="skip-link" href="#main">דלג לתוכן הראשי</a>
 <header class="site-header" role="banner">
   <div class="container header-inner">
-    <a class="brand" href="/" aria-label="SynCash — לעמוד הבית">${logoSvg(38, "hd")}<span class="brand-name">SynCash</span></a>
+    <a class="brand" href="/" aria-label="SynCash — לעמוד הבית">${logoSvg(44, "hd")}<span class="brand-name">SynCash</span></a>
     <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav"><span class="nav-toggle-bars" aria-hidden="true"></span><span class="nav-toggle-label">תפריט</span></button>
     <nav class="site-nav" id="site-nav" data-nav aria-label="ניווט ראשי">
-      <ul>${navItems.map((item) => `<li><a href="${item.href}"${item.href === page.path ? ' aria-current="page"' : ""}>${item.label}</a></li>`).join("")}</ul>
+      <ul>${headerNav.map((item) => `<li><a href="${item.href}"${item.href === page.path ? ' aria-current="page"' : ""}>${item.label}</a></li>`).join("")}</ul>
       <div class="nav-actions">
         <a class="btn btn-tertiary btn-small" href="#" data-whatsapp hidden>${whatsappIcon}<span>WhatsApp</span></a>
-        <a class="btn btn-secondary btn-small" href="${site.loginUrl}" data-cta="login">כניסה למערכת</a>
+        <a class="nav-login" href="${site.loginUrl}" data-cta="login">כניסה למערכת</a>
         <a class="btn btn-primary btn-small" href="${site.registerUrl}" data-cta="register">הרשמה חינם ליועצים</a>
       </div>
     </nav>
