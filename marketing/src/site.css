@@ -44,6 +44,12 @@ strong { font-weight: 700; }
 .on-dark .eyebrow { color: var(--gold); }
 .muted { color: var(--text-muted); }
 .small { font-size: .9rem; }
+/* utilities (CSP: אין style inline) */
+.lede-center { margin-inline: auto; }
+.mt-md { margin-top: 1rem; }
+.mt-lg { margin-top: 1.5rem; }
+.text-center { text-align: center; }
+.cta-center { justify-content: center; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* קישור דילוג */

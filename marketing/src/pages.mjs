@@ -42,7 +42,7 @@ const closing = (site, heading = "אין כמעט סיבה ליועץ משכנת
 <section class="section closing">
   <div class="container">
     <h2>${heading}</h2>
-    <p class="lede" style="margin-inline:auto">${text}</p>
+    <p class="lede lede-center">${text}</p>
     <div class="cta-row">${ctaButtons(site)}</div>
   </div>
 </section>`;
@@ -112,7 +112,7 @@ export const pages = [
     <span class="eyebrow">איך זה עובד?</span>
     <h2>שבעה שלבים. היועץ נשאר במרכז.</h2>
     ${stepsHtml()}
-    <p class="lede" style="margin-top:1.5rem">היועץ נשאר הגורם המקצועי שמלווה את הלקוח. SynCash אינה מחליפה את היועץ, היא מרחיבה עבורו את אפשרויות המימון.</p>
+    <p class="lede mt-lg">היועץ נשאר הגורם המקצועי שמלווה את הלקוח. SynCash אינה מחליפה את היועץ, היא מרחיבה עבורו את אפשרויות המימון.</p>
     <p><a href="/how-it-works/">הסבר מפורט על כל שלב</a></p>
   </div>
 </section>
@@ -137,7 +137,7 @@ export const pages = [
     <span class="eyebrow">שאלות שיועצים שואלים</span>
     <h2>לפני שנרשמים</h2>
     ${faqHtml(faqItems.slice(0, 4))}
-    <p style="margin-top:1rem"><a href="/faq/">לכל השאלות והתשובות</a></p>
+    <p class="mt-md"><a href="/faq/">לכל השאלות והתשובות</a></p>
   </div>
 </section>
 ${closing(site)}`
@@ -386,9 +386,9 @@ ${closing(site)}`
       <p>ליועצים: נרשמים ומתחילים. לשאלות לפני הרשמה, ולחברות מימון שרוצות להצטרף למערכת, אפשר לפנות אלינו ב-WhatsApp.</p>
       <div class="cta-row">${ctaButtons(site)}</div>
     </div>
-    <div class="aside-box" style="text-align:center">
+    <div class="aside-box text-center">
       ${logoSvg(120, "ab")}
-      <p style="margin-top:1rem"><strong>SynCash</strong><br><span class="muted">יוצרים חיבורים. מקדמים עסקאות.</span></p>
+      <p class="mt-md"><strong>SynCash</strong><br><span class="muted">יוצרים חיבורים. מקדמים עסקאות.</span></p>
     </div>
   </div>
 </section>`
@@ -483,8 +483,8 @@ ${closing(site)}`
 <section class="not-found">
   <div class="container">
     <h1>404</h1>
-    <p class="lede" style="margin-inline:auto">העמוד שחיפשתם לא נמצא. אולי הקישור ישן, אולי טעות הקלדה.</p>
-    <div class="cta-row" style="justify-content:center"><a class="btn btn-primary" href="/">לעמוד הבית</a><a class="btn btn-secondary" href="${site.loginUrl}" data-cta="login">כניסה למערכת</a></div>
+    <p class="lede lede-center">העמוד שחיפשתם לא נמצא. אולי הקישור ישן, אולי טעות הקלדה.</p>
+    <div class="cta-row cta-center"><a class="btn btn-primary" href="/">לעמוד הבית</a><a class="btn btn-secondary" href="${site.loginUrl}" data-cta="login">כניסה למערכת</a></div>
   </div>
 </section>`
   }
