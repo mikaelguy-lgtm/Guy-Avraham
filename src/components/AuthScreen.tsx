@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../utils/apiClient";
-import { ApiError } from "../utils/apiClient";
+import { ApiError, takeAuthNotice } from "../utils/apiClient";
 import type { CurrentUser } from "../types";
 import SynCashLogo from "./SynCashLogo";
 import {requireFrontendConfig} from "../config/frontend";
@@ -13,7 +13,11 @@ export default function AuthScreen({onAuthenticated}: {onAuthenticated: (user: C
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const navigate = useNavigate();
+  // takeAuthNotice מוחקת את ההודעה מ-sessionStorage; ב-StrictMode ה-effect רץ פעמיים, ולכן
+  // מעדכנים state רק כשיש ערך, כדי שההרצה השנייה (שמחזירה null) לא תמחק את ההודעה שכבר נלקחה.
+  useEffect(() => { const value = takeAuthNotice(); if (value) setNotice(value); }, []);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true); setError("");
     try { onAuthenticated(await api.login(email, password)); }
@@ -31,6 +35,7 @@ export default function AuthScreen({onAuthenticated}: {onAuthenticated: (user: C
       <label>דואר אלקטרוני<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
       <label>סיסמה<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
       <p className="auth-link forgot-password-link"><Link to="/forgot-password">שכחתי סיסמה?</Link></p>
+      {notice && <p className="form-message success auth-notice" role="status">{notice}</p>}
       {error && <p className="error" role="alert">{error}</p>}
       <button disabled={busy}>{busy ? "מתחבר…" : "כניסה"}</button>
       {registrationEnabled && <p className="auth-link">עדיין אין לך חשבון? <Link to="/register/advisor">הרשמה ליועצים</Link></p>}

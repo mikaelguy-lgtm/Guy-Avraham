@@ -15,6 +15,8 @@ done
 
 curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3181/api/health >/dev/null
 curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3180/healthz >/dev/null
+# האתר הציבורי (syncash.co.il) מוגש מאותו container על פורט נפרד
+curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3182/healthz >/dev/null
 
 disk_usage="$(df --output=pcent "$SYNCASH_ROOT" | tail -1 | tr -dc '0-9')"
 if [[ -z "$disk_usage" || "$disk_usage" -ge 85 ]]; then

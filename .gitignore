@@ -23,3 +23,4 @@ credentials.env
 *.credentials.env
 .syncash/
 SYNCASH_PASSWORD
+marketing/dist/

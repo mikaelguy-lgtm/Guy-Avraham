@@ -798,3 +798,17 @@ h4 { font-size: 1rem; font-weight: 700; }
 @media (max-width: 640px) {
   .legal-center { max-block-size: 100vh; block-size: 100vh; border-radius: 0; }
 }
+
+/* אזהרת ניתוק בגלל חוסר פעילות (IdleSessionProvider) */
+.idle-warning-backdrop { z-index: 200; }
+.idle-warning-modal { inline-size: min(440px, 100%); padding: 1.5rem; text-align: start; }
+.idle-warning-modal h2 { margin: 0 0 .6rem; }
+.idle-warning-modal p { margin: 0; color: var(--muted); line-height: 1.7; }
+.idle-countdown { display: inline-block; min-inline-size: 2ch; color: var(--gold); font-variant-numeric: tabular-nums; text-align: center; }
+.auth-notice { margin-block-end: .75rem; }
+/* הגדרות האתר הציבורי */
+.public-site-status { display: inline-flex; align-items: center; gap: .5rem; padding-block: .35rem; padding-inline: .7rem; border-radius: 999px; font-size: .85rem; font-weight: 700; }
+.public-site-status.active { color: #a7f3d0; background: rgba(4, 120, 87, .16); border: 1px solid rgba(16, 185, 129, .3); }
+.public-site-status.inactive { color: #f1c96f; background: rgba(220, 167, 55, .14); border: 1px solid rgba(220, 167, 55, .35); }
+.public-site-hint { margin: .35rem 0 0; color: var(--muted); font-size: .9rem; }
+.public-site-preview { direction: ltr; unicode-bidi: isolate; word-break: break-all; color: var(--muted); font-size: .85rem; }

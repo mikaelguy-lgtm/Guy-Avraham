@@ -4,6 +4,7 @@ import type { TokenVerifier } from "../../src/middleware/auth";
 import type { RateLimitStore } from "../../src/services/rateLimiter";
 import type { AppStore, CreditIndicationRecord } from "../../src/services/store";
 import type { PrivacyRequestStatus, PrivacyRequestType } from "../../src/domain/privacyRequests";
+import { defaultPublicSiteSettings } from "../../src/domain/publicSite";
 import type { StorageService, StoredObject } from "../../src/services/storage";
 import { EncryptionService } from "../../src/utils/crypto";
 import { InMemorySecretProvider } from "../../src/utils/secretManager";
@@ -20,24 +21,24 @@ export const env: AppEnv = {
 };
 
 export const users: Record<string, DatabaseUser> = {
-  advisor: {id: 1, firebaseUid: "advisor", email: "advisor@test", firstName: "A", lastName: "One", role: "ADVISOR", roleLabel: "Advisor", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: 10, lenderId: null},
-  advisor2: {id: 2, firebaseUid: "advisor2", email: "advisor2@test", firstName: "A", lastName: "Two", role: "ADVISOR", roleLabel: "Advisor", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: 20, lenderId: null},
-  suspended: {id: 3, firebaseUid: "suspended", email: "suspended@test", firstName: "S", lastName: "User", role: "ADVISOR", roleLabel: "Advisor", status: "SUSPENDED", emailVerified: true, deletedAt: null, advisorId: 10, lenderId: null},
-  admin: {id: 4, firebaseUid: "admin", email: "admin@test", firstName: "Admin", lastName: "User", role: "ADMIN", roleLabel: "Admin", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: null},
-  super: {id: 5, firebaseUid: "super", email: "super@test", firstName: "Super", lastName: "Admin", role: "SUPER_ADMIN", roleLabel: "Super Admin", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: null},
-  super2: {id: 9, firebaseUid: "super2", email: "super2@test", firstName: "Super", lastName: "Two", role: "SUPER_ADMIN", roleLabel: "Super Admin", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: null},
-  lender: {id: 6, firebaseUid: "lender", email: "lender@test", firstName: "L", lastName: "One", role: "LENDER_UNDERWRITER", roleLabel: "Underwriter", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: 100},
-  lender2: {id: 7, firebaseUid: "lender2", email: "lender2@test", firstName: "L", lastName: "Two", role: "LENDER_UNDERWRITER", roleLabel: "Underwriter", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: 200},
-  pending: {id: 8, firebaseUid: "pending", email: "pending@test", firstName: "Pending", lastName: "Advisor", role: "ADVISOR", roleLabel: "Advisor", status: "PENDING", emailVerified: false, deletedAt: null, advisorId: 30, lenderId: null}
+  advisor: {id: 1, firebaseUid: "advisor", email: "advisor@test", firstName: "A", lastName: "One", role: "ADVISOR", roleLabel: "Advisor", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: 10, lenderId: null, lastActivityAt: null},
+  advisor2: {id: 2, firebaseUid: "advisor2", email: "advisor2@test", firstName: "A", lastName: "Two", role: "ADVISOR", roleLabel: "Advisor", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: 20, lenderId: null, lastActivityAt: null},
+  suspended: {id: 3, firebaseUid: "suspended", email: "suspended@test", firstName: "S", lastName: "User", role: "ADVISOR", roleLabel: "Advisor", status: "SUSPENDED", emailVerified: true, deletedAt: null, advisorId: 10, lenderId: null, lastActivityAt: null},
+  admin: {id: 4, firebaseUid: "admin", email: "admin@test", firstName: "Admin", lastName: "User", role: "ADMIN", roleLabel: "Admin", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: null, lastActivityAt: null},
+  super: {id: 5, firebaseUid: "super", email: "super@test", firstName: "Super", lastName: "Admin", role: "SUPER_ADMIN", roleLabel: "Super Admin", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: null, lastActivityAt: null},
+  super2: {id: 9, firebaseUid: "super2", email: "super2@test", firstName: "Super", lastName: "Two", role: "SUPER_ADMIN", roleLabel: "Super Admin", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: null, lastActivityAt: null},
+  lender: {id: 6, firebaseUid: "lender", email: "lender@test", firstName: "L", lastName: "One", role: "LENDER_UNDERWRITER", roleLabel: "Underwriter", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: 100, lastActivityAt: null},
+  lender2: {id: 7, firebaseUid: "lender2", email: "lender2@test", firstName: "L", lastName: "Two", role: "LENDER_UNDERWRITER", roleLabel: "Underwriter", status: "ACTIVE", emailVerified: true, deletedAt: null, advisorId: null, lenderId: 200, lastActivityAt: null},
+  pending: {id: 8, firebaseUid: "pending", email: "pending@test", firstName: "Pending", lastName: "Advisor", role: "ADVISOR", roleLabel: "Advisor", status: "PENDING", emailVerified: false, deletedAt: null, advisorId: 30, lenderId: null, lastActivityAt: null}
 };
 
 export const verifier: TokenVerifier = {verify: async (token) => {
   if (token === "invalid") throw new Error("invalid");
-  if (token === "new-advisor") return {uid: "new-advisor-uid", email: "new-advisor@example.com", emailVerified: false};
-  if (token === "duplicate-email") return {uid: "unique-registration-uid", email: "registered@example.com", emailVerified: false};
-  if (token === "duplicate-uid") return {uid: "advisor", email: "fresh@example.com", emailVerified: false};
-  if (token === "pending-verified") return {uid: "pending", email: "pending@test", emailVerified: true};
-  return {uid: token, email: users[token]?.email, emailVerified: users[token]?.emailVerified ?? false};
+  if (token === "new-advisor") return {uid: "new-advisor-uid", email: "new-advisor@example.com", emailVerified: false, authTime: new Date()};
+  if (token === "duplicate-email") return {uid: "unique-registration-uid", email: "registered@example.com", emailVerified: false, authTime: new Date()};
+  if (token === "duplicate-uid") return {uid: "advisor", email: "fresh@example.com", emailVerified: false, authTime: new Date()};
+  if (token === "pending-verified") return {uid: "pending", email: "pending@test", emailVerified: true, authTime: new Date()};
+  return {uid: token, email: users[token]?.email, emailVerified: users[token]?.emailVerified ?? false, authTime: new Date()};
 }};
 
 export function makeStore(overrides: Partial<AppStore> = {}): AppStore {
@@ -50,6 +51,9 @@ export function makeStore(overrides: Partial<AppStore> = {}): AppStore {
       return user ? `${user.firstName} ${user.lastName}` : null;
     },
     recordLogin: async () => undefined,
+    touchUserActivity: async () => undefined,
+    clearUserActivity: async () => undefined,
+    getPublicSiteSettings: async () => defaultPublicSiteSettings(),
     getAdvisorAccount: async (userId) => {
       const user = Object.values(users).find((candidate) => candidate.id === userId && candidate.role === "ADVISOR");
       return user ? {...user, phoneEncrypted: encryption.encrypt("+972501234567"), businessName: "Test Business", businessPhoneEncrypted: encryption.encrypt("+972501234567"), businessEmail: user.email, createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null} : null;

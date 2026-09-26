@@ -16,7 +16,7 @@ function app(overrides: Parameters<typeof makeStore>[0] = {}) {
     emailVerification: new AdvisorEmailVerificationService({createVerificationLink: vi.fn().mockResolvedValue({url: "http://localhost:9099/verify?oobCode=private"})}, email, store),
     passwordReset: {sendPasswordResetEmail: vi.fn().mockResolvedValue({messageId: "message-1"})},
     gemini: {analyze: vi.fn().mockResolvedValue("analysis")} as never,
-    firebaseAccounts: {deleteUser: vi.fn().mockResolvedValue(undefined), updateUserEmail: vi.fn().mockResolvedValue(undefined)}
+    firebaseAccounts: {deleteUser: vi.fn().mockResolvedValue(undefined), updateUserEmail: vi.fn().mockResolvedValue(undefined), revokeRefreshTokens: vi.fn().mockResolvedValue(undefined)}
   });
 }
 

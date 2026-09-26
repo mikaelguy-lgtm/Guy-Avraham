@@ -2,13 +2,14 @@ import type { NextFunction, Request, Response } from "express";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import type { AppEnv } from "../config/env.js";
+import { IDLE_LOGOUT_MESSAGE, isSessionFresh } from "../domain/idleSession.js";
 import type { DatabaseUser, UserRole } from "../domain/types.js";
 
 declare global {
   namespace Express {
     interface Request {
       requestId: string;
-      firebaseIdentity?: {uid: string; email?: string; emailVerified: boolean};
+      firebaseIdentity?: {uid: string; email?: string; emailVerified: boolean; authTime?: Date};
       user?: DatabaseUser;
       authorizedClientId?: number;
       authorizedSubmission?: {id: number; lenderId: number; clientId: number; anonymousSnapshot: unknown};
@@ -18,7 +19,13 @@ declare global {
 }
 
 export interface TokenVerifier {
-  verify(token: string): Promise<{uid: string; email?: string; emailVerified: boolean}>;
+  // authTime = רגע ההתחברות בפועל (auth_time). רענון טוקן שקט לא משנה אותו.
+  verify(token: string): Promise<{uid: string; email?: string; emailVerified: boolean; authTime?: Date}>;
+}
+
+export interface AuthMiddlewareHooks {
+  // נקרא כשסשן נמצא פג בגלל חוסר פעילות; משמש לביטול טוקני Firebase (best effort).
+  onIdleExpired?: (user: DatabaseUser) => Promise<void>;
 }
 
 export interface AuthorizationDirectory {
@@ -44,13 +51,16 @@ export class FirebaseTokenVerifier implements TokenVerifier {
     }
   }
 
-  async verify(token: string): Promise<{uid: string; email?: string; emailVerified: boolean}> {
+  async verify(token: string): Promise<{uid: string; email?: string; emailVerified: boolean; authTime?: Date}> {
     const decoded = await getAuth().verifyIdToken(token, true);
-    return {uid: decoded.uid, email: decoded.email, emailVerified: decoded.email_verified === true};
+    return {
+      uid: decoded.uid, email: decoded.email, emailVerified: decoded.email_verified === true,
+      authTime: typeof decoded.auth_time === "number" ? new Date(decoded.auth_time * 1000) : undefined
+    };
   }
 }
 
-export function createAuthMiddleware(directory: AuthorizationDirectory, verifier: TokenVerifier) {
+export function createAuthMiddleware(directory: AuthorizationDirectory, verifier: TokenVerifier, hooks: AuthMiddlewareHooks = {}) {
   const requireFirebaseAuth = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
     const authorization = request.header("authorization");
     if (!authorization?.startsWith("Bearer ")) {
@@ -81,6 +91,27 @@ export function createAuthMiddleware(directory: AuthorizationDirectory, verifier
       return;
     }
     next();
+  };
+
+  // אכיפת idle timeout בצד השרת: כל בקשה מוגנת נדחית אם עברו יותר מ-5 דקות מאז
+  // הפעילות האמיתית האחרונה (users.last_activity_at) או מאז ההתחברות (auth_time),
+  // המאוחר מביניהם. טוקן תקף מבחינת Firebase אינו מספיק.
+  const requireFreshSession = async (request: Request, response: Response, next: NextFunction): Promise<void> => {
+    const user = request.user;
+    if (!user) {
+      response.status(401).json({error: "AUTH_REQUIRED", requestId: request.requestId});
+      return;
+    }
+    if (isSessionFresh(user.lastActivityAt, request.firebaseIdentity?.authTime ?? null)) {
+      next();
+      return;
+    }
+    if (hooks.onIdleExpired) {
+      await hooks.onIdleExpired(user).catch((error: unknown) => {
+        console.error("Idle-expired token revocation failed", {errorCode: "IDLE_REVOCATION_FAILED", userId: user.id, requestId: request.requestId, reason: error instanceof Error ? error.message : "unknown"});
+      });
+    }
+    response.status(401).json({error: "IDLE_EXPIRED", message: IDLE_LOGOUT_MESSAGE, requestId: request.requestId});
   };
 
   const requireRole = (...roles: UserRole[]) => (request: Request, response: Response, next: NextFunction): void => {
@@ -127,6 +158,7 @@ export function createAuthMiddleware(directory: AuthorizationDirectory, verifier
     requireFirebaseAuth,
     loadDatabaseUser,
     requireActiveUser,
+    requireFreshSession,
     requireRole,
     requireAdvisorClientAccess,
     requireLenderSubmissionAccess,

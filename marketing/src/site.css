@@ -1,0 +1,228 @@
+/* SynCash — האתר הציבורי. RTL-first, מובייל-first, ללא framework. */
+:root {
+  --ink: #061128;          /* כחול-לילה של המותג */
+  --ink-2: #0b1a36;
+  --paper: #f7f5f0;        /* נייר חם לתוכן ארוך */
+  --paper-2: #efece4;
+  --line: #d9d4c8;
+  --line-dark: rgba(255, 255, 255, .14);
+  --text: #16213b;
+  --text-muted: #55617a;
+  --text-on-dark: #f3f4f8;
+  --muted-on-dark: #b7c0d3;
+  --gold: #d4af37;
+  --gold-deep: #8a6a14;    /* זהב כהה לטקסט על רקע בהיר (ניגודיות 4.5:1+) */
+  --gold-soft: rgba(212, 175, 55, .16);
+  --silver: #cbd5e1;
+  --focus: #0ea5c6;
+  --font-display: "Frank Ruhl Libre", "David", Georgia, serif;
+  --font-body: "Heebo", "Arial Hebrew", Arial, sans-serif;
+  --radius: 14px;
+  --container: 1120px;
+  --gutter: 16px;
+}
+@media (min-width: 720px) { :root { --gutter: 32px; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation: none !important; transition: none !important; } }
+body { margin: 0; min-width: 320px; background: var(--paper); color: var(--text); font-family: var(--font-body); font-size: 1.0625rem; line-height: 1.75; word-spacing: .03em; overflow-x: hidden; }
+img, svg { max-width: 100%; height: auto; display: inline-block; vertical-align: middle; }
+a { color: var(--gold-deep); text-underline-offset: .18em; }
+a:hover { color: var(--ink); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 700; line-height: 1.25; margin: 0 0 .5em; letter-spacing: normal; color: inherit; }
+h1 { font-size: clamp(2rem, 5.2vw, 3.4rem); }
+h2 { font-size: clamp(1.55rem, 3.4vw, 2.3rem); }
+h3 { font-size: 1.25rem; font-family: var(--font-body); font-weight: 700; }
+p { margin: 0 0 1em; }
+ul, ol { padding-inline-start: 1.3em; margin: 0 0 1em; }
+strong { font-weight: 700; }
+.container { width: min(100% - 2 * var(--gutter), var(--container)); margin-inline: auto; }
+.lede { font-size: clamp(1.15rem, 2.2vw, 1.35rem); color: var(--text-muted); max-width: 40ch; }
+.eyebrow { display: inline-block; font-size: .85rem; font-weight: 700; letter-spacing: .02em; color: var(--gold-deep); margin-bottom: .6rem; }
+.on-dark .eyebrow { color: var(--gold); }
+.muted { color: var(--text-muted); }
+.small { font-size: .9rem; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* קישור דילוג */
+.skip-link { position: absolute; inset-inline-start: 1rem; top: -4rem; z-index: 100; background: var(--ink); color: #fff; padding: .6rem 1rem; border-radius: 0 0 10px 10px; text-decoration: none; font-weight: 700; }
+.skip-link:focus { top: 0; }
+
+/* כפתורים */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 48px; padding: .7rem 1.35rem; border-radius: 12px; font-weight: 700; text-decoration: none; border: 1px solid transparent; transition: transform .15s ease, background .15s ease, border-color .15s ease; cursor: pointer; font-family: inherit; font-size: 1rem; }
+.btn:hover { transform: translateY(-1px); }
+.btn-primary { background: linear-gradient(135deg, #e6c65b, #c9a227 55%, #a98419); color: #1a1405; border-color: #b8952a; box-shadow: 0 8px 22px rgba(169, 132, 25, .25); }
+.btn-primary:hover { color: #1a1405; background: linear-gradient(135deg, #f0d36e, #d1ab30 55%, #b48d1f); }
+.btn-secondary { background: transparent; color: var(--ink); border-color: #9aa3b5; }
+.btn-secondary:hover { color: var(--ink); border-color: var(--ink); background: rgba(6, 17, 40, .05); }
+.on-dark .btn-secondary { color: var(--text-on-dark); border-color: rgba(255, 255, 255, .45); }
+.on-dark .btn-secondary:hover { color: #fff; border-color: #fff; background: rgba(255, 255, 255, .08); }
+.btn-tertiary { background: transparent; color: var(--text-muted); border-color: transparent; text-decoration: underline; text-underline-offset: .2em; }
+.btn-tertiary:hover { color: var(--ink); }
+.on-dark .btn-tertiary { color: var(--muted-on-dark); }
+.on-dark .btn-tertiary:hover { color: #fff; }
+.btn-small { min-height: 40px; padding: .45rem .95rem; font-size: .95rem; border-radius: 10px; }
+.btn[hidden] { display: none; }
+.cta-row { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin-top: 1.5rem; }
+@media (max-width: 599px) { .cta-row .btn-primary, .cta-row .btn-secondary { width: 100%; } }
+.free-note { margin: 1rem 0 0; font-weight: 700; color: var(--gold-deep); }
+.on-dark .free-note { color: var(--gold); }
+
+/* כותרת עליונה */
+.site-header { position: sticky; top: 0; z-index: 50; background: rgba(247, 245, 240, .88); backdrop-filter: saturate(140%) blur(8px); border-bottom: 1px solid var(--line); }
+.header-inner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 68px; flex-wrap: wrap; }
+.brand { display: inline-flex; align-items: center; gap: .6rem; text-decoration: none; color: var(--ink); }
+.brand-name { font-family: var(--font-display); font-weight: 700; font-size: 1.35rem; letter-spacing: .06em; }
+.nav-toggle { display: inline-flex; align-items: center; gap: .5rem; background: transparent; border: 1px solid var(--line); border-radius: 10px; padding: .45rem .8rem; font: inherit; font-weight: 700; color: var(--ink); cursor: pointer; }
+.nav-toggle-bars { width: 18px; height: 2px; background: currentColor; box-shadow: 0 -6px 0 currentColor, 0 6px 0 currentColor; display: inline-block; }
+.site-nav { display: none; width: 100%; padding: .5rem 0 1rem; }
+.site-nav.is-open { display: block; }
+.site-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .15rem; }
+.site-nav li a { display: block; padding: .6rem .5rem; text-decoration: none; color: var(--ink); font-weight: 500; border-radius: 8px; }
+.site-nav li a:hover, .site-nav li a[aria-current="page"] { background: rgba(6, 17, 40, .06); }
+.site-nav li a[aria-current="page"] { font-weight: 700; box-shadow: inset 3px 0 0 var(--gold); }
+.nav-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .75rem; }
+@media (min-width: 960px) {
+  .nav-toggle { display: none; }
+  .site-nav { display: flex; align-items: center; gap: 1rem; width: auto; padding: 0; }
+  .site-nav ul { flex-direction: row; gap: .1rem; }
+  .site-nav li a { padding: .5rem .65rem; font-size: .95rem; }
+  .site-nav li a[aria-current="page"] { box-shadow: inset 0 -3px 0 var(--gold); background: transparent; }
+  .nav-actions { margin: 0; flex-wrap: nowrap; }
+}
+
+/* מקטעים */
+.section { padding-block: clamp(3rem, 8vw, 5.5rem); }
+.section-tight { padding-block: clamp(2rem, 5vw, 3.5rem); }
+.on-dark { background: var(--ink); color: var(--text-on-dark); }
+.on-dark a { color: var(--gold); }
+.on-dark a:hover { color: #fff; }
+.on-dark .lede, .on-dark .muted { color: var(--muted-on-dark); }
+.on-paper-2 { background: var(--paper-2); }
+.rule { border: 0; border-top: 1px solid var(--line); margin: 0; }
+
+/* Hero */
+.hero { position: relative; overflow: hidden; background: var(--ink); color: var(--text-on-dark); padding-block: clamp(3rem, 9vw, 6.5rem); }
+.hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(60% 50% at 85% 10%, rgba(212, 175, 55, .14), transparent 60%), radial-gradient(40% 40% at 10% 90%, rgba(148, 163, 184, .10), transparent 60%); pointer-events: none; }
+.hero-inner { position: relative; display: grid; gap: 2.5rem; align-items: center; }
+@media (min-width: 900px) { .hero-inner { grid-template-columns: 1.05fr .95fr; } }
+.hero h1 { max-width: 14ch; }
+.hero .lede { color: var(--muted-on-dark); max-width: 44ch; }
+.hero-in { animation: rise .6s ease both; }
+.hero-in:nth-child(2) { animation-delay: .12s; }
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+/* תצוגת מוצר (דמו): מסגרת "חלון" עם נתוני דמו בלבד */
+.demo { background: #0d1b3a; border: 1px solid rgba(255, 255, 255, .12); border-radius: 18px; box-shadow: 0 30px 80px rgba(0, 0, 0, .45); overflow: hidden; font-size: .9rem; }
+.demo-bar { display: flex; align-items: center; justify-content: space-between; padding: .6rem .9rem; border-bottom: 1px solid rgba(255, 255, 255, .1); color: var(--muted-on-dark); font-size: .8rem; }
+.demo-bar span:last-child { font-family: monospace; direction: ltr; unicode-bidi: isolate; }
+.demo-body { padding: 1rem .9rem 1.1rem; display: grid; gap: .8rem; }
+.demo-case { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.demo-case strong { font-family: var(--font-display); font-size: 1.15rem; }
+.demo-tag { font-size: .75rem; padding: .15rem .55rem; border-radius: 999px; background: var(--gold-soft); color: var(--gold); border: 1px solid rgba(212, 175, 55, .35); }
+.demo-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .45rem; }
+.demo-list li { display: grid; grid-template-columns: 1fr auto; gap: .5rem; align-items: center; padding: .55rem .7rem; background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .08); border-radius: 10px; }
+.demo-status { font-size: .78rem; font-weight: 700; padding: .12rem .5rem; border-radius: 999px; }
+.demo-status.pending { color: #c9d3e6; background: rgba(148, 163, 184, .18); }
+.demo-status.interested { color: #a7f3d0; background: rgba(16, 185, 129, .18); }
+.demo-status.declined { color: #fecdd3; background: rgba(244, 63, 94, .16); }
+.demo-note { margin: 0; font-size: .78rem; color: var(--muted-on-dark); }
+
+/* "למה" — פריסה לא-סימטרית בטקסט */
+.why { display: grid; gap: 2rem; }
+@media (min-width: 900px) { .why { grid-template-columns: 5fr 7fr; align-items: start; } .why-intro { position: sticky; top: 92px; } }
+.why-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.why-list li { padding: 1.4rem 0; border-top: 1px solid var(--line); }
+.why-list li:last-child { border-bottom: 1px solid var(--line); }
+.why-list h3 { margin-bottom: .35rem; }
+.why-list p { margin: 0; color: var(--text-muted); }
+
+/* שלבים ממוספרים בקו דק */
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; max-width: 760px; }
+.steps li { counter-increment: step; position: relative; padding: 1.15rem 0 1.15rem 0; padding-inline-start: 4.2rem; border-top: 1px solid var(--line); }
+.steps li:last-child { border-bottom: 1px solid var(--line); }
+.steps li::before { content: counter(step, decimal); position: absolute; inset-inline-start: 0; top: 1.05rem; width: 2.9rem; font-family: var(--font-display); font-size: 1.9rem; font-weight: 700; color: var(--gold-deep); line-height: 1; }
+.on-dark .steps li { border-color: var(--line-dark); }
+.on-dark .steps li::before { color: var(--gold); }
+.steps h3 { margin-bottom: .25rem; }
+.steps p { margin: 0; color: var(--text-muted); }
+.on-dark .steps p { color: var(--muted-on-dark); }
+
+/* שני טורים לא-שווים לתוכן */
+.split { display: grid; gap: 2rem; }
+@media (min-width: 900px) { .split { grid-template-columns: 7fr 5fr; } .split.reverse { grid-template-columns: 5fr 7fr; } }
+.aside-box { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 1.4rem; }
+.aside-box h3 { margin-top: 0; }
+.on-dark .aside-box { background: rgba(255, 255, 255, .05); border-color: var(--line-dark); }
+
+/* פסקת מסר */
+.statement { max-width: 46ch; }
+.statement h2 { font-size: clamp(1.8rem, 4.2vw, 2.8rem); }
+
+/* FAQ */
+.faq { max-width: 760px; }
+.faq details { border-top: 1px solid var(--line); padding: .35rem 0; }
+.faq details:last-child { border-bottom: 1px solid var(--line); }
+.faq summary { cursor: pointer; padding: .8rem 0; font-weight: 700; font-size: 1.08rem; list-style: none; display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: "+"; font-family: var(--font-display); font-size: 1.5rem; color: var(--gold-deep); flex: none; }
+.faq details[open] summary::after { content: "–"; }
+.faq .answer { padding: 0 0 1rem; color: var(--text-muted); max-width: 66ch; }
+.faq .answer p:last-child { margin-bottom: 0; }
+
+/* תוכן ארוך (רפורמה, משפטי, נגישות) */
+.prose { max-width: 72ch; }
+.prose h2 { margin-top: 2.2rem; }
+.prose h3 { margin-top: 1.6rem; }
+.prose table { width: 100%; border-collapse: collapse; margin: 1rem 0 1.5rem; font-size: .95rem; }
+.prose th, .prose td { text-align: start; padding: .6rem .7rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.prose th { background: var(--paper-2); }
+.notice { border-inline-start: 4px solid var(--gold); background: #fff; padding: 1rem 1.2rem; border-radius: 0 var(--radius) var(--radius) 0; margin: 1.5rem 0; }
+.notice p:last-child { margin-bottom: 0; }
+.sources { font-size: .92rem; color: var(--text-muted); }
+.sources li { margin-bottom: .35rem; }
+.legal-meta { color: var(--text-muted); font-size: .95rem; }
+.legal-body { white-space: normal; }
+.legal-body p { margin-bottom: 1em; }
+
+/* טפסים (בקשות פרטיות בלבד) */
+.form { display: grid; gap: 1rem; max-width: 560px; }
+.form label { display: grid; gap: .35rem; font-weight: 700; }
+.form input, .form select, .form textarea { font: inherit; padding: .7rem .85rem; border: 1px solid #a9b1c2; border-radius: 10px; background: #fff; color: var(--text); min-height: 48px; }
+.form textarea { min-height: 120px; resize: vertical; }
+.form input:focus, .form select:focus, .form textarea:focus { border-color: var(--focus); box-shadow: 0 0 0 3px rgba(14, 165, 198, .18); outline: 0; }
+.form-status { min-height: 1.5em; font-weight: 700; }
+.form-status.is-success { color: #0f6b4a; }
+.form-status.is-error { color: #b4233c; }
+
+/* CTA סיום */
+.closing { text-align: center; }
+.closing h2 { margin-bottom: .5rem; }
+.closing .cta-row { justify-content: center; }
+
+/* פוטר */
+.site-footer { background: var(--ink); color: var(--muted-on-dark); padding-block: 3rem 1.5rem; margin-top: 0; }
+.footer-inner { display: grid; gap: 2rem; }
+@media (min-width: 760px) { .footer-inner { grid-template-columns: 1.6fr 1fr 1fr 1fr; } }
+.footer-brand p { margin: .6rem 0 0; font-size: .95rem; }
+.footer-brand strong { color: #fff; }
+.footer-fine { font-size: .82rem; }
+.footer-heading { font-family: var(--font-body); font-size: .85rem; font-weight: 700; letter-spacing: .04em; color: #fff; margin: 0 0 .6rem; }
+.footer-nav ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .35rem; }
+.footer-nav a, .site-footer .footer-nav a { color: var(--muted-on-dark); text-decoration: none; }
+.footer-nav a:hover { color: #fff; text-decoration: underline; }
+.social-list { display: flex; flex-wrap: wrap; gap: .8rem; margin-top: 1rem !important; }
+.footer-bottom { display: flex; justify-content: space-between; gap: 1rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--line-dark); font-size: .85rem; }
+
+/* WhatsApp צף (מובייל בלבד, עדין) */
+.whatsapp-float { position: fixed; inset-inline-start: 16px; bottom: 16px; z-index: 40; width: 52px; height: 52px; border-radius: 50%; background: #1f8f5f; color: #fff; display: grid; place-items: center; box-shadow: 0 10px 26px rgba(0, 0, 0, .28); text-decoration: none; }
+.whatsapp-float[hidden] { display: none; }
+@media (min-width: 960px) { .whatsapp-float { display: none; } }
+
+/* 404 */
+.not-found { text-align: center; padding-block: clamp(4rem, 12vw, 8rem); }
+.not-found h1 { font-size: clamp(2.5rem, 8vw, 5rem); }
+
+@media print { .site-header, .site-footer, .whatsapp-float, .skip-link { display: none !important; } body { background: #fff; } }

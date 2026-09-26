@@ -18,7 +18,9 @@ const app = createApp({
   gemini: runtime.gemini,
   firebaseAccounts: {
     deleteUser: (uid) => firebaseAuth.deleteUser(uid),
-    updateUserEmail: (uid, newEmail) => firebaseAuth.updateUser(uid, {email: newEmail}).then(() => undefined)
+    updateUserEmail: (uid, newEmail) => firebaseAuth.updateUser(uid, {email: newEmail}).then(() => undefined),
+    // ביטול כל טוקני הרענון של המשתמש: יציאה/פקיעת סשן מחייבות התחברות מחדש בכל הלשוניות.
+    revokeRefreshTokens: (uid) => firebaseAuth.revokeRefreshTokens(uid)
   },
   delivery: runtime.delivery,
   deliveryEvents: runtime.deliveryEvents

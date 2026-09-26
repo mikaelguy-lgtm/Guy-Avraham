@@ -3,7 +3,9 @@ import { onAuthStateChanged } from "firebase/auth";
 import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { auth } from "./lib/firebase";
 import type { CurrentUser } from "./types";
-import { api } from "./utils/apiClient";
+import { ApiError, api, setAuthNotice } from "./utils/apiClient";
+import { IDLE_LOGOUT_MESSAGE } from "./domain/idleSession";
+import IdleSessionProvider from "./components/IdleSessionProvider";
 import { canAccessAdmin, canAccessSmtpSettings, homePathForRole } from "./utils/roleRoutes";
 import AuthScreen from "./components/AuthScreen";
 import DashboardView from "./components/DashboardView";
@@ -38,6 +40,7 @@ import AdminCasesView from "./components/AdminCasesView";
 import AdminCaseDetailView from "./components/AdminCaseDetailView";
 import AdminNotificationsView from "./components/AdminNotificationsView";
 import AdminNotificationSettingsView from "./components/AdminNotificationSettingsView";
+import AdminPublicSiteSettingsView from "./components/AdminPublicSiteSettingsView";
 import AdminSystemHealthView from "./components/AdminSystemHealthView";
 import AdminAuditLogView from "./components/AdminAuditLogView";
 import {requireFrontendConfig} from "./config/frontend";
@@ -57,7 +60,14 @@ export default function App() {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [ready, setReady] = useState(false);
   useEffect(() => onAuthStateChanged(auth, async (firebaseUser) => {
-    try { setUser(firebaseUser ? await api.me() : null); } catch { setUser(null); }
+    try { setUser(firebaseUser ? await api.me() : null); }
+    catch (error) {
+      // Firebase שמר משתמש מקומית אבל השרת דחה אותו (למשל סשן שפג בצד השרת) —
+      // מנקים את המצב המקומי כדי לא להישאר עם "מחובר" שקרי.
+      if (error instanceof ApiError && error.code === "IDLE_EXPIRED") setAuthNotice(IDLE_LOGOUT_MESSAGE);
+      if (firebaseUser) await api.logout("MANUAL", {broadcast: false}).catch(() => undefined);
+      setUser(null);
+    }
     finally { setReady(true); }
   }), []);
   if (!ready) return <main className="auth-shell"><SynCashLogo size="lg" /></main>;
@@ -77,7 +87,7 @@ export default function App() {
   }
 
   const homePath = homePathForRole(user.role);
-  return <Routes>
+  return <IdleSessionProvider><Routes>
     <Route path="/external/review/:token" element={productionConfig.externalPortalsEnabled ? <ExternalReviewPage /> : <Navigate to={homePath} replace />} />
     <Route path="/external/access/:token" element={productionConfig.externalPortalsEnabled ? <ExternalAccessPage /> : <Navigate to={homePath} replace />} />
     <Route path="/external/portal" element={productionConfig.externalPortalsEnabled ? <ExternalPortalPage /> : <Navigate to={homePath} replace />} />
@@ -99,6 +109,7 @@ export default function App() {
       <Route path="settings/legal" element={user.role === "SUPER_ADMIN" ? <AdminLegalDocumentsView /> : <Navigate to="/admin/settings" replace />} />
       <Route path="settings/privacy-requests" element={user.role === "SUPER_ADMIN" ? <AdminPrivacyRequestsView /> : <Navigate to="/admin/settings" replace />} />
       <Route path="settings/notifications" element={user.role === "SUPER_ADMIN" ? <AdminNotificationSettingsView /> : <Navigate to="/admin/settings" replace />} />
+      <Route path="settings/public-site" element={user.role === "SUPER_ADMIN" ? <AdminPublicSiteSettingsView /> : <Navigate to="/admin/settings" replace />} />
       <Route path="notifications" element={user.role === "SUPER_ADMIN" ? <AdminNotificationsView /> : <AdminSectionPage title="התראות" description="אין הרשאה לצפייה בהתראות." />} />
       <Route path="system-health" element={user.role === "SUPER_ADMIN" ? <AdminSystemHealthView /> : <AdminSectionPage title="בריאות מערכת" description="אין הרשאה לצפייה בבריאות המערכת." />} />
       <Route path="audit" element={user.role === "SUPER_ADMIN" ? <AdminAuditLogView /> : <AdminSectionPage title="יומן פעילות" description="אין הרשאה לצפייה ביומן הפעילות." />} />
@@ -117,5 +128,5 @@ export default function App() {
     </Route>
     <Route path="/lender" element={user.role === "LENDER_ADMIN" || user.role === "LENDER_UNDERWRITER" ? <><StandardHeader user={user} /><main className="portal"><SettingsView user={user} /></main></> : <Navigate to={homePath} replace />} />
     <Route path="*" element={<Navigate to={homePath} replace />} />
-  </Routes>;
+  </Routes></IdleSessionProvider>;
 }

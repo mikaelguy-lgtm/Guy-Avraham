@@ -14,6 +14,8 @@ import {
 } from "../domain/clientValidation.js";
 import { DOCUMENT_TYPES, REQUIRED_BORROWER_DOCUMENT_TYPES } from "../domain/clientFields.js";
 import { createAuthMiddleware, type TokenVerifier } from "../middleware/auth.js";
+import { isSessionFresh } from "../domain/idleSession.js";
+import { applyPublicSiteSettingsPatch, PUBLIC_SITE_CATEGORY, toPublicSitePayload } from "../domain/publicSite.js";
 import { createAnonymousPdf } from "../services/pdf.js";
 import { rateLimit, type RateLimitStore } from "../services/rateLimiter.js";
 import { buildAnonymousSubmissionSnapshot } from "../services/snapshot.js";
@@ -50,7 +52,7 @@ export interface AppServices {
   secrets: SecretProvider;
   limiter: RateLimitStore;
   gemini: GeminiService;
-  firebaseAccounts: {deleteUser(uid: string): Promise<void>; updateUserEmail(uid: string, newEmail: string): Promise<void>};
+  firebaseAccounts: {deleteUser(uid: string): Promise<void>; updateUserEmail(uid: string, newEmail: string): Promise<void>; revokeRefreshTokens(uid: string): Promise<void>};
   delivery?: LenderDeliveryApplication;
   deliveryEvents?: DeliveryEventBroker;
 }
@@ -484,7 +486,11 @@ function valuesEqual(left: string, right: string): boolean {
 
 export function createApp(services: AppServices) {
   const app = express();
-  const auth = createAuthMiddleware(services.store, services.verifier);
+  // סשן שפג בגלל חוסר פעילות מבטל גם את טוקני Firebase של המשתמש, כך שרענון טוקן
+  // ברקע לא יוכל "להחיות" אותו; נדרשת התחברות מחדש (auth_time חדש).
+  const auth = createAuthMiddleware(services.store, services.verifier, {
+    onIdleExpired: (user) => services.firebaseAccounts.revokeRefreshTokens(user.firebaseUid)
+  });
   const requireProductionAccess = (request: Request, response: Response, next: NextFunction): void => {
     if (services.env.SUPER_ADMIN_ONLY_MODE && request.user?.role !== "SUPER_ADMIN") {
       response.status(403).json({error: "PRODUCTION_ACCESS_RESTRICTED", message: "הגישה לסביבה זו מוגבלת כעת לסופר אדמין בלבד.", requestId: request.requestId});
@@ -540,7 +546,8 @@ export function createApp(services: AppServices) {
     }
     next();
   });
-  const authenticated = [auth.requireFirebaseAuth, auth.loadDatabaseUser, auth.requireActiveUser, requireProductionAccess];
+  // כל route מוגן עובר גם את בדיקת ה-idle (5 דקות ללא פעילות אמיתית = 401 IDLE_EXPIRED).
+  const authenticated = [auth.requireFirebaseAuth, auth.loadDatabaseUser, auth.requireActiveUser, requireProductionAccess, auth.requireFreshSession];
   const upload = multer({storage: multer.memoryStorage(), limits: {fileSize: services.env.MAX_UPLOAD_SIZE_MB * 1024 * 1024, files: 1}});
 
   app.disable("x-powered-by");
@@ -560,6 +567,13 @@ export function createApp(services: AppServices) {
   app.use(express.json({limit: "1mb"}));
 
   app.get("/api/health", (_request, response) => response.json({status: "ok"}));
+
+  // הגדרות האתר הציבורי (syncash.co.il): ציבורי, ללא אימות, ללא cookies.
+  // הפלט הוא allow-list סגור (toPublicSitePayload) — לעולם לא הגדרות פנימיות/SMTP/סודות.
+  app.get("/api/public/site-settings", rateLimit(services.limiter, "public-site-settings", 120, 60), asyncRoute(async (_request, response) => {
+    response.setHeader("Cache-Control", "public, max-age=60");
+    response.json(toPublicSitePayload(await services.store.getPublicSiteSettings()));
+  }));
 
   const loginAttemptLimit = services.env.NODE_ENV === "production" ? 10 : 100;
   app.post("/api/auth/login-attempt", rateLimit(services.limiter, "login-attempt", loginAttemptLimit, 15 * 60), (_request, response) => response.json({allowed: true}));
@@ -649,7 +663,27 @@ export function createApp(services: AppServices) {
     }
   }));
 
-  app.get("/api/auth/me", auth.requireFirebaseAuth, auth.loadDatabaseUser, asyncRoute(async (request, response) => {
+  // רישום פעילות אמיתית. הלקוח קורא לזה רק בעקבות אינטראקציה של המשתמש (ולא בעקבות
+  // SSE/polling/רענון טוקן), לכל היותר פעם בדקה. סשן שכבר פג נדחה כאן בדיוק כמו בכל
+  // route מוגן — אי אפשר "להחיות" סשן פג בלי התחברות מחדש.
+  app.post("/api/auth/activity", auth.requireFirebaseAuth, auth.loadDatabaseUser, auth.requireActiveUser, requireProductionAccess, auth.requireFreshSession, rateLimit(services.limiter, "session-activity", 40, 60), asyncRoute(async (request, response) => {
+    await services.store.touchUserActivity(request.user!.id);
+    response.status(204).end();
+  }));
+
+  // יציאה בצד השרת: מאפס את עוגן הפעילות ומבטל את טוקני Firebase של המשתמש, כך שכל
+  // הלשוניות מתנתקות. מותר גם לסשן שכבר פג (אין בדיקת idle כאן, בכוונה).
+  app.post("/api/auth/logout", auth.requireFirebaseAuth, auth.loadDatabaseUser, asyncRoute(async (request, response) => {
+    const reason = z.object({reason: z.enum(["MANUAL", "IDLE"]).optional()}).strict().parse(request.body ?? {}).reason ?? "MANUAL";
+    await services.store.clearUserActivity(request.user!.id);
+    await services.firebaseAccounts.revokeRefreshTokens(request.user!.firebaseUid).catch((error: unknown) => {
+      console.error("Logout token revocation failed", {errorCode: "LOGOUT_REVOCATION_FAILED", userId: request.user!.id, requestId: request.requestId, reason: error instanceof Error ? error.message : "unknown"});
+    });
+    await services.store.addAudit(request.user!.id, reason === "IDLE" ? "SESSION_IDLE_TIMEOUT" : "USER_LOGOUT", "user", request.user!.id, {reason}, request.requestId, request.ip, request.header("user-agent"));
+    response.status(204).end();
+  }));
+
+  app.get("/api/auth/me", auth.requireFirebaseAuth, auth.loadDatabaseUser, auth.requireFreshSession, asyncRoute(async (request, response) => {
     let user = request.user!;
     let activatedAdvisor: Awaited<ReturnType<AppStore["getAdvisorAccount"]>> = null;
     if (user.role === "ADVISOR" && user.status === "PENDING") {
@@ -672,6 +706,8 @@ export function createApp(services: AppServices) {
       return;
     }
     await services.store.recordLogin(user.id);
+    // טעינת /me היא תמיד תוצאה של פעולת משתמש (התחברות או טעינת עמוד) — מתחילה חלון פעילות.
+    await services.store.touchUserActivity(user.id);
     const advisor = user.role === "ADVISOR" ? activatedAdvisor ?? await services.store.getAdvisorAccount(user.id) : null;
     response.json(advisor ? publicAdvisorAccount(advisor, services.encryption) : {
       id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName,
@@ -1496,6 +1532,38 @@ export function createApp(services: AppServices) {
     response.json(await services.store.getAdminNotificationSettings());
   }));
 
+  // הגדרות האתר הציבורי — SUPER_ADMIN בלבד. נשמרות ב-system_settings (קטגוריה PUBLIC_SITE),
+  // נכנסות לתוקף מיד (האתר קורא /api/public/site-settings עם cache קצר), ללא פריסה.
+  app.get("/api/admin/settings/public-site", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (_request, response) => {
+    response.json(await services.store.getPublicSiteSettings());
+  }));
+  const socialLinkSchema = z.string().trim().max(300).nullable().optional();
+  const publicSiteSettingsSchema = z.object({
+    whatsappEnabled: z.boolean().optional(),
+    whatsappNumber: z.string().trim().max(32).optional(),
+    whatsappMessage: z.string().max(400).optional(),
+    registrationEnabled: z.boolean().optional(),
+    loginEnabled: z.boolean().optional(),
+    socialLinks: z.object({facebook: socialLinkSchema, linkedin: socialLinkSchema, instagram: socialLinkSchema, youtube: socialLinkSchema}).strict().optional()
+  }).strict();
+  app.patch("/api/admin/settings/public-site", ...authenticated, auth.requireSuperAdmin, asyncRoute(async (request, response) => {
+    const input = publicSiteSettingsSchema.parse(request.body);
+    const before = await services.store.getPublicSiteSettings();
+    const result = applyPublicSiteSettingsPatch(before, input);
+    if (!result.ok) {
+      response.status(400).json({error: "VALIDATION_ERROR", fields: Object.keys(result.fieldErrors), fieldErrors: result.fieldErrors, requestId: request.requestId});
+      return;
+    }
+    if (Object.keys(result.values).length > 0) await services.store.setSettings(PUBLIC_SITE_CATEGORY, result.values, request.user!.id);
+    // מדיניות פרטיות ב-audit: מספר ה-WhatsApp, ההודעה והקישורים הם פרטי קשר/טקסט חופשי —
+    // נרשם רק {field, changed: true}; הטוגלים הבוליאניים נרשמים עם ערך ישן/חדש.
+    await services.store.addAudit(request.user!.id, "PUBLIC_SITE_SETTINGS_UPDATED", "system_settings", null, {
+      changedFields: result.changedFields.length ? result.changedFields.map((field) => ({field, changed: true})) : undefined,
+      toggleChanges: Object.keys(result.toggleChanges).length ? result.toggleChanges : undefined
+    }, request.requestId, request.ip, request.header("user-agent"));
+    response.json(await services.store.getPublicSiteSettings());
+  }));
+
   app.post("/api/admin/security/encryption-test", ...authenticated, auth.requireSuperAdmin, (request, response) => {
     const source = randomUUID();
     const encrypted = services.encryption.encrypt(source);
@@ -1651,7 +1719,17 @@ export function createApp(services: AppServices) {
       if (!services.deliveryEvents) throw new DeliveryError("REALTIME_UNAVAILABLE", 503, "עדכונים בזמן אמת אינם זמינים כרגע.");
       response.writeHead(200, {"Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no"});
       const unsubscribe = services.deliveryEvents.subscribe({userId: request.user!.id, advisorId: request.user!.advisorId, isAdmin: request.user!.role === "ADMIN" || request.user!.role === "SUPER_ADMIN", response});
-      const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 20_000); request.on("close", () => {clearInterval(heartbeat); unsubscribe();});
+      // ה-SSE עצמו אינו פעילות. כל דקה נבדק מחדש בשרת אם הסשן עדיין טרי; אם פג — הזרם נסגר,
+      // כך שגם חיבור שנפתח לפני הפקיעה לא ממשיך לקבל אירועים.
+      let ticks = 0;
+      const heartbeat = setInterval(() => {
+        response.write(": heartbeat\n\n");
+        if (++ticks % 3 !== 0) return;
+        void services.store.findUserByFirebaseUid(request.user!.firebaseUid)
+          .then((current) => { if (!current || !isSessionFresh(current.lastActivityAt, request.firebaseIdentity?.authTime ?? null)) response.end(); })
+          .catch(() => undefined);
+      }, 20_000);
+      request.on("close", () => {clearInterval(heartbeat); unsubscribe();});
     }));
 
     app.get("/api/external/review/:token", rateLimit(services.limiter, "external-review", 60, 60), asyncRoute(async (request, response) => { const result = await delivery.getReview(routeParam(request, "token"), context(request)); response.json({...result as object, csrfToken: issueCsrf(request, response)}); }));

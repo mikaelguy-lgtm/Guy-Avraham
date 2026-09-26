@@ -48,12 +48,13 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
     VITE_SUPER_ADMIN_ONLY_MODE=$VITE_SUPER_ADMIN_ONLY_MODE \
     VITE_USE_FIREBASE_EMULATOR=false
 COPY . .
-RUN npm run build:web
+RUN npm run build:web && npm run build:marketing
 
 FROM nginx:1.27-alpine AS frontend
 COPY nginx/frontend.conf /etc/nginx/nginx.conf
 COPY --from=frontend-builder --chown=nginx:nginx /app/dist /usr/share/nginx/html
-RUN mkdir -p /var/cache/nginx /var/run/nginx && chown -R nginx:nginx /var/cache/nginx /var/run/nginx /usr/share/nginx/html
+COPY --from=frontend-builder --chown=nginx:nginx /app/marketing/dist /usr/share/nginx/marketing
+RUN mkdir -p /var/cache/nginx /var/run/nginx && chown -R nginx:nginx /var/cache/nginx /var/run/nginx /usr/share/nginx/html /usr/share/nginx/marketing
 USER nginx
-EXPOSE 8080
+EXPOSE 8080 8081
 CMD ["nginx", "-g", "daemon off;"]

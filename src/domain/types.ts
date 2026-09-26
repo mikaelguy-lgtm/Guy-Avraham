@@ -15,6 +15,7 @@ export interface DatabaseUser {
   deletedAt: Date | null;
   advisorId: number | null;
   lenderId: number | null;
+  lastActivityAt: Date | null;
 }
 
 export interface AdvisorAccount extends DatabaseUser {

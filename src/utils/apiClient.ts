@@ -3,8 +3,25 @@ import { auth } from "../lib/firebase";
 import {requireFrontendConfig} from "../config/frontend";
 import type { AdminActivityPoint, AdminAttention, AdminCaseDetail, AdminCaseListResponse, AdminDashboardStats, AdminEmailLogRecord, AdminLegalDocumentOverview, AdminLegalDocumentVersion, AdminNotificationSettings, AdminPrivacyRequest, AdminRecentActivityItem, AdminStatsPeriod, AdminSystemHealth, AdvisorAdminRecord, AdvisorCaseStats, AuditLogEntry, BusinessCalendarExceptionRecord, Client, ClientList, ClientSubmission, CompanyResponse, CurrentUser, DeliveryBlocker, DeliveryCompany, DeliveryPreflight, DeliveryPreview, DocumentRecord, ExternalAccess, ExternalPortalCase, ExternalPortalDocument, ExternalReview, FinancingCompanyAdmin, IdentityRequest, Lender, LegalDocumentAcceptanceRecord, LegalDocumentType, LegalDocumentVersion, MissingRequiredDocument, NotificationRecord, PrivacyRequestStatus, PrivacyRequestType, UserAuditEvent } from "../types";
 import type { AdvisorRegistrationInput } from "../domain/advisorRegistration";
+import type { PublicSitePayload, PublicSiteSettings, PublicSiteSettingsPatch } from "../domain/publicSite";
+import { publishLogout } from "./idleSync";
 
 const API_URL = requireFrontendConfig().apiBaseUrl;
+
+// הודעה חד-פעמית למסך ההתחברות (למשל אחרי ניתוק בגלל חוסר פעילות). לא נשמר בה שום דבר רגיש.
+const AUTH_NOTICE_KEY = "syncash:auth-notice";
+export function setAuthNotice(message: string): void {
+  try { sessionStorage.setItem(AUTH_NOTICE_KEY, message); } catch { /* ignore */ }
+}
+export function takeAuthNotice(): string | null {
+  try { const value = sessionStorage.getItem(AUTH_NOTICE_KEY); sessionStorage.removeItem(AUTH_NOTICE_KEY); return value; } catch { return null; }
+}
+
+// השרת החזיר IDLE_EXPIRED — הסשן פג בצד השרת. ה-IdleSessionProvider מאזין ומבצע ניתוק מלא.
+function announceIdleExpired(error: ApiError): ApiError {
+  if (error.code === "IDLE_EXPIRED" && typeof window !== "undefined") window.dispatchEvent(new Event("syncash:idle-expired"));
+  return error;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -95,7 +112,7 @@ export async function authFetch<T>(path: string, options: RequestInit = {}): Pro
     headers.set("authorization", `Bearer ${await user.getIdToken(true)}`);
     response = await fetch(`${API_URL}${path}`, {...options, headers});
   }
-  if (!response.ok) throw await parseError(response);
+  if (!response.ok) throw announceIdleExpired(await parseError(response));
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
@@ -112,7 +129,7 @@ export async function subscribeDeliveryEvents(signal: AbortSignal, onEvent: () =
   const user = auth.currentUser;
   if (!user) return;
   const response = await fetch(`${API_URL}/api/delivery/events`, {headers: {authorization: `Bearer ${await user.getIdToken()}`}, signal});
-  if (!response.ok || !response.body) throw await parseError(response);
+  if (!response.ok || !response.body) throw announceIdleExpired(await parseError(response));
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
   while (!signal.aborted) {
@@ -152,7 +169,19 @@ export const api = {
   },
   emailVerificationStatus: () => authFetch<{email: string; emailVerified: boolean; status: "SENT" | "FAILED" | "NOT_SENT"; lastSentAt: string | null}>("/api/auth/email-verification/status"),
   resendEmailVerification: () => authFetch<{success: true; verificationEmailSent: true; lastSentAt: string}>("/api/auth/email-verification/resend", {method: "POST"}),
-  logout: () => signOut(auth),
+  // יציאה מלאה: ביטול הסשן בשרת (מאפס פעילות + מבטל טוקני Firebase, best effort), אות לשאר
+  // הלשוניות, ואז signOut מקומי. הסדר חשוב: לשרת צריך טוקן, ולכן לפני ה-signOut.
+  logout: async (reason: "MANUAL" | "IDLE" = "MANUAL", options: {broadcast?: boolean} = {}) => {
+    if (auth.currentUser) {
+      try { await authFetch<void>("/api/auth/logout", {method: "POST", body: JSON.stringify({reason})}); } catch { /* best effort */ }
+    }
+    if (options.broadcast !== false) publishLogout();
+    await signOut(auth);
+  },
+  reportActivity: () => authFetch<void>("/api/auth/activity", {method: "POST", body: "{}"}),
+  publicSiteSettings: () => publicFetch<PublicSitePayload>("/api/public/site-settings"),
+  adminPublicSiteSettings: () => authFetch<PublicSiteSettings>("/api/admin/settings/public-site"),
+  updateAdminPublicSiteSettings: (values: PublicSiteSettingsPatch) => authFetch<PublicSiteSettings>("/api/admin/settings/public-site", {method: "PATCH", body: JSON.stringify(values)}),
   clients: (search = "") => authFetch<ClientList>(`/api/clients?pageSize=100&search=${encodeURIComponent(search)}`),
   client: (id: number) => authFetch<Client>(`/api/clients/${id}`),
   createClient: (data: Record<string, unknown>) => authFetch<Client>("/api/clients", {method: "POST", body: JSON.stringify(data)}),

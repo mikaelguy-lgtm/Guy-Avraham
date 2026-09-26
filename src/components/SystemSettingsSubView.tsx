@@ -8,6 +8,7 @@ export default function SystemSettingsSubView({user}: {user: CurrentUser}) {
       <Link className="settings-link" to="/admin/settings/legal"><strong>מסמכים משפטיים</strong><span>תנאי שימוש, מדיניות פרטיות ו-DPA — עריכה, תצוגה מקדימה ופרסום גרסאות</span></Link>
       <Link className="settings-link" to="/admin/settings/privacy-requests"><strong>בקשות פרטיות</strong><span>עיון/תיקון/מחיקה/סגירת חשבון שהתקבלו ממרכז המסמכים המשפטיים</span></Link>
       <Link className="settings-link" to="/admin/settings/notifications"><strong>התראות מנהל</strong><span>כתובת מייל לעדכוני מנהל, והפעלה/כיבוי לפי סוג אירוע</span></Link>
+      <Link className="settings-link" to="/admin/settings/public-site"><strong>האתר הציבורי</strong><span>כפתור WhatsApp, כפתורי הרשמה/כניסה וקישורי רשתות חברתיות באתר syncash.co.il</span></Link>
     </> : <p className="permission-note">הגדרות דואר יוצא, מסמכים משפטיים, בקשות פרטיות והתראות מנהל זמינות לסופר אדמין בלבד.</p>}
   </section></main>;
 }

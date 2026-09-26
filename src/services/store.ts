@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, max, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
+import { parsePublicSiteSettings, PUBLIC_SITE_CATEGORY, type PublicSiteSettings } from "../domain/publicSite.js";
 import {
   advisorProfiles,
   aiAnalysisLogs,
@@ -417,6 +418,9 @@ export interface AppStore extends AuthorizationDirectory {
   createAdvisorAccount(values: {firebaseUid: string; email: string; firstName: string; lastName: string; phoneEncrypted: string; businessName: string; businessPhoneEncrypted: string; businessEmail: string}): Promise<AdvisorAccount>;
   activateVerifiedAdvisor(userId: number): Promise<AdvisorAccount | null>;
   recordLogin(userId: number): Promise<void>;
+  touchUserActivity(userId: number): Promise<void>;
+  clearUserActivity(userId: number): Promise<void>;
+  getPublicSiteSettings(): Promise<PublicSiteSettings>;
   getAdvisorAccount(userId: number, options?: {includeArchived?: boolean}): Promise<AdvisorAccount | null>;
   listAdvisorAccounts(options?: {includeArchived?: boolean}): Promise<AdvisorAccount[]>;
   updateAdvisorProfile(userId: number, values: {firstName: string; lastName: string; phoneEncrypted: string; businessName: string; businessPhoneEncrypted: string}): Promise<AdvisorAccount | null>;
@@ -519,7 +523,7 @@ export class PostgresStore implements AppStore {
   async findUserByFirebaseUid(uid: string): Promise<DatabaseUser | null> {
     const [row] = await db.select({
       id: users.id, firebaseUid: users.firebaseUid, email: users.email, firstName: users.firstName, lastName: users.lastName,
-      role: users.role, roleLabel: users.roleLabel, status: users.status, emailVerified: users.emailVerified, deletedAt: users.deletedAt,
+      role: users.role, roleLabel: users.roleLabel, status: users.status, emailVerified: users.emailVerified, deletedAt: users.deletedAt, lastActivityAt: users.lastActivityAt,
       advisorId: advisorProfiles.id, lenderId: lenderUsers.lenderId
     }).from(users)
       .leftJoin(advisorProfiles, eq(advisorProfiles.userId, users.id))
@@ -531,7 +535,7 @@ export class PostgresStore implements AppStore {
   async findUserByEmail(email: string): Promise<DatabaseUser | null> {
     const [row] = await db.select({
       id: users.id, firebaseUid: users.firebaseUid, email: users.email, firstName: users.firstName, lastName: users.lastName,
-      role: users.role, roleLabel: users.roleLabel, status: users.status, emailVerified: users.emailVerified, deletedAt: users.deletedAt,
+      role: users.role, roleLabel: users.roleLabel, status: users.status, emailVerified: users.emailVerified, deletedAt: users.deletedAt, lastActivityAt: users.lastActivityAt,
       advisorId: advisorProfiles.id, lenderId: lenderUsers.lenderId
     }).from(users)
       .leftJoin(advisorProfiles, eq(advisorProfiles.userId, users.id))
@@ -560,7 +564,7 @@ export class PostgresStore implements AppStore {
     const [row] = await db.select({
       id: users.id, firebaseUid: users.firebaseUid, email: users.email, firstName: users.firstName, lastName: users.lastName,
       phoneEncrypted: users.phoneEncrypted, role: users.role, roleLabel: users.roleLabel, status: users.status,
-      emailVerified: users.emailVerified, deletedAt: users.deletedAt, advisorId: advisorProfiles.id,
+      emailVerified: users.emailVerified, deletedAt: users.deletedAt, lastActivityAt: users.lastActivityAt, advisorId: advisorProfiles.id,
       lenderId: sql<number | null>`null`, businessName: advisorProfiles.businessName,
       businessPhoneEncrypted: advisorProfiles.businessPhoneEncrypted, businessEmail: advisorProfiles.businessEmail,
       createdAt: users.createdAt, updatedAt: users.updatedAt, lastLoginAt: users.lastLoginAt
@@ -573,7 +577,7 @@ export class PostgresStore implements AppStore {
     return db.select({
       id: users.id, firebaseUid: users.firebaseUid, email: users.email, firstName: users.firstName, lastName: users.lastName,
       phoneEncrypted: users.phoneEncrypted, role: users.role, roleLabel: users.roleLabel, status: users.status,
-      emailVerified: users.emailVerified, deletedAt: users.deletedAt, advisorId: advisorProfiles.id,
+      emailVerified: users.emailVerified, deletedAt: users.deletedAt, lastActivityAt: users.lastActivityAt, advisorId: advisorProfiles.id,
       lenderId: sql<number | null>`null`, businessName: advisorProfiles.businessName,
       businessPhoneEncrypted: advisorProfiles.businessPhoneEncrypted, businessEmail: advisorProfiles.businessEmail,
       createdAt: users.createdAt, updatedAt: users.updatedAt, lastLoginAt: users.lastLoginAt
@@ -608,6 +612,19 @@ export class PostgresStore implements AppStore {
 
   async recordLogin(userId: number): Promise<void> {
     await db.update(users).set({lastLoginAt: new Date(), updatedAt: new Date()}).where(eq(users.id, userId));
+  }
+
+  // עוגן ה-idle timeout. עדכון טהור ללא audit — נקרא לכל היותר פעם בדקה לכל משתמש פעיל.
+  async touchUserActivity(userId: number): Promise<void> {
+    await db.update(users).set({lastActivityAt: new Date()}).where(eq(users.id, userId));
+  }
+
+  async clearUserActivity(userId: number): Promise<void> {
+    await db.update(users).set({lastActivityAt: null}).where(eq(users.id, userId));
+  }
+
+  async getPublicSiteSettings(): Promise<PublicSiteSettings> {
+    return parsePublicSiteSettings(await this.getSettings(PUBLIC_SITE_CATEGORY));
   }
 
   async updateAdvisorProfile(userId: number, values: {firstName: string; lastName: string; phoneEncrypted: string; businessName: string; businessPhoneEncrypted: string}): Promise<AdvisorAccount | null> {

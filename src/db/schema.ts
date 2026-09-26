@@ -62,6 +62,8 @@ export const users = pgTable("users", {
   emailVerified: boolean("email_verified").notNull().default(false),
   deletedAt: timestamp("deleted_at", {withTimezone: true}),
   lastLoginAt: timestamp("last_login_at", {withTimezone: true}),
+  // הפעילות האמיתית האחרונה של המשתמש (idle timeout בצד השרת). null = אין סשן פעיל.
+  lastActivityAt: timestamp("last_activity_at", {withTimezone: true}),
   ...timestamps
 });
 

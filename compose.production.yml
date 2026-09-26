@@ -168,6 +168,8 @@ services:
       - no-new-privileges:true
     ports:
       - "127.0.0.1:3180:8080"
+      # האתר הציבורי (syncash.co.il) — אותו image, server block נפרד
+      - "127.0.0.1:3182:8081"
     depends_on:
       api:
         condition: service_healthy

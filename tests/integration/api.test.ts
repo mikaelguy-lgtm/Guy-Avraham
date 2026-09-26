@@ -16,7 +16,7 @@ type TestEmailService = {
   isDeliveryActive: ReturnType<typeof vi.fn>;
 };
 
-function app(overrides: Parameters<typeof makeStore>[0] = {}, emailService?: Partial<TestEmailService> | EmailService, secretProvider: SecretProvider = secrets, environment = env, verificationService?: EmailVerificationService, firebaseAccounts?: {deleteUser(uid: string): Promise<void>; updateUserEmail(uid: string, newEmail: string): Promise<void>}) {
+function app(overrides: Parameters<typeof makeStore>[0] = {}, emailService?: Partial<TestEmailService> | EmailService, secretProvider: SecretProvider = secrets, environment = env, verificationService?: EmailVerificationService, firebaseAccounts?: {deleteUser(uid: string): Promise<void>; updateUserEmail(uid: string, newEmail: string): Promise<void>; revokeRefreshTokens(uid: string): Promise<void>}) {
   const store = makeStore(overrides);
   const defaultEmail = {verify: vi.fn(), send: vi.fn().mockResolvedValue({messageId: "message-1"}), test: vi.fn().mockResolvedValue({messageId: "message-1"}), reload: vi.fn(), isDeliveryActive: vi.fn().mockResolvedValue(environment.EMAIL_DELIVERY_ENABLED)};
   const email = emailService instanceof EmailService ? emailService : {...defaultEmail, ...(emailService ?? {})} as unknown as EmailService;
@@ -27,7 +27,7 @@ function app(overrides: Parameters<typeof makeStore>[0] = {}, emailService?: Par
     emailVerification: verificationService ?? new AdvisorEmailVerificationService({createVerificationLink: vi.fn().mockResolvedValue({url: "http://localhost:9099/verify?oobCode=private"})}, email, store),
     passwordReset: {sendPasswordResetEmail: vi.fn().mockResolvedValue({messageId: "message-1"})},
     gemini: {analyze: vi.fn().mockResolvedValue("analysis")} as never,
-    firebaseAccounts: firebaseAccounts ?? {deleteUser: vi.fn().mockResolvedValue(undefined), updateUserEmail: vi.fn().mockResolvedValue(undefined)}
+    firebaseAccounts: firebaseAccounts ?? {deleteUser: vi.fn().mockResolvedValue(undefined), updateUserEmail: vi.fn().mockResolvedValue(undefined), revokeRefreshTokens: vi.fn().mockResolvedValue(undefined)}
   });
 }
 
@@ -63,7 +63,7 @@ const registeredAdvisor = {
   roleLabel: "יועץ משכנתאות", status: "PENDING" as const, emailVerified: false, deletedAt: null,
   advisorId: 40, lenderId: null, businessName: "דנה ייעוץ משכנתאות",
   businessPhoneEncrypted: new EncryptionService(Buffer.alloc(32, 4)).encrypt("+972501234567"),
-  businessEmail: "new-advisor@example.com", createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null
+  businessEmail: "new-advisor@example.com", createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null, lastActivityAt: null
 };
 
 const legacyCompleteClientInput = {
@@ -243,7 +243,7 @@ describe("advisor self-registration", () => {
       env, store, verifier, encryption: new EncryptionService(Buffer.alloc(32, 4)), storage: new MemoryStorage(),
       limiter: new MemoryLimiter(), secrets, email, emailVerification: verification,
       passwordReset: {sendPasswordResetEmail: vi.fn().mockResolvedValue({messageId: "message-1"})},
-      gemini: {analyze: vi.fn()} as never, firebaseAccounts: {deleteUser: vi.fn(), updateUserEmail: vi.fn()}
+      gemini: {analyze: vi.fn()} as never, firebaseAccounts: {deleteUser: vi.fn(), updateUserEmail: vi.fn(), revokeRefreshTokens: vi.fn()}
     });
     const registration = await request(application).post("/api/auth/register-advisor").set("authorization", "Bearer new-advisor").send(registrationInput).expect(201);
     const resend = await request(application).post("/api/auth/email-verification/resend").set("authorization", "Bearer pending").expect(200);
@@ -884,7 +884,7 @@ describe("SUPER_ADMIN user management", () => {
     const fullAccount = (patch: Partial<Record<string, unknown>>) => ({
       ...users.advisor, phoneEncrypted: encryption.encrypt("+972501234567"), businessName: "Test Business",
       businessPhoneEncrypted: encryption.encrypt("+972501234567"), businessEmail: users.advisor.email,
-      createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null, ...patch
+      createdAt: new Date(), updatedAt: new Date(), lastLoginAt: null, lastActivityAt: null, ...patch
     });
     const archiveAdvisorAccount = vi.fn().mockResolvedValue(fullAccount({deletedAt: new Date()}));
     const restoreAdvisorAccount = vi.fn().mockResolvedValue(fullAccount({deletedAt: null}));
@@ -901,7 +901,7 @@ describe("SUPER_ADMIN user management", () => {
     const targetEmail = "advisor2@example.com";
     const findUserByEmail = vi.fn().mockResolvedValue({...users.advisor2, email: targetEmail});
     const updateUserEmail = vi.fn();
-    await request(app({findUserByEmail}, undefined, secrets, env, undefined, {deleteUser: vi.fn(), updateUserEmail}))
+    await request(app({findUserByEmail}, undefined, secrets, env, undefined, {deleteUser: vi.fn(), updateUserEmail, revokeRefreshTokens: vi.fn()}))
       .patch(`/api/admin/advisors/${users.advisor.id}/email`).set("authorization", "Bearer super").send({email: targetEmail}).expect(409);
     expect(updateUserEmail).not.toHaveBeenCalled();
   });

@@ -9,6 +9,7 @@
     "dev:api": "tsx watch server.ts",
     "build": "npm run build:web && npm run build:api",
     "build:web": "vite build && node scripts/verify-production-bundle.mjs",
+    "build:marketing": "node marketing/build.mjs",
     "build:api": "tsc -p tsconfig.server.json && node scripts/copy-pdf-fonts.mjs",
     "start": "node dist-server/server.js",
     "lint": "eslint . --max-warnings=0",
