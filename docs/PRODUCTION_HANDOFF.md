@@ -91,11 +91,12 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Domain | `app.syncash.co.il` → `169.58.83.2`, HTTPS via Certbot |
 | Public site | `https://syncash.co.il` (canonical; `www` and HTTP → 301) — LiveDNS A records `syncash.co.il`/`www` → `169.58.83.2` since 2026-09-26; host vhost `/etc/nginx/sites-enabled/syncash.co.il.conf` (= `nginx/syncash.co.il.conf`) proxies to the `frontend` container's second block on `127.0.0.1:3182` and only three public API endpoints to `3181`; certificate `/etc/letsencrypt/live/syncash.co.il/` (apex + www, expires 2026-12-25, renewed by the same `certbot.timer` as the app). CSP `default-src 'self'`, no cookies/third-party requests |
 
-Apex domain warning: `syncash.co.il` and `www.syncash.co.il` still point at a
-different, legacy server (`62.219.78.222`, per `SERVER_AUDIT_SYNCASH.md`,
-2026-07-27). Do not touch that DNS without an explicit instruction — it's
-unrelated to `app.syncash.co.il` except that Brevo's outbound-mail domain
-authentication (DKIM/DMARC/branded subdomain) lives on the apex domain.
+Apex domain: since 2026-09-26 `syncash.co.il` and `www.syncash.co.il` point
+at this server (`169.58.83.2`; previously the LiveDNS parking IP
+`62.219.78.222`). Only those two A records were changed, by the owner, at
+LiveDNS. Brevo's outbound-mail domain authentication (DKIM/DMARC/branded
+subdomain) and the ImprovMX MX records also live on the apex zone — never
+touch any other record there without an explicit instruction.
 
 ### Docker services (6, per `compose.production.yml`)
 
