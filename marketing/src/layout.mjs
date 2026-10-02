@@ -32,7 +32,7 @@ function founderPortrait(founder) {
   return `<div class="founder-photo founder-monogram" role="img" aria-label="${founder.name}"><span>${founder.initials}</span></div>`;
 }
 
-export function foundersSection({heading = "h2"} = {}) {
+export function foundersSection({heading = "h2", story = true} = {}) {
   const H = heading;
   return `<section class="section founders" id="founders" aria-labelledby="founders-title">
   <div class="container">
@@ -48,11 +48,11 @@ export function foundersSection({heading = "h2"} = {}) {
         <p class="founder-bio">${founder.bio}</p>
       </li>`).join("")}
     </ul>
-    <div class="founders-story">
+    ${story ? `<div class="founders-story">
       <p>SynCash נולדה מתוך היכרות עם עולם המשכנתאות ועם צורך שראינו שוב ושוב בשטח: יועץ מקבל תיק שדורש פתרון מחוץ לבנק, אבל הדרך למציאת גוף המימון המתאים ארוכה ומפוזרת.</p>
       <p>רצינו ליצור דרך אחרת. מקום שמחבר בין יועצי משכנתאות לבין עולם המימון החוץ-בנקאי, ומאפשר לתיק להגיע לגופי מימון שעשויים להיות רלוונטיים לבחינתו. <strong>לא כדי להחליף את היועץ. כדי לתת לו יותר אפשרויות.</strong></p>
       <p class="tagline">יוצרים חיבורים. מקדמים עסקאות.</p>
-    </div>
+    </div>` : ""}
   </div>
 </section>`;
 }
