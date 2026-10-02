@@ -1,0 +1,60 @@
+export const MARITAL_STATUSES = ["SINGLE", "MARRIED", "DIVORCED", "WIDOWED", "COMMON_LAW", "SEPARATED", "OTHER"] as const;
+export type MaritalStatus = typeof MARITAL_STATUSES[number];
+export const SELECTABLE_MARITAL_STATUSES = ["SINGLE", "MARRIED", "DIVORCED", "WIDOWED", "COMMON_LAW", "OTHER"] as const;
+
+export const EMPLOYMENT_TYPES = [
+  "SALARIED", "SELF_EMPLOYED", "CONTROLLING_SHAREHOLDER", "RETIRED", "GOVERNMENT_EMPLOYEE",
+  "SECURITY_FORCES", "ALLOWANCE", "UNEMPLOYED", "TORAH_INSTITUTION", "OTHER"
+] as const;
+export type EmploymentType = typeof EMPLOYMENT_TYPES[number];
+export const SELECTABLE_EMPLOYMENT_TYPES = ["SALARIED", "SELF_EMPLOYED", "CONTROLLING_SHAREHOLDER", "RETIRED", "ALLOWANCE", "UNEMPLOYED", "TORAH_INSTITUTION", "OTHER"] as const;
+
+export const ADDITIONAL_INCOME_TYPES = [
+  "SALARIED", "SECOND_BUSINESS", "RENTAL_INCOME", "ALLOWANCE", "ALIMONY", "PENSION", "REGULAR_OVERTIME",
+  "REGULAR_BONUSES", "FOREIGN_INCOME", "INVESTMENT_INCOME", "SMALL_SELF_EMPLOYMENT", "FAMILY_SUPPORT", "OTHER"
+] as const;
+export type AdditionalIncomeType = typeof ADDITIONAL_INCOME_TYPES[number];
+// הוסרו משליטה בתיקים חדשים (נשארים תקפים בתיקים קיימים בלבד): REGULAR_OVERTIME,
+// REGULAR_BONUSES, SMALL_SELF_EMPLOYMENT, FAMILY_SUPPORT.
+export const SELECTABLE_ADDITIONAL_INCOME_TYPES = [
+  "SALARIED", "SECOND_BUSINESS", "RENTAL_INCOME", "ALLOWANCE", "ALIMONY", "PENSION",
+  "FOREIGN_INCOME", "INVESTMENT_INCOME", "OTHER"
+] as const;
+
+export const DEAL_TYPES = [
+  "PURCHASE_FROM_CONTRACTOR", "BUYER_PRICE_PROGRAM", "SECOND_HAND_PURCHASE", "RENOVATION",
+  "DEBT_CONSOLIDATION", "BUSINESS_PURPOSE", "ANY_PURPOSE", "SELF_CONSTRUCTION", "FAMILY_TRANSACTION",
+  "KIBBUTZ_PURCHASE_OR_CONSTRUCTION", "RECEIVER_PURCHASE", "REVERSE_MORTGAGE", "TAMA", "MORTGAGE_REFINANCE",
+  "BRIDGE_FINANCING", "OTHER"
+] as const;
+export type DealType = typeof DEAL_TYPES[number];
+
+export const HOUSING_STATUSES = ["OWNED", "RENTED", "OTHER"] as const;
+export type HousingStatus = typeof HOUSING_STATUSES[number];
+
+export const LIABILITY_TYPES = ["LOAN", "MORTGAGE", "ALIMONY", "RENT", "OTHER_FINANCIAL_ENTITY"] as const;
+export type LiabilityType = typeof LIABILITY_TYPES[number];
+
+export const REQUIRED_BORROWER_DOCUMENT_TYPES = ["ID_FRONT", "ID_BACK", "ID_APPENDIX", "CREDIT_DATA_REPORT"] as const;
+export const REQUIRED_CLIENT_DOCUMENT_TYPES = ["POWER_OF_ATTORNEY"] as const;
+// אופציונלי: ניתן להעלות, לא נדרש לצורך שלמות התיק או שליחה לחברות מימון.
+export const OPTIONAL_CLIENT_DOCUMENT_TYPES = ["PROPERTY_RIGHTS"] as const;
+export const DOCUMENT_TYPES = [...REQUIRED_BORROWER_DOCUMENT_TYPES, ...REQUIRED_CLIENT_DOCUMENT_TYPES, ...OPTIONAL_CLIENT_DOCUMENT_TYPES, "OTHER"] as const;
+export type DocumentType = typeof DOCUMENT_TYPES[number];
+
+export const PROPERTY_TYPES = [
+  "APARTMENT", "HOUSE", "SEMI_DETACHED", "GARDEN_APARTMENT", "PENTHOUSE", "LAND", "COMMERCIAL",
+  "FARM", "ESTATE", "KIBBUTZ", "OTHER"
+] as const;
+export type PropertyType = typeof PROPERTY_TYPES[number];
+
+export const PROPERTY_REGIONS = ["CENTER", "NORTH", "SOUTH", "JERUSALEM"] as const;
+export type PropertyRegion = typeof PROPERTY_REGIONS[number];
+
+export const BORROWER_RELATIONSHIPS = ["MARRIED", "COMMON_LAW", "FAMILY", "PARTNERS", "OTHER"] as const;
+export type BorrowerRelationship = typeof BORROWER_RELATIONSHIPS[number];
+
+export const MAX_BORROWERS = 5;
+
+export const currentIsraelYear = (): number =>
+  Number(new Intl.DateTimeFormat("en-CA", {timeZone: "Asia/Jerusalem", year: "numeric"}).format(new Date()));

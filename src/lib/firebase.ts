@@ -1,7 +1,10 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { connectAuthEmulator, getAuth } from 'firebase/auth';
+import {requireFrontendConfig} from '../config/frontend';
 
-const app = initializeApp(firebaseConfig);
+const config = requireFrontendConfig();
+const app = initializeApp(config.firebase);
 export const auth = getAuth(app);
-export const googleAuthProvider = new GoogleAuthProvider();
+if (import.meta.env.DEV && config.useFirebaseEmulator && config.firebaseAuthEmulatorUrl) {
+  connectAuthEmulator(auth, config.firebaseAuthEmulatorUrl, {disableWarnings: true});
+}
