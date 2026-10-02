@@ -1,7 +1,7 @@
 // שרת פיתוח/QA לאתר הציבורי: מגיש את marketing/dist כמו ה-nginx בייצור (pretty URLs, 404 אמיתי)
 // ומעביר את שלושת ה-endpoints הציבוריים ל-API המקומי. לא לשימוש בייצור.
 // הרצה: node marketing/serve-dev.mjs [port=4180] [api=http://localhost:3000]
-/* global console, process */
+/* global console, process, URL */
 import {createServer, request as httpRequest} from "node:http";
 import {readFile, stat} from "node:fs/promises";
 import {extname, join} from "node:path";

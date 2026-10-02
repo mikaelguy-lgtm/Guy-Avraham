@@ -75,7 +75,7 @@ await writeFile(join(dist, "site.webmanifest"), JSON.stringify({
 }, null, 2));
 
 // שכבת הגנה: אין סקריפטים/פיקסלים של צד שלישי, אין כתובות פיתוח, אין ניסוח אסור
-const forbidden = ["googletagmanager", "google-analytics", "gtag(", "facebook.net", "fbq(", "hotjar", "clarity.ms", "localhost", "127.0.0.1", "כל חברות המימון בישראל"];
+const forbidden = ["googletagmanager", "google-analytics", "gtag(", "facebook.net", "fbq(", "hotjar", "clarity.ms", "localhost", "127.0.0.1", "כל חברות המימון בישראל", "TopGrace", "TOPGRACE", "topgrace", "מובטח", "מתחייבים", "תשובה סופית תוך", "אישור תוך 24", "נשואה", "אם לחמישה", "אם לשלושה"];
 for (const file of await readdir(dist, {recursive: true})) {
   if (!/\.(html|js|css|xml|txt)$/.test(file)) continue;
   const content = await readFile(join(dist, file), "utf8");
