@@ -82,7 +82,7 @@ no demo fallback — confirmed in code, not just in `ARCHITECTURE.md`.
 | Deploy/runtime user | `syncash` (never `root` for normal operations) |
 | App root | `/opt/syncash` |
 | Releases | `/opt/syncash/releases/<git-sha>` |
-| Active release | `/opt/syncash/current` (symlink) → `3abc16c807bb9b2c361846db3ad7cc90353889f5` |
+| Active release | `/opt/syncash/current` (symlink) → `1ce1454f99bb2f382c328c00710c3662dd695f33` |
 | Env file | `/opt/syncash/shared/env/.env.production` (`0600`, owner `syncash`) |
 | Google ADC credential | `/opt/syncash/shared/secrets/google-application-credentials.json` (`0600`) |
 | Backups | `/opt/syncash/backups` |
@@ -163,7 +163,7 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 
 | Check | Result |
 | --- | --- |
-| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/3abc16c807bb9b2c361846db3ad7cc90353889f5` (2026-10-02, content: founders section with photo slots at `marketing/src/static/founders/`, owner story copy, goal-framed 24-hour response wording, build guard for forbidden claims; no migration; live-verified 13 pages × 4 viewports, 0 cookies/third-party, 6/6). Previous `dd04b50…` (2026-09-27, homepage visual polish: hero CTA contrast fix, lighter header with 4 primary items, product-led demo, logo +15%; no migration; verified live 13 pages × 4 viewports, 0 CSP/console errors, 0 cookies/third-party, 6/6 healthy). `d875d23…` and `2f0a7b5…` remain on disk for rollback |
+| Active release (`readlink -f /opt/syncash/current`) | `/opt/syncash/releases/1ce1454f99bb2f382c328c00710c3662dd695f33` (2026-10-02, founders portrait for Ariela Avraham from her public Facebook profile picture, 640px WebP+JPEG; Irit still shows the monogram placeholder until a photo is supplied. Earlier same-day `3abc16c`: content: founders section with photo slots at `marketing/src/static/founders/`, owner story copy, goal-framed 24-hour response wording, build guard for forbidden claims; no migration; live-verified 13 pages × 4 viewports, 0 cookies/third-party, 6/6). Previous `dd04b50…` (2026-09-27, homepage visual polish: hero CTA contrast fix, lighter header with 4 primary items, product-led demo, logo +15%; no migration; verified live 13 pages × 4 viewports, 0 CSP/console errors, 0 cookies/third-party, 6/6 healthy). `d875d23…` and `2f0a7b5…` remain on disk for rollback |
 | `d875d23` scope / checks | No migration. Removes inline `style` attributes from the marketing templates (they were blocked by the live CSP `style-src 'self'`), maps `.webmanifest` to `application/manifest+json`, syncs the installed host vhost into `nginx/syncash.co.il.conf`. Verified live: 13 public pages × 4 viewports, 0 CSP console errors, 0 cookies / storage / third-party requests, `www`/HTTP → 301 `https://syncash.co.il`, HSTS + security headers, real 404, favicon 200, `app.syncash.co.il` unchanged (health 200, `X-Robots-Tag: noindex`, cert to 2026-10-26), 6/6 healthy, `certbot renew --dry-run` succeeded for both certificates |
 | Public-site data caveat | `/legal/privacy/` and `/legal/dpa/` render the "document not available" fallback because only TERMS is published in Production's Legal Center; publishing them from `/admin/settings/legal` fixes it without a deploy |
 | Containers (`docker ps`) | All 6 healthy: `frontend`, `worker`, `api` (image tag `2f0a7b5...`), `postgres:17-alpine`, `redis:7.4-alpine`, `minio` |
@@ -212,7 +212,7 @@ rather than duplicated here.
 
 ## 5. Git / release state — in sync as of 2026-09-26
 
-Production active release: `3abc16c807bb9b2c361846db3ad7cc90353889f5` (2026-10-02, founders section + owner story copy + 24-hour wording, no migration; `7dd66e5` and `dd04b50` remain on disk).
+Production active release: `1ce1454f99bb2f382c328c00710c3662dd695f33` (2026-10-02, Ariela Avraham portrait added to the founders section; no migration). `3abc16c`, `7dd66e5` and `dd04b50` remain on disk.
 Local HEAD and `origin/codex-syncash-production-rebuild`: that SHA plus the
 docs-only commit recording this deployment — confirmed a descendant of the
 prior active release via `git merge-base --is-ancestor` before deploying.
