@@ -36,10 +36,18 @@ require_environment_names \
   VITE_EMAIL_DELIVERY_ENABLED VITE_PUBLIC_REGISTRATION_ENABLED VITE_EXTERNAL_PORTALS_ENABLED VITE_SUPER_ADMIN_ONLY_MODE \
   BACKUP_ENCRYPTION_PASSPHRASE
 
-if [[ "$SECRET_PROVIDER" != "google" ]]; then
-  printf 'Production requires the Google Secret Manager provider.\n' >&2
-  exit 1
-fi
+# סודות בייצור: Google Secret Manager, או משתני סביבה בקובץ ה-env (600, מחוץ לריפו).
+# local-encrypted אסור בייצור (נאכף גם ב-src/config/env.ts).
+case "$SECRET_PROVIDER" in
+  google) ;;
+  environment)
+    require_environment_names FIELD_ENCRYPTION_KEY FIREBASE_PRIVATE_KEY
+    ;;
+  *)
+    printf 'Production requires SECRET_PROVIDER=google or SECRET_PROVIDER=environment.\n' >&2
+    exit 1
+    ;;
+esac
 if [[ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" || "$(stat -c '%a' "$GOOGLE_APPLICATION_CREDENTIALS")" != "600" ]]; then
   printf 'Google application credentials must exist with mode 600.\n' >&2
   exit 1
