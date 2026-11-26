@@ -16,19 +16,33 @@ Last updated: 2026-11-26. **No passwords, private keys or tokens belong in this 
 
 ## How to connect
 
-SSH key only. The key pair lives on Guy's machine:
+SSH key only, as the deploy user **`syncash`** (member of `docker`, passwordless `sudo`).
+The key pair lives on Guy's machine:
 
 - Private key: `C:\Users\guyav\.ssh\syncash_prod` (never copy, never commit)
 - Public key: `C:\Users\guyav\.ssh\syncash_prod.pub` (`ssh-ed25519 … syncash-prod-20260829`)
-- Alias in `C:\Users\guyav\.ssh\config`: `Host syncash-prod`
+- Alias in `C:\Users\guyav\.ssh\config`: `Host syncash-prod` → `syncash@77.216.129.137`
 
 ```powershell
-ssh syncash-prod
+ssh syncash-prod            # interactive shell
+ssh syncash-prod "docker ps" # one command
 ```
 
+SSH hardening (`/etc/ssh/sshd_config.d/00-syncash-hardening.conf`, verified 2026-11-26):
+`PasswordAuthentication no`, `PermitRootLogin no`, `AllowUsers syncash`. Root and password logins
+over SSH are refused. Use `sudo` for root work.
+
 The **root password** chosen at order time is kept by Guy only (password manager). It is not
-stored anywhere in the repo or in chat, and password login over SSH will be disabled during
-hardening; the password then works only on the Contabo web console (VNC) for emergencies.
+stored anywhere in the repo or in chat; it now works only on the Contabo web console (VNC) for
+emergencies.
+
+## Base setup (2026-11-26)
+
+- Timezone `Asia/Jerusalem`; kernel `6.8.0-151`; unattended security upgrades on.
+- Firewall `ufw`: only 22, 80, 443 inbound. fail2ban active. 4 GB swap.
+- Docker 29 + Compose v2, nginx 1.24, certbot 2.9.
+- App root `/opt/syncash` (`releases/`, `shared/env`, `shared/secrets`, `shared/logs`,
+  `shared/locks`, `backups/`), owned by `syncash`; ACME webroot `/var/www/certbot`.
 
 Emergency access if the SSH key is lost: Contabo Control Panel → VPS `vmi3791333` → VNC console
 (root password), or Contabo "Reset password" / "Reinstall" (reinstall wipes the server).
