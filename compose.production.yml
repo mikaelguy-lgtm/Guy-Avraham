@@ -75,7 +75,9 @@ services:
       - internal
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    # MinIO הפסיקה לפרסם images ציבוריים (quay.io / Docker Hub, 2026). Chainguard מפרסמת את אותו שרת;
+    # נעול ל-digest כדי שכל פריסה תקבל בדיוק אותה גרסה. ה-image רץ כ-uid 65532 ו-/data בו פתוח לכתיבה.
+    image: cgr.dev/chainguard/minio@sha256:b9b1cce81a4a6cc9bf250e68d621cc0b9fb8ed15aefe18fcd1840525eab6a81a
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -84,7 +86,8 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      # ב-image אין curl; mc (כלול ב-image) בודק את ה-health endpoint. timeout כי mc ready ממתין בלי סוף כשהשרת לא עונה
+      test: ["CMD", "timeout", "4", "mc", "ready", "local"]
       interval: 10s
       timeout: 5s
       retries: 12

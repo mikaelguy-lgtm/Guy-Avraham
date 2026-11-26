@@ -65,9 +65,10 @@ if [[ -f "$work/unpacked/postgres.dump" ]]; then
 fi
 
 if [[ -d "$work/unpacked/minio" && -n "$(find "$work/unpacked/minio" -mindepth 1 -print -quit)" ]]; then
-  docker run -d --name "$minio_container" --network "$network" -e "MINIO_ROOT_USER=restoretest" -e "MINIO_ROOT_PASSWORD=$test_password" -v "$minio_volume:/data" quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data >/dev/null
+  docker run -d --name "$minio_container" --network "$network" -e "MINIO_ROOT_USER=restoretest" -e "MINIO_ROOT_PASSWORD=$test_password" -v "$minio_volume:/data" cgr.dev/chainguard/minio@sha256:b9b1cce81a4a6cc9bf250e68d621cc0b9fb8ed15aefe18fcd1840525eab6a81a server /data >/dev/null
   sleep 5
-  docker run --rm --entrypoint /bin/sh --network "$network" -e "MC_HOST_restore=http://restoretest:$test_password@$minio_container:9000" -v "$work/unpacked/minio:/backup:ro" "$MINIO_BACKUP_IMAGE" -c 'mc mb --ignore-existing restore/syncash-documents >/dev/null && mc mirror /backup restore/syncash-documents >/dev/null && mc ls restore/syncash-documents >/dev/null'
+  # ל-image של mc (Chainguard) אין shell; image השרת כולל גם mc וגם bash
+  docker run --rm --entrypoint /bin/sh --network "$network" -e "MC_HOST_restore=http://restoretest:$test_password@$minio_container:9000" -v "$work/unpacked/minio:/backup:ro" cgr.dev/chainguard/minio@sha256:b9b1cce81a4a6cc9bf250e68d621cc0b9fb8ed15aefe18fcd1840525eab6a81a -c 'mc mb --ignore-existing restore/syncash-documents >/dev/null && mc mirror /backup restore/syncash-documents >/dev/null && mc ls restore/syncash-documents >/dev/null'
 fi
 
 printf 'Isolated SynCash restore test passed.\n'
