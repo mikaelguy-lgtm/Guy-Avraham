@@ -1,7 +1,7 @@
 // QA אוטומטי לאתר הציבורי: צילומי מסך בכל הרזולוציות הנדרשות, בדיקת SEO בסיסית,
 // וביקורת runtime: cookies / localStorage / sessionStorage / IndexedDB / בקשות לצד שלישי / שגיאות console.
 // הרצה: node scripts/qa-marketing-site.mjs <baseUrl> <outDir>
-/* global console, process */
+
 import {mkdir, writeFile} from "node:fs/promises";
 import {join} from "node:path";
 import {chromium} from "@playwright/test";

@@ -66,8 +66,10 @@ function makeReminderTestPool() {
 
   return {
     query,
+    // Reminder claim + outbox insert now run in one transaction on a pooled
+    // connection; route its statements to the same in-memory tables.
     connect: vi.fn().mockResolvedValue({
-      query: vi.fn(async (sql: string) => ({rows: sql.includes("pg_try_advisory_lock") ? [{locked: true}] : []})),
+      query: vi.fn(async (sql: string, params: unknown[] = []) => sql.includes("pg_try_advisory_lock") ? {rows: [{locked: true}]} : query(sql, params)),
       release: vi.fn()
     }),
     submissions, invitations, contacts, outbox

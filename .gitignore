@@ -24,3 +24,9 @@ credentials.env
 .syncash/
 SYNCASH_PASSWORD
 marketing/dist/
+
+# Google/Firebase service-account keys — never commit (defensive backstop).
+*-service-account*.json
+*serviceAccount*.json
+syncash-production-*.json
+.playwright-cli/

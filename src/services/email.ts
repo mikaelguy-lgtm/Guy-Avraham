@@ -30,7 +30,12 @@ export function resolveSmtpTransportSettings(env: AppEnv, settings: SmtpSettings
     tls: mode === "NONE" ? undefined : {minVersion: "TLSv1.2" as const},
     auth: user ? {user, pass: password!} : undefined,
     disableFileAccess: true,
-    disableUrlAccess: true
+    disableUrlAccess: true,
+    // ברירת המחדל של nodemailer היא עד 10 דקות לשקע תקוע — מספיק כדי ש-SIGTERM של Docker
+    // יהרוג את ה-worker באמצע שליחה. מגבלות קצרות הופכות תקלה אצל ספק ה-SMTP לכשל מהיר וניתן לניסיון חוזר.
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 30_000
   };
 }
 

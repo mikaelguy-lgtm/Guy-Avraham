@@ -98,6 +98,27 @@ describe("CaseRedactionService", () => {
     expect(residenceCityFromAddress("רחוב הרצל 1, תל אביב 61000")).toBe("");
   });
 
+  it("sanitizes every free-text field that reaches the initial view, including loan-purpose 'other', job title and property city", () => {
+    const unsafe = structuredClone(fullSnapshot);
+    unsafe.loanRequest = {...unsafe.loanRequest, purpose: "OTHER", purposeOther: "רכישה מדנה לוי, טלפון 050 123 4567"};
+    unsafe.borrowers[0].employment.jobTitle = "מנהלת אצל חברה סודית בע״מ";
+    unsafe.property.city = "רחוב הנכס 9, תל אביב";
+    unsafe.dealDetails = "ת״ז 12345678-9, ת״ז 23456789, נייד 972-50-765-4321, אתר www.private-site.co.il, ייעוץ פרטי";
+    const {maskedSnapshot} = new CaseRedactionService().redact(unsafe);
+    const serialized = JSON.stringify(maskedSnapshot);
+    for (const prohibited of ["דנה", "לוי", "050 123 4567", "חברה סודית", "רחוב הנכס", "12345678-9", "23456789", "765-4321", "www.private-site", "ייעוץ פרטי"]) expect(serialized).not.toContain(prohibited);
+    expect(maskedSnapshot.loanRequest.purpose).toBe("OTHER");
+    expect(maskedSnapshot.loanRequest.purposeOther).toContain("רכישה מ");
+    expect(maskedSnapshot.borrowers[0].employment.jobTitle).toContain("מנהלת");
+  });
+
+  it("does not mask ordinary amounts written with thousands separators", () => {
+    const withAmounts = structuredClone(fullSnapshot);
+    withAmounts.dealDetails = "מחיר העסקה 2,450,000 ₪, הון עצמי 1.250.000, משכורת 18500";
+    const {maskedSnapshot} = new CaseRedactionService().redact(withAmounts);
+    expect(maskedSnapshot.dealDetails).toBe("מחיר העסקה 2,450,000 ₪, הון עצמי 1.250.000, משכורת 18500");
+  });
+
   it("never self-redacts the residence city it intentionally discloses, even though it equals the borrower's own city field", () => {
     const withCity = structuredClone(fullSnapshot);
     withCity.borrowers[0].city = "תל אביב"; withCity.borrowers[0].residenceCity = "תל אביב";

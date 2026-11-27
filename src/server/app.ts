@@ -16,7 +16,6 @@ import { DOCUMENT_TYPES, REQUIRED_BORROWER_DOCUMENT_TYPES } from "../domain/clie
 import { createAuthMiddleware, type TokenVerifier } from "../middleware/auth.js";
 import { isSessionFresh } from "../domain/idleSession.js";
 import { applyPublicSiteSettingsPatch, PUBLIC_SITE_CATEGORY, toPublicSitePayload } from "../domain/publicSite.js";
-import { createAnonymousPdf } from "../services/pdf.js";
 import { rateLimit, type RateLimitStore } from "../services/rateLimiter.js";
 import { buildAnonymousSubmissionSnapshot } from "../services/snapshot.js";
 import type {
@@ -24,7 +23,7 @@ import type {
   ClientPersonalMutationRecord, ClientPropertyMutationRecord, EmailConfigurationRecord, LiabilityMutationRecord
 } from "../services/store.js";
 import type { StorageService } from "../services/storage.js";
-import { sanitizeEmailError, sanitizeSmtpFailure, type EmailService } from "../services/email.js";
+import { sanitizeSmtpFailure, type EmailService } from "../services/email.js";
 import { ADVISOR_EMAIL_VERIFICATION_TEMPLATE, EmailVerificationDeliveryError, type EmailVerificationService } from "../services/emailVerification.js";
 import { PasswordResetDeliveryError, type PasswordResetService } from "../services/passwordReset.js";
 import { LEGAL_DOCUMENT_TYPES, legalDocumentDraftSchema, legalDocumentTypeParamSchema } from "../domain/legalDocuments.js";
@@ -479,6 +478,15 @@ function cookieValue(request: Request, name: string): string {
   return "";
 }
 
+// קוד שגיאה של Postgres/מערכת (למשל 23503), גם כש-Drizzle עוטף את השגיאה המקורית ב-cause.
+function postgresErrorCode(error: unknown): string | undefined {
+  for (let current: unknown = error, depth = 0; current && typeof current === "object" && depth < 3; current = (current as {cause?: unknown}).cause, depth += 1) {
+    const code = (current as {code?: unknown}).code;
+    if (typeof code === "string" && code.length <= 32) return code;
+  }
+  return undefined;
+}
+
 function valuesEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left); const rightBuffer = Buffer.from(right);
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
@@ -551,6 +559,11 @@ export function createApp(services: AppServices) {
   const upload = multer({storage: multer.memoryStorage(), limits: {fileSize: services.env.MAX_UPLOAD_SIZE_MB * 1024 * 1024, files: 1}});
 
   app.disable("x-powered-by");
+  // ה-API נגיש רק דרך ה-nginx של המארח (127.0.0.1:3181), שמוסיף את כתובת הלקוח האמיתית
+  // בסוף X-Forwarded-For. אמון בדיוק ב-hop אחד = הכתובת הימנית ביותר, שאי אפשר לזייף מצד
+  // הלקוח. בלי זה request.ip הוא כתובת ה-gateway של Docker לכולם, וכל rate limit אנונימי
+  // (התחברות, שכחתי סיסמה, OTP של גופי מימון) הופך לדלי אחד משותף לכל האינטרנט.
+  app.set("trust proxy", 1);
   app.use(helmet());
   app.use(cors({
     origin(origin, callback) {
@@ -560,7 +573,9 @@ export function createApp(services: AppServices) {
     credentials: true
   }));
   app.use((request, response, next) => {
-    request.requestId = request.header("x-request-id")?.slice(0, 64) || randomUUID();
+    // מזהה בקשה מהלקוח מתקבל רק בפורמט בטוח, כדי שלא יוכל לזייף/להזריק ערכים ללוגים ולאודיט.
+    const suppliedRequestId = request.header("x-request-id");
+    request.requestId = suppliedRequestId && /^[A-Za-z0-9-]{8,64}$/.test(suppliedRequestId) ? suppliedRequestId : randomUUID();
     response.setHeader("x-request-id", request.requestId);
     next();
   });
@@ -857,7 +872,7 @@ export function createApp(services: AppServices) {
     response.json({missingDocuments: await services.store.listMissingRequiredDocuments(request.authorizedClientId!)});
   }));
 
-  app.post("/api/clients/:clientId/documents", ...authenticated, auth.requireAdvisorClientAccess, upload.single("file"), asyncRoute(async (request, response) => {
+  app.post("/api/clients/:clientId/documents", ...authenticated, auth.requireAdvisorClientAccess, rateLimit(services.limiter, "document-upload", 30, 60), upload.single("file"), asyncRoute(async (request, response) => {
     if (!request.file) { response.status(400).json({error: "FILE_REQUIRED"}); return; }
     const detectedMime = detectMime(request.file);
     const allowed = ["application/pdf", "image/png", "image/jpeg"];
@@ -894,7 +909,8 @@ export function createApp(services: AppServices) {
   }));
 
   app.get("/api/documents/:documentId/download", ...authenticated, rateLimit(services.limiter, "document-download", 60, 60), asyncRoute(async (request, response) => {
-    const document = await services.store.getDocument(Number(request.params.documentId));
+    const documentId = Number(request.params.documentId);
+    const document = Number.isInteger(documentId) && documentId > 0 ? await services.store.getDocument(documentId) : null;
     if (!document || document.deletedAt) { response.status(404).json({error: "DOCUMENT_NOT_FOUND"}); return; }
     const advisorId = await services.store.getClientAdvisorId(document.clientId);
     const authorized = request.user!.role === "SUPER_ADMIN" || (request.user!.role === "ADVISOR" && request.user!.advisorId === advisorId);
@@ -905,10 +921,14 @@ export function createApp(services: AppServices) {
   }));
 
   app.delete("/api/documents/:documentId", ...authenticated, asyncRoute(async (request, response) => {
-    const document = await services.store.getDocument(Number(request.params.documentId));
+    const documentId = Number(request.params.documentId);
+    const document = Number.isInteger(documentId) && documentId > 0 ? await services.store.getDocument(documentId) : null;
     if (!document) { response.status(404).json({error: "DOCUMENT_NOT_FOUND"}); return; }
     const advisorId = await services.store.getClientAdvisorId(document.clientId);
-    if (request.user!.role !== "SUPER_ADMIN" && request.user!.advisorId !== advisorId) { response.status(403).json({error: "FORBIDDEN"}); return; }
+    // אותה בדיקה כמו בהורדה: רק יועץ שבבעלותו התיק (advisorId לא null), או SUPER_ADMIN.
+    // בלי ההשוואה המפורשת, משתמש ללא advisorId היה "תואם" ללקוח מחוק (null === null).
+    const authorized = request.user!.role === "SUPER_ADMIN" || (request.user!.role === "ADVISOR" && advisorId !== null && request.user!.advisorId === advisorId);
+    if (!authorized) { response.status(403).json({error: "FORBIDDEN"}); return; }
     await services.store.softDeleteDocument(document.id);
     await services.store.addAudit(request.user!.id, "DOCUMENT_DELETED", "document", document.id, {clientId: document.clientId}, request.requestId);
     response.status(204).end();
@@ -922,77 +942,15 @@ export function createApp(services: AppServices) {
     response.json(await services.store.listClientSubmissions(request.authorizedClientId!));
   }));
 
-  app.post("/api/clients/:clientId/submissions", ...authenticated, auth.requireAdvisorClientAccess, requireEmailDelivery, asyncRoute(async (request, response) => {
-    const input = z.object({lenderIds: z.array(z.number().int().positive()).min(1).max(20)}).parse(request.body);
-    if (await services.store.hasIncompleteLegacyLiabilities(request.authorizedClientId!)) {
-      response.status(422).json({
-        error: "INCOMPLETE_LEGACY_LIABILITIES",
-        code: "INCOMPLETE_LEGACY_LIABILITIES",
-        message: "נדרש להשלים את פרטי ההתחייבויות שהועברו מהמערכת הישנה לפני שליחת התיק.",
-        requestId: request.requestId
-      });
-      return;
-    }
-    const missingDocuments = await services.store.listMissingRequiredDocuments(request.authorizedClientId!);
-    if (missingDocuments.length > 0) {
-      response.status(422).json({error: "MISSING_REQUIRED_DOCUMENTS", code: "MISSING_REQUIRED_DOCUMENTS", missingDocuments, requestId: request.requestId});
-      return;
-    }
-    const available = new Map((await services.store.listLenders()).map((lender) => [lender.id, lender]));
-    const source = await services.store.getSnapshotSource(request.authorizedClientId!);
-    if (!source) { response.status(409).json({error: "CLIENT_FINANCIAL_DATA_INCOMPLETE"}); return; }
-    const snapshot = buildAnonymousSubmissionSnapshot(snapshotSourceWithAges(source, services.encryption));
-    const pdf = await createAnonymousPdf(snapshot);
-    const results: Array<{lenderId: number; status: string}> = [];
-    for (const lenderId of input.lenderIds) {
-      const lender = available.get(lenderId);
-      if (!lender) { results.push({lenderId, status: "INVALID_LENDER"}); continue; }
-      const token = randomBytes(32).toString("base64url");
-      const pdfStorageKey = `submissions/${randomUUID()}/anonymous.pdf`;
-      await services.storage.put(pdfStorageKey, pdf, "application/pdf");
-      const submission = await services.store.createSubmission({
-        clientId: request.authorizedClientId!, lenderId, createdByUserId: request.user!.id, snapshot, pdfStorageKey,
-        tokenHash: hashToken(token), expiresAt: new Date(Date.now() + services.env.LENDER_INVITE_EXPIRY_HOURS * 3_600_000)
-      });
-      try {
-        const link = `${services.env.APP_URL}/lender/invite/${encodeURIComponent(token)}`;
-        const email = await services.email.send(lender.contactEmail, `SynCash financing case ${snapshot.publicCaseNumber}`, `<p>A new anonymous financing case is available.</p><p><a href="${link}">Open secure invitation</a></p>`);
-        await services.store.markSubmissionSent(submission.id, email.messageId, lender.contactEmail);
-        await services.store.addAudit(request.user!.id, "SUBMISSION_EMAIL_SENT", "submission", submission.id, {lenderId}, request.requestId);
-        results.push({lenderId, status: "SENT"});
-      } catch {
-        await services.store.markSubmissionDeliveryFailed(submission.id, lender.contactEmail, sanitizeEmailError());
-        await services.store.addAudit(request.user!.id, "SUBMISSION_DELIVERY_FAILED", "submission", submission.id, {lenderId}, request.requestId);
-        results.push({lenderId, status: "DELIVERY_FAILED"});
-      }
-    }
-    response.status(201).json({results});
-  }));
-
-  app.post("/api/submissions/:id/retry-delivery", ...authenticated, auth.requireRole("ADVISOR"), requireEmailDelivery, rateLimit(services.limiter, "submission-retry", 10, 60), asyncRoute(async (request, response) => {
-    const advisorId = request.user!.advisorId;
-    if (!advisorId) { response.status(403).json({error: "ADVISOR_PROFILE_REQUIRED"}); return; }
-    const token = randomBytes(32).toString("base64url");
-    const submissionId = Number(request.params.id);
-    const delivery = await services.store.prepareSubmissionRetry(
-      submissionId,
-      advisorId,
-      hashToken(token),
-      new Date(Date.now() + services.env.LENDER_INVITE_EXPIRY_HOURS * 3_600_000)
-    );
-    if (!delivery) { response.status(404).json({error: "SUBMISSION_NOT_FOUND"}); return; }
-    try {
-      const link = `${services.env.APP_URL}/lender/invite/${encodeURIComponent(token)}`;
-      const email = await services.email.send(delivery.recipient, `SynCash financing case ${delivery.publicCaseNumber}`, `<p>The financing invitation was reissued.</p><p><a href="${link}">Open secure invitation</a></p>`);
-      await services.store.markSubmissionSent(submissionId, email.messageId, delivery.recipient);
-      await services.store.addAudit(request.user!.id, "SUBMISSION_EMAIL_SENT", "submission", submissionId, {retry: true}, request.requestId);
-      response.json({status: "SENT"});
-    } catch {
-      await services.store.markSubmissionDeliveryFailed(submissionId, delivery.recipient, sanitizeEmailError());
-      await services.store.addAudit(request.user!.id, "SUBMISSION_DELIVERY_FAILED", "submission", submissionId, {retry: true}, request.requestId);
-      response.status(502).json({status: "DELIVERY_FAILED"});
-    }
-  }));
+  // מסלול ההגשה הישן (היועץ בוחר גופי מימון, ללא case version בלתי-ניתן-לשינוי, מייל באנגלית
+  // ללא idempotency) הוחלף במלואו ב-/delivery/preview + /delivery/send. הממשק כבר לא קורא לו,
+  // אבל ה-API עדיין קיבל אותו — כלומר יועץ יכול היה לעקוף את כלל "השרת קובע את גופי המימון"
+  // ואת ה-snapshot הקפוא. נסגר לחלוטין; היסטוריה קיימת (GET) נשארת קריאה.
+  const legacySubmissionFlowRemoved = (request: Request, response: Response): void => {
+    response.status(410).json({error: "LEGACY_SUBMISSION_FLOW_REMOVED", message: "מסלול שליחה זה הוחלף. יש לשלוח את התיק דרך מסך \"שליחה לגופי מימון\".", requestId: request.requestId});
+  };
+  app.post("/api/clients/:clientId/submissions", ...authenticated, auth.requireAdvisorClientAccess, legacySubmissionFlowRemoved);
+  app.post("/api/submissions/:id/retry-delivery", ...authenticated, auth.requireRole("ADVISOR"), legacySubmissionFlowRemoved);
 
   app.use("/api/lender", requireExternalPortals);
   app.post("/api/lender/invites/validate", rateLimit(services.limiter, "invite-validation", 20, 60), asyncRoute(async (request, response) => {
@@ -1575,7 +1533,7 @@ export function createApp(services: AppServices) {
   }));
 
   app.get("/api/admin/email-logs", ...authenticated, auth.requireAdmin, asyncRoute(async (request, response) => {
-    const logs = await services.store.listRecentEmailLogs(Number(request.query.limit) || 200);
+    const logs = await services.store.listRecentEmailLogs(Math.min(500, Math.max(1, Number(request.query.limit) || 200)));
     response.json(logs.map(({recipient, ...entry}) => ({...entry, recipientMasked: maskEmailAddress(recipient)})));
   }));
   app.patch("/api/notifications/read-all", ...authenticated, asyncRoute(async (request, response) => {
@@ -1788,7 +1746,27 @@ export function createApp(services: AppServices) {
       response.status(error.status).json({error: error.code, code: error.code, message: error.publicMessage, requestId: request.requestId, ...(error.details ?? {})});
       return;
     }
-    console.error("Request failed", {requestId: request.requestId, errorCode: "UNHANDLED_REQUEST_ERROR"});
+    // שגיאות לקוח של Express/body-parser (JSON פגום, גוף גדול מדי) נושאות status 4xx — מחזירים
+    // אותו במקום 500 מטעה. ל-CORS שנדחה מחזירים 403.
+    const status = typeof error === "object" && error && "status" in error ? Number((error as {status: unknown}).status) : NaN;
+    if (Number.isInteger(status) && status >= 400 && status < 500) {
+      response.status(status).json({error: status === 413 ? "PAYLOAD_TOO_LARGE" : "BAD_REQUEST", requestId: request.requestId});
+      return;
+    }
+    // הפרת foreign key (למשל הסרת לווה שיש לו מסמכים או מסמך בגרסה שכבר נשלחה) — זו לא תקלת
+    // שרת אלא פעולה שאינה אפשרית; מחזירים הסבר ברור במקום 500.
+    if (postgresErrorCode(error) === "23503") {
+      response.status(409).json({error: "RELATED_RECORDS_EXIST", message: "לא ניתן להסיר את הפריט כי קיימים מסמכים או הגשות שקשורים אליו. יש להסיר תחילה את המסמכים של הלווה.", requestId: request.requestId});
+      return;
+    }
+    if (error instanceof Error && error.message === "Origin not allowed") {
+      response.status(403).json({error: "ORIGIN_NOT_ALLOWED", requestId: request.requestId});
+      return;
+    }
+    // מספיק מידע לאבחון (שם מחלקה, קוד Postgres/מערכת, נתיב התבנית) בלי error.message,
+    // שעלול לכלול ערכים מתוך שאילתה או קלט משתמש.
+    const code = postgresErrorCode(error);
+    console.error("Request failed", {requestId: request.requestId, errorCode: "UNHANDLED_REQUEST_ERROR", errorName: error instanceof Error ? error.name : "unknown", code, method: request.method, route: request.route?.path ?? null});
     response.status(500).json({error: "INTERNAL_SERVER_ERROR", requestId: request.requestId});
   });
 

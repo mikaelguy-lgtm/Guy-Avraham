@@ -13,6 +13,11 @@ export default tseslint.config(
     languageOptions: {ecmaVersion: 2022, globals: globals.node}
   },
   {
+    // סקריפטי QA של Playwright מריצים קוד גם בתוך הדפדפן (page.evaluate) — צריכים גם globals של דפדפן.
+    files: ["scripts/qa-*.mjs"],
+    languageOptions: {ecmaVersion: 2022, globals: {...globals.node, ...globals.browser}}
+  },
+  {
     files: ["**/*.{ts,tsx}"],
     languageOptions: {ecmaVersion: 2022, globals: {...globals.browser, ...globals.node}},
     plugins: {"react-hooks": reactHooks, "react-refresh": reactRefresh},

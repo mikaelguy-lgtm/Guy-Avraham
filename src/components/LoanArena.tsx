@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useState} from "react";
+import {useEffect, useMemo, useRef, useState} from "react";
 import {CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, Send, Sparkles, X} from "lucide-react";
 import type {Client, DeliveryBlocker, DeliveryPreview} from "../types";
 import {ApiError, api} from "../utils/apiClient";
@@ -66,6 +66,7 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
 
   const client = useMemo(() => clients.find((item) => item.id === selectedClientId), [clients, selectedClientId]);
 
+  const sendKeyRef = useRef<string | null>(null);
   const showError = (caught: unknown) => {
     if (caught instanceof ApiError) {
       setMessage(caught.publicMessage ?? "הפעולה נכשלה. נסה שוב.");
@@ -76,7 +77,9 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
   const createPreview = async () => {
     if (!selectedClientId || !eligibleCompanyCount) return;
     setBusy(true); setMessage("");
-    try { setPreview(await api.deliveryPreview(selectedClientId)); setStage("preview"); }
+    // מפתח idempotency אחד לכל תצוגה מקדימה: לחיצה חוזרת / ניסיון חוזר אחרי ניתוק רשת שולחים את
+    // אותו מפתח, והשרת מחזיר את אותה הגשה במקום ליצור גרסה שנייה ולשלוח הזמנות פעמיים.
+    try { setPreview(await api.deliveryPreview(selectedClientId)); sendKeyRef.current = crypto.randomUUID(); setStage("preview"); }
     catch (caught) { showError(caught); }
     finally { setBusy(false); }
   };
@@ -85,7 +88,8 @@ export default function LoanArena({clientId, onMissingDocuments, onSent}: {clien
     if (!selectedClientId || !preview) return;
     setBusy(true); setMessage("");
     try {
-      const result = await api.deliverySend(selectedClientId, {idempotencyKey: crypto.randomUUID(), previewConfirmation: preview.previewConfirmation});
+      if (!sendKeyRef.current) sendKeyRef.current = crypto.randomUUID();
+      const result = await api.deliverySend(selectedClientId, {idempotencyKey: sendKeyRef.current, previewConfirmation: preview.previewConfirmation});
       const companies = (result as {companies?: unknown[]}).companies;
       const count = Array.isArray(companies) ? companies.length : preview.eligibleCompanyCount;
       setSentCompanyCount(count);

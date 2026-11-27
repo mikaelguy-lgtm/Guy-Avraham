@@ -14,8 +14,10 @@ async function processDeliveryJobs(): Promise<void> {
   try {
     await runtime.delivery.processJobs({processEmail: await runtime.email.isDeliveryActive()});
     await writeFile(heartbeatPath, new Date().toISOString(), {encoding: "utf8", mode: 0o600});
-  } catch {
-    console.error("Lender delivery jobs failed", {errorCode: "LENDER_DELIVERY_JOB_FAILED"});
+  } catch (error) {
+    // רק שם המחלקה וקוד Postgres/מערכת — לעולם לא error.message, שעלול להכיל ערכים מהשאילתה.
+    const code = typeof error === "object" && error && "code" in error ? String((error as {code: unknown}).code).slice(0, 32) : undefined;
+    console.error("Lender delivery jobs failed", {errorCode: "LENDER_DELIVERY_JOB_FAILED", errorName: error instanceof Error ? error.name : "unknown", code});
   } finally {
     running = false;
   }

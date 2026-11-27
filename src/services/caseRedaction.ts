@@ -16,6 +16,12 @@ export class CaseRedactionService {
         .map((value) => value.trim()).filter((value) => value.length >= 2).forEach((value) => exactValues.add(value));
     }
     if (source.property.address) exactValues.add(source.property.address.trim());
+    // פרטי היועץ נחשפים רק אחרי "מעוניין" + OTP — לכן גם הם נמחקים מטקסט חופשי בתצוגה הראשונית.
+    if (source.advisor) {
+      [source.advisor.fullName, source.advisor.businessName, source.advisor.phone, source.advisor.email]
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim()).filter((value) => value.length >= 2).forEach((value) => exactValues.add(value));
+    }
 
     let replacementCount = 0;
     const sanitize = (input: string | null): string | null => {
@@ -25,11 +31,15 @@ export class CaseRedactionService {
         const pattern = new RegExp(escapePattern(exact), "giu");
         value = value.replace(pattern, () => { replacementCount += 1; categories.add("KNOWN_PII"); return "********"; });
       }
+      // דפוסים ישראליים נפוצים: ת"ז 8–9 ספרות (גם עם מקף/רווח לפני ספרת הביקורת),
+      // טלפון עם רווחים/מקפים או 972 בלי "+", וקישורי www בלי http.
+      // מספרים עם פסיקים/נקודות (סכומים כמו 1,250,000) אינם נתפסים.
       const patterns: Array<[RegExp, string]> = [
-        [/\b\d{9}\b/gu, "IDENTITY_NUMBER"],
-        [/(?:\+972|0)(?:-?\d){8,9}\b/gu, "PHONE"],
         [/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu, "EMAIL"],
-        [/https?:\/\/[^\s]+/giu, "URL"]
+        [/(?:https?:\/\/|www\.)[^\s]+/giu, "URL"],
+        [/(?<!\d|\d[,.])(?:\+?972[-\s]?|0)(?:[-\s]?\d){8,9}(?!\d|[,.]\d)/gu, "PHONE"],
+        [/(?<!\d|\d[,.])\d{7,8}[-\s]\d(?!\d|[,.]\d)/gu, "IDENTITY_NUMBER"],
+        [/(?<!\d|\d[,.])\d{8,9}(?!\d|[,.]\d)/gu, "IDENTITY_NUMBER"]
       ];
       for (const [pattern, category] of patterns) value = value.replace(pattern, () => { replacementCount += 1; categories.add(category); return "********"; });
       return value;
@@ -54,7 +64,7 @@ export class CaseRedactionService {
         childrenAges: borrower.childrenAges,
         employment: {
           employmentType: borrower.employment.employmentType,
-          jobTitle: borrower.employment.jobTitle,
+          jobTitle: sanitize(borrower.employment.jobTitle) ?? "",
           employmentSeniorityYears: borrower.employment.employmentSeniorityYears,
           monthlyNetIncome: borrower.employment.monthlyNetIncome,
           hasAdditionalIncome: borrower.employment.hasAdditionalIncome,
@@ -67,8 +77,8 @@ export class CaseRedactionService {
         liabilities: borrower.liabilities.map(redactLiability)
       })),
       householdLiabilities: source.householdLiabilities.map(redactLiability),
-      property: {propertyType: source.property.propertyType, propertyTypeOtherDescription: sanitize(source.property.propertyTypeOtherDescription), city: source.property.city, value: source.property.value},
-      loanRequest: source.loanRequest,
+      property: {propertyType: source.property.propertyType, propertyTypeOtherDescription: sanitize(source.property.propertyTypeOtherDescription), city: sanitize(source.property.city) ?? "", value: source.property.value},
+      loanRequest: {...source.loanRequest, purposeOther: sanitize(source.loanRequest.purposeOther ?? null)},
       dealDetails: sanitize(source.dealDetails) ?? "",
       totals: source.totals,
       documentStatus: "כל מסמכי החובה קיימים בתיק.",

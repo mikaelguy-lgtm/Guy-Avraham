@@ -1,7 +1,7 @@
 // QA ידני-אוטומטי להגדרות האתר הציבורי: התחברות כ-SUPER_ADMIN, צילום המסך, הזנת מספר WhatsApp,
 // אימות שהאתר הציבורי מציג את הכפתור מיד (ללא פריסה), והחזרה למספר הזמני. גם מאמת favicon באפליקציה.
 // הרצה: node scripts/qa-public-site-settings.mjs <appUrl> <siteUrl> <outDir>
-/* global console, process */
+
 import "dotenv/config";
 import {mkdir} from "node:fs/promises";
 import {join} from "node:path";

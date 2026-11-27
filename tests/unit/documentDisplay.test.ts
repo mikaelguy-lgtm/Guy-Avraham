@@ -24,3 +24,27 @@ describe("document display names", () => {
     expect(getDocumentDownloadName({documentType: "ID_FRONT", customTitle: null, mimeType: "application/pdf"})).toBe("תעודת זהות — צד קדמי.pdf");
   });
 });
+
+describe("safeArchiveSegment (zip-slip guard)", () => {
+  it.each([
+    ["../../../../Startup/x", "Startup"],
+    ["..\\..\\evil.exe", "evil.exe"],
+    ["C:\\Windows\\system32", "system32"],
+    ["  .hidden. ", "hidden"],
+    ["name\u0000with\u001fcontrols", "controls"],
+    ["דוח שכר ינואר", "דוח שכר ינואר"]
+  ])("neutralizes path parts in %j", async (input, keeps) => {
+    const {safeArchiveSegment} = await import("../../src/utils/documentDisplay");
+    const result = safeArchiveSegment(input);
+    expect(result).toContain(keeps);
+    expect(result).not.toMatch(/[\\/:]|\.\./);
+    expect(result.includes("\u0000")).toBe(false);
+    expect(result.startsWith(".")).toBe(false);
+  });
+
+  it("never returns an empty segment", async () => {
+    const {safeArchiveSegment} = await import("../../src/utils/documentDisplay");
+    expect(safeArchiveSegment("")).toBe("מסמך");
+    expect(safeArchiveSegment("..")).not.toBe("");
+  });
+});

@@ -739,67 +739,15 @@ describe("invites", () => {
   });
 });
 
-describe("submission delivery", () => {
-  const snapshotSource = {publicCaseNumber: "SC-1", loanPurpose: "SECOND_HAND_PURCHASE", propertyType: "APARTMENT", propertyCity: "תל אביב", propertyValue: 2_000_000, requestedAmount: 1_000_000, numberOfBorrowers: 2, borrowerRelationship: "MARRIED", employmentTypes: ["SALARIED", "SELF_EMPLOYED"], borrowerBirthDatesEncrypted: [null, null], borrowerBirthDates: [new Date("1985-06-15"), new Date("1987-08-20")], totalMonthlyIncome: 50_000, liabilityCount: 1, totalLiabilityBalance: 400_000, totalMonthlyPayments: 6_000, liabilityTypeBreakdown: {MORTGAGE: 1}};
-
-  it("blocks delivery before creating a submission when production email is disabled", async () => {
+describe("submission delivery (legacy advisor-selected route)", () => {
+  // The advisor-selected-lender route was replaced end-to-end by
+  // /delivery/preview + /delivery/send (server-determined targeting, immutable
+  // case version). It now always answers 410 — see
+  // tests/integration/securityHardening2026_11.test.ts for the full coverage.
+  it("answers 410 and has no side effects", async () => {
     const createSubmission = vi.fn();
-    const response = await request(app(
-      {createSubmission},
-      undefined,
-      secrets,
-      {...env, EMAIL_DELIVERY_ENABLED: false, SMTP_HOST: "", EMAIL_FROM: "", EMAIL_REPLY_TO: ""}
-    )).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(503);
-    expect(response.body).toEqual(expect.objectContaining({error: "EMAIL_DELIVERY_DISABLED", requestId: expect.any(String)}));
+    await request(app({createSubmission} as never)).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(410);
     expect(createSubmission).not.toHaveBeenCalled();
-  });
-  it("marks a successful SMTP delivery as SENT without creating an automatic response", async () => {
-    const markSent = vi.fn().mockResolvedValue(undefined);
-    const createResponse = vi.fn();
-    const response = await request(app({
-      listLenders: async () => [{id: 100, name: "Lender", contactEmail: "lender@test"}],
-      getSnapshotSource: async () => snapshotSource,
-      createSubmission: async () => ({id: 50}), markSubmissionSent: markSent,
-      createLenderResponse: createResponse
-    })).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(201);
-    expect(response.body.results).toEqual([{lenderId: 100, status: "SENT"}]);
-    expect(markSent).toHaveBeenCalledWith(50, "message-1", "lender@test");
-    expect(createResponse).not.toHaveBeenCalled();
-  });
-
-  it("marks SMTP failure as DELIVERY_FAILED", async () => {
-    const markFailed = vi.fn().mockResolvedValue(undefined);
-    const email = {verify: vi.fn(), send: vi.fn().mockRejectedValue(new Error("smtp password secret"))};
-    const response = await request(app({
-      listLenders: async () => [{id: 100, name: "Lender", contactEmail: "lender@test"}],
-      getSnapshotSource: async () => snapshotSource,
-      createSubmission: async () => ({id: 51}), markSubmissionDeliveryFailed: markFailed
-    }, email)).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(201);
-    expect(response.body.results).toEqual([{lenderId: 100, status: "DELIVERY_FAILED"}]);
-    expect(markFailed).toHaveBeenCalledWith(51, "lender@test", "Email delivery failed");
-  });
-
-  it("returns 422 and creates no submission or email when required documents are missing", async () => {
-    const createSubmission = vi.fn(); const send = vi.fn();
-    const response = await request(app({
-      listMissingRequiredDocuments: async () => [{documentType: "ID_BACK", borrowerId: 2, borrowerOrder: 2, label: "תעודת זהות — צד אחורי — לווה 2"}],
-      createSubmission
-    }, {verify: vi.fn(), send})).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(422);
-    expect(response.body).toEqual(expect.objectContaining({code: "MISSING_REQUIRED_DOCUMENTS", missingDocuments: [expect.objectContaining({documentType: "ID_BACK", borrowerId: 2})]}));
-    expect(createSubmission).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
-  });
-
-  it("returns 422 and creates no side effects for incomplete legacy liabilities", async () => {
-    const createSubmission = vi.fn(); const send = vi.fn();
-    const response = await request(app({
-      hasIncompleteLegacyLiabilities: async () => true,
-      createSubmission
-    }, {verify: vi.fn(), send})).post("/api/clients/1/submissions").set("authorization", "Bearer advisor").send({lenderIds: [100]}).expect(422);
-    expect(response.body).toEqual(expect.objectContaining({
-      code: "INCOMPLETE_LEGACY_LIABILITIES",
-      message: expect.stringContaining("ההתחייבויות")
-    }));
-    expect(createSubmission).not.toHaveBeenCalled(); expect(send).not.toHaveBeenCalled();
   });
 });
 

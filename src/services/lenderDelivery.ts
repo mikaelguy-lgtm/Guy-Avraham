@@ -9,7 +9,7 @@ import type {
 import {DeliveryError} from "../domain/lenderDelivery.js";
 import {calculateAge} from "../utils/age.js";
 import {residenceCityFromAddress} from "../utils/address.js";
-import {getDocumentDisplayName} from "../utils/documentDisplay.js";
+import {getDocumentDisplayName, safeArchiveSegment} from "../utils/documentDisplay.js";
 import {formatIsraelDateTime, maskEmailAddress} from "../utils/formatters.js";
 import {collectDeliveryBlockers} from "../domain/deliveryPreflight.js";
 import type {EncryptionService} from "../utils/crypto.js";
@@ -447,7 +447,12 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     try { confirmation = JSON.parse(confirmationValue) as Row; } catch { throw new DeliveryError("PREVIEW_CONFIRMATION_INVALID", 409, "אישור התצוגה המקדימה אינו תקף."); }
     if (confirmation.clientId !== clientId || confirmation.advisorId !== actor.advisorId || Number(confirmation.expiresAt) < this.now().getTime()) throw new DeliveryError("PREVIEW_CONFIRMATION_EXPIRED", 409, "אישור התצוגה המקדימה פג. יש ליצור תצוגה מקדימה חדשה.");
     const existing = await this.pool.query("select id from delivery_batches where advisor_id=$1 and idempotency_key=$2", [actor.advisorId, input.idempotencyKey]);
-    if (existing.rows[0]) return this.batchSummary(this.pool, Number(existing.rows[0].id));
+    if (existing.rows[0]) {
+      const batch = await this.batchSummary(this.pool, Number(existing.rows[0].id));
+      // אותו מפתח אחרי שליחה שנכשלה: לא להחזיר "הצלחה" ריקה — לבקש תצוגה מקדימה חדשה.
+      if (!(batch.companies as unknown[]).length) throw new DeliveryError("PREVIOUS_SEND_FAILED", 409, "השליחה הקודמת לא הושלמה. יש ליצור תצוגה מקדימה חדשה ולשלוח שוב.");
+      return batch;
+    }
     const snapshot = await this.loadFullSnapshot(clientId, actor.advisorId); this.assertReady(snapshot);
     const contentHash = sha256(JSON.stringify(snapshot));
     if (snapshot.sourceClientUpdatedAt !== confirmation.sourceClientUpdatedAt || contentHash !== confirmation.contentHash) throw new DeliveryError("CLIENT_CHANGED_AFTER_PREVIEW", 409, "התיק השתנה לאחר התצוגה המקדימה. יש לעיין בגרסה המעודכנת לפני השליחה.");
@@ -476,6 +481,11 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       const lockedClient = await connection.query("select updated_at from clients where id=$1 and advisor_id=$2 and deleted_at is null for update", [clientId, actor.advisorId]);
       if (!lockedClient.rows[0]) throw new DeliveryError("CLIENT_NOT_FOUND", 404, "תיק הלקוח לא נמצא.");
       if (new Date(lockedClient.rows[0].updated_at).toISOString() !== snapshot.sourceClientUpdatedAt) throw new DeliveryError("CLIENT_CHANGED_AFTER_PREVIEW", 409, "התיק השתנה בזמן השליחה. יש ליצור תצוגה מקדימה חדשה.");
+      // שליחה מקבילה של אותו תיק (לחיצה כפולה, ניסיון חוזר בזמן יצירת ה-PDF והעתקת המסמכים):
+      // שורת הלקוח נעולה כאן, ולכן הבדיקה מסודרת. בלי זה נוצרו שתי גרסאות ושני סבבי הזמנות לגופי המימון.
+      // גרסה "תקועה" ב-CREATING יותר מ-15 דקות (קריסה באמצע) לא חוסמת לתמיד.
+      const inFlight = await connection.query("select 1 from case_versions where client_id=$1 and status='CREATING' and created_at > now() - interval '15 minutes' limit 1", [clientId]);
+      if (inFlight.rows[0]) throw new DeliveryError("SEND_IN_PROGRESS", 409, "התיק כבר בתהליך שליחה. ניתן לרענן את המסך בעוד רגע כדי לראות את הסטטוס.");
       const versionResult = await connection.query("select coalesce(max(version_number),0)::int + 1 as next from case_versions where client_id=$1", [clientId]);
       versionNumber = Number(versionResult.rows[0].next);
       const batchResult = await connection.query("insert into delivery_batches(client_id,advisor_id,idempotency_key,created_by_user_id) values($1,$2,$3,$4) returning id", [clientId, actor.advisorId, input.idempotencyKey, actor.userId]);
@@ -643,6 +653,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     const result = await this.pool.query("update lenders set active=false,deleted_at=now(),updated_at=now() where id=$1 and deleted_at is null returning id", [id]);
     if (!result.rows[0]) throw new DeliveryError("COMPANY_NOT_FOUND", 404, "חברת המימון לא נמצאה.");
     await this.pool.query("update lender_contacts set active=false,deleted_at=coalesce(deleted_at,now()),updated_at=now() where lender_id=$1", [id]);
+    await this.pool.query("update external_portal_sessions set revoked_at=coalesce(revoked_at,now()) where revoked_at is null and access_grant_id in(select g.id from company_portal_access_grants g join lender_contacts lc on lc.id=g.contact_id where lc.lender_id=$1)", [id]);
     await this.audit(this.pool, actor.userId, "FINANCING_COMPANY_DELETED", "lender", id, {}, context);
   }
 
@@ -685,6 +696,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     values.push(companyId, contactId); const result = await this.pool.query(`update lender_contacts set ${fields.join(",")},updated_at=now() where lender_id=$${values.length - 1} and id=$${values.length} and deleted_at is null returning *`, values);
     if (!result.rows[0]) throw new DeliveryError("CONTACT_NOT_FOUND", 404, "איש הקשר לא נמצא.");
     if (input.isPrimary) await this.pool.query("update lender_contacts set is_primary=false,updated_at=now() where lender_id=$1 and id<>$2 and deleted_at is null", [companyId, contactId]);
+    if (input.active === false) await this.pool.query("update external_portal_sessions set revoked_at=coalesce(revoked_at,now()) where revoked_at is null and access_grant_id in(select id from company_portal_access_grants where contact_id=$1)", [contactId]);
     await this.audit(this.pool, actor.userId, "FINANCING_COMPANY_CONTACT_UPDATED", "lender_contact", contactId, {companyId, fields: Object.keys(input)}, context);
     return this.publicContact(result.rows[0]);
   }
@@ -694,6 +706,8 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     if (state.rows[0]?.active && Number(state.rows[0].remaining) === 0) throw new DeliveryError("ACTIVE_COMPANY_REQUIRES_CONTACT", 422, "לא ניתן למחוק את איש הקשר הפעיל האחרון של חברה פעילה.");
     const result = await this.pool.query("update lender_contacts set active=false,deleted_at=now(),updated_at=now() where lender_id=$1 and id=$2 and deleted_at is null returning id", [companyId, contactId]);
     if (!result.rows[0]) throw new DeliveryError("CONTACT_NOT_FOUND", 404, "איש הקשר לא נמצא.");
+    // סשנים פתוחים של איש הקשר בפורטל המלא נסגרים מיד (בדיקת contact_enabled חוסמת גם בקשות חדשות).
+    await this.pool.query("update external_portal_sessions set revoked_at=coalesce(revoked_at,now()) where revoked_at is null and access_grant_id in(select id from company_portal_access_grants where contact_id=$1)", [contactId]);
     await this.audit(this.pool, actor.userId, "FINANCING_COMPANY_CONTACT_DELETED", "lender_contact", contactId, {companyId}, context);
   }
 
@@ -722,12 +736,15 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       cs.id submission_id,cs.public_id submission_public_id,cs.company_id,cs.advisor_id,cs.delivery_status,
       cs.decision_status,cs.access_status,cs.response_deadline_at,cs.decision_contact_id,cs.full_access_expires_at,
       l.name company_name,cv.id case_version_id,cv.version_number,cv.masked_snapshot,cv.masked_pdf_object_key,
-      cv.full_pdf_object_key,c.public_case_number,c.id client_id,cs.created_at submission_created_at
+      cv.full_pdf_object_key,c.public_case_number,c.id client_id,cs.created_at submission_created_at,
+      (lc.active and lc.deleted_at is null and l.deleted_at is null) contact_enabled
       from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id
       join company_submissions cs on cs.id=sci.company_submission_id join lenders l on l.id=cs.company_id
       join case_versions cv on cv.id=cs.case_version_id join clients c on c.id=cv.client_id
       where sci.token_hash=$1 ${lock ? "for update of sci,cs" : ""}`, [this.tokens.hash(token)]);
     if (!result.rows[0]) throw new DeliveryError("REVIEW_LINK_NOT_FOUND", 404, "קישור הבדיקה אינו תקף.");
+    // איש קשר שהוסר/הושבת (או חברה שנמחקה) מאבד מיד את הקישור האישי — גם לצפייה וגם להחלטה בשם החברה.
+    if (!result.rows[0].contact_enabled) throw new DeliveryError("CONTACT_ACCESS_REVOKED", 410, "הגישה של איש קשר זה לתיק בוטלה. יש לפנות למנהל המערכת.");
     return result.rows[0];
   }
 
@@ -831,7 +848,10 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       await this.event(connection, {submissionId: Number(row.submission_id), invitationId: row.invitation_id ? Number(row.invitation_id) : null, contactId: Number(row.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(row.contact_id), type: "OTP_SENT", metadata: {purpose}}, context);
       await connection.query("commit");
     } catch (error) { await connection.query("rollback"); throw error; } finally { connection.release(); }
-    await this.processOutbox();
+    // שולחים מכאן רק את מייל ה-OTP הזה, ורק כשמשלוח הדוא"ל פעיל. בעבר נקרא כאן processOutbox()
+    // המלא — מחוץ ל-advisory lock של ה-worker וללא בדיקת isDeliveryActive — ולכן בקשת OTP אחת
+    // "שרפה" ניסיונות של עד 25 מיילים לא קשורים בתור כשה-SMTP כבוי (עד שהפכו ל-FAILED).
+    if (await this.email.isDeliveryActive()) await this.processOutbox(`otp:${challengeId}`);
     const delivery = await this.pool.query("select status from email_outbox where idempotency_key=$1", [`otp:${challengeId}`]);
     this.scheduleJobs();
     return {status: delivery.rows[0]?.status === "SENT" ? "SMTP_ACCEPTED" : "QUEUED", expiresAt, recipientMasked: maskEmailAddress(row.contact_email), lastSentAt: now, resendAvailableAt: new Date(now.getTime() + 60_000), attemptsRemaining: Math.max(0, 5 - Number(recent.rows[0].count) - 1)};
@@ -917,12 +937,15 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       g.token_nonce,lc.first_name contact_first_name,lc.last_name contact_last_name,lc.email contact_email,
       cs.id submission_id,cs.public_id submission_public_id,cs.company_id,cs.advisor_id,cs.access_status,
       cs.full_access_expires_at,l.name company_name,cv.id case_version_id,cv.version_number,cv.full_snapshot_encrypted,
-      cv.full_pdf_object_key,c.id client_id,c.public_case_number
+      cv.full_pdf_object_key,c.id client_id,c.public_case_number,
+      (lc.active and lc.deleted_at is null and l.deleted_at is null) contact_enabled
       from company_portal_access_grants g join lender_contacts lc on lc.id=g.contact_id
       join company_submissions cs on cs.id=g.company_submission_id join lenders l on l.id=cs.company_id
       join case_versions cv on cv.id=cs.case_version_id join clients c on c.id=cv.client_id
       where g.access_token_hash=$1 ${lock ? "for update of g,cs" : ""}`, [this.tokens.hash(token)]);
-    if (!result.rows[0]) throw new DeliveryError("ACCESS_LINK_NOT_FOUND", 404, "קישור הגישה אינו תקף."); return result.rows[0];
+    if (!result.rows[0]) throw new DeliveryError("ACCESS_LINK_NOT_FOUND", 404, "קישור הגישה אינו תקף.");
+    if (!result.rows[0].contact_enabled) throw new DeliveryError("CONTACT_ACCESS_REVOKED", 410, "הגישה של איש קשר זה לתיק בוטלה. יש לפנות למנהל המערכת.");
+    return result.rows[0];
   }
 
   private ensureAccessAvailable(row: Row): void {
@@ -968,15 +991,16 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       g.id access_grant_id,g.contact_id,g.expires_at grant_expires_at,g.revoked_at grant_revoked_at,
       cs.id submission_id,cs.public_id submission_public_id,cs.advisor_id,cs.access_status,cs.full_access_expires_at,
       l.name company_name,cv.id case_version_id,cv.version_number,cv.full_snapshot_encrypted,cv.full_pdf_object_key,
-      c.id client_id,c.public_case_number
+      c.id client_id,c.public_case_number,(lc.active and lc.deleted_at is null and l.deleted_at is null) contact_enabled
       from external_portal_sessions s join company_portal_access_grants g on g.id=s.access_grant_id
+      join lender_contacts lc on lc.id=g.contact_id
       join company_submissions cs on cs.id=g.company_submission_id join lenders l on l.id=cs.company_id
       join case_versions cv on cv.id=cs.case_version_id join clients c on c.id=cv.client_id
       where s.session_token_hash=$1`, [this.tokens.hash(sessionToken)]);
     const row = result.rows[0];
     if (!row) throw new DeliveryError("PORTAL_SESSION_INVALID", 401, "ההתחברות לתיק אינה תקפה.");
     const now = this.now();
-    if (row.session_revoked_at || row.grant_revoked_at || row.access_status !== "ACTIVE" || [row.session_expires_at, row.idle_expires_at, row.grant_expires_at, row.full_access_expires_at].some((value) => new Date(value).getTime() <= now.getTime())) {
+    if (!row.contact_enabled || row.session_revoked_at || row.grant_revoked_at || row.access_status !== "ACTIVE" || [row.session_expires_at, row.idle_expires_at, row.grant_expires_at, row.full_access_expires_at].some((value) => new Date(value).getTime() <= now.getTime())) {
       await this.pool.query("update external_portal_sessions set revoked_at=coalesce(revoked_at,now()) where id=$1", [row.session_id]);
       throw new DeliveryError("PORTAL_SESSION_EXPIRED", 410, "תקופת הגישה לתיק הסתיימה. יש לבצע אימות מחדש או לפנות למנהל המערכת.");
     }
@@ -1027,7 +1051,7 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     const session = await this.portalSession(sessionToken, context); const snapshot = JSON.parse(this.encryption.decrypt(session.full_snapshot_encrypted)) as FullCaseSnapshot; const documents = await this.versionDocuments(Number(session.case_version_id)); const zip = new JSZip();
     const pdf = await this.getCurrentVersionPdf(Number(session.case_version_id), "full"); zip.file(`תיק-מלא/תיק-מימון-מלא-${snapshot.publicCaseNumber}.pdf`, pdf);
     for (const document of documents) {
-      const object = await this.storage.get(document.immutable_object_key); const borrower = snapshot.documents.find((item) => item.documentId === Number(document.document_id))?.borrowerOrder ?? null; const name = getDocumentDisplayName({documentType: document.document_type, customTitle: document.custom_title}, borrower); const extension = document.mime_type === "application/pdf" ? ".pdf" : document.mime_type === "image/png" ? ".png" : ".jpg"; const folder = borrower ? `מסמכי-לווה-${borrower}` : document.document_type === "OTHER" ? "מסמכים-נוספים" : "מסמכי-נכס"; zip.file(`${folder}/${name}-${document.id}${extension}`, object.body);
+      const object = await this.storage.get(document.immutable_object_key); const borrower = snapshot.documents.find((item) => item.documentId === Number(document.document_id))?.borrowerOrder ?? null; const name = getDocumentDisplayName({documentType: document.document_type, customTitle: document.custom_title}, borrower); const extension = document.mime_type === "application/pdf" ? ".pdf" : document.mime_type === "image/png" ? ".png" : ".jpg"; const folder = borrower ? `מסמכי-לווה-${borrower}` : document.document_type === "OTHER" ? "מסמכים-נוספים" : "מסמכי-נכס"; zip.file(`${folder}/${safeArchiveSegment(name)}-${document.id}${extension}`, object.body);
     }
     const body = await zip.generateAsync({type: "nodebuffer", compression: "DEFLATE", compressionOptions: {level: 6}});
     await this.event(this.pool, {submissionId: Number(session.submission_id), contactId: Number(session.contact_id), actorType: "COMPANY_CONTACT", actorId: Number(session.contact_id), type: "FULL_CASE_ZIP_DOWNLOADED"}, context);
@@ -1384,7 +1408,19 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     } else if (action === "revoke-access") {
       await this.pool.query("update company_submissions set access_status='REVOKED',updated_at=now() where id=$1", [row.id]); await this.pool.query("update company_portal_access_grants set revoked_at=now(),updated_at=now() where company_submission_id=$1", [row.id]); await this.pool.query("update external_portal_sessions set revoked_at=now() where access_grant_id in(select id from company_portal_access_grants where company_submission_id=$1) and revoked_at is null", [row.id]); await this.event(this.pool, {submissionId: Number(row.id), actorType: "ADMIN", actorId: actor.userId, type: "ADMIN_ACCESS_REVOKED"}, context);
     } else if (action === "cancel-invitation") {
-      await this.pool.query("update company_submissions set decision_status='CANCELLED',cancelled_at=now(),cancellation_reason=$2,updated_at=now() where id=$1 and decision_status in('PENDING','PENDING_VERIFICATION')", [row.id, safeText(values.reason ?? "בוטל על ידי מנהל")]); await this.pool.query("update submission_contact_invitations set status='CLOSED',closed_at=now(),closed_reason='ADMIN_CANCELLED',updated_at=now() where company_submission_id=$1 and closed_at is null", [row.id]); await this.event(this.pool, {submissionId: Number(row.id), actorType: "ADMIN", actorId: actor.userId, type: "INVITATION_CANCELLED"}, context);
+      // ביטול = סגירת ההזמנות + ביטול כל מייל שעדיין ממתין בתור (הזמנה, תזכורת, OTP) וכל OTP פתוח,
+      // אחרת גוף המימון היה מקבל קישור/תזכורת אחרי שההגשה בוטלה. רק לפני החלטה סופית.
+      const connection = await this.pool.connect();
+      try {
+        await connection.query("begin");
+        const cancelled = await connection.query("update company_submissions set decision_status='CANCELLED',cancelled_at=now(),cancellation_reason=$2,updated_at=now() where id=$1 and decision_status in('PENDING','PENDING_VERIFICATION') returning id", [row.id, safeText(values.reason ?? "בוטל על ידי מנהל")]);
+        if (!cancelled.rows[0]) throw new DeliveryError("CANCEL_NOT_AVAILABLE", 409, "לא ניתן לבטל הגשה לאחר שהתקבלה החלטה סופית.");
+        await connection.query("update submission_contact_invitations set status='CLOSED',closed_at=now(),closed_reason='ADMIN_CANCELLED',updated_at=now() where company_submission_id=$1 and closed_at is null", [row.id]);
+        await connection.query("update email_outbox set status='CANCELLED',updated_at=now() where company_submission_id=$1 and template in('LENDER_INITIAL','LENDER_REMINDER','OTP') and status='PENDING'", [row.id]);
+        await connection.query("update otp_challenges set cancelled_at=now(),updated_at=now() where company_submission_id=$1 and used_at is null and cancelled_at is null", [row.id]);
+        await this.event(connection, {submissionId: Number(row.id), actorType: "ADMIN", actorId: actor.userId, type: "INVITATION_CANCELLED"}, context);
+        await connection.query("commit");
+      } catch (error) { await connection.query("rollback"); throw error; } finally { connection.release(); }
     } else if (action === "send-reminder") {
       if (!(["PENDING", "PENDING_VERIFICATION"].includes(row.decision_status)) || new Date(row.response_deadline_at).getTime() <= this.now().getTime()) throw new DeliveryError("REMINDER_NOT_AVAILABLE", 409, "לא ניתן לשלוח תזכורת לאחר החלטה או לאחר תום מועד התגובה.");
       if (row.reminder_sent_at) throw new DeliveryError("REMINDER_ALREADY_SENT", 409, "תזכורת כבר נשלחה לחברה זו עבור תיק זה.");
@@ -1405,9 +1441,19 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
         if (queued.rows[0]) await this.pool.query("update submission_contact_invitations set status='QUEUED',email_failed_at=null,email_failure_reason=null,updated_at=now() where id=$1 and status='FAILED'", [invitation.id]);
       }
     } else if (action === "reissue") {
-      const deadline = (await this.calendar()).calculateResponseDeadline(this.now(), Number(row.response_business_days) || 2); const invitations = await this.pool.query("select sci.id,sci.public_id,sci.contact_id,lc.email from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id where sci.company_submission_id=$1", [row.id]);
-      await this.pool.query("update company_submissions set decision_status='PENDING',access_status='NONE',response_deadline_at=$2,cancelled_at=null,cancellation_reason=null,updated_at=now() where id=$1", [row.id, deadline]);
-      for (const invitation of invitations.rows) { const nonce = this.tokens.createNonce(); const token = this.tokens.deriveToken("review", invitation.public_id, nonce); await this.pool.query("update submission_contact_invitations set token_hash=$2,token_nonce=$3,token_expires_at=$4,status='QUEUED',closed_at=null,closed_reason=null,email_queued_at=now(),updated_at=now() where id=$1", [invitation.id, this.tokens.hash(token), nonce, deadline]); await this.pool.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id,invitation_id) values($1,'LENDER_INITIAL',$2,$3,'PENDING',now(),$4,$5)`, [`reissue:${invitation.id}:${deadline.toISOString()}`, invitation.email, {invitationId: invitation.id}, row.id, invitation.id]); }
+      // "ההחלטה התקפה הראשונה קובעת": שליחה מחדש לעולם לא מאפסת החלטה סופית (מעוניין/לא מעוניין).
+      // מותרת רק להגשה שלא הוכרעה, שפג תוקפה או שבוטלה. הכל בטרנזקציה אחת, (התזכורת נשארת אחת לכל הגשה — מפתח ה-idempotency שלה הוא לפי הגשה.)
+      const deadline = (await this.calendar()).calculateResponseDeadline(this.now(), Number(row.response_business_days) || 2);
+      const connection = await this.pool.connect();
+      try {
+        await connection.query("begin");
+        const reopened = await connection.query("update company_submissions set decision_status='PENDING',access_status='NONE',response_deadline_at=$2,cancelled_at=null,cancellation_reason=null,updated_at=now() where id=$1 and decision_status in('PENDING','PENDING_VERIFICATION','EXPIRED','CANCELLED') returning id", [row.id, deadline]);
+        if (!reopened.rows[0]) throw new DeliveryError("REISSUE_NOT_AVAILABLE", 409, "לא ניתן לשלוח מחדש הגשה שבה התקבלה כבר החלטה סופית.");
+        await connection.query("update otp_challenges set cancelled_at=now(),updated_at=now() where company_submission_id=$1 and used_at is null and cancelled_at is null", [row.id]);
+        const invitations = await connection.query("select sci.id,sci.public_id,sci.contact_id,lc.email from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id where sci.company_submission_id=$1 and lc.active=true and lc.deleted_at is null", [row.id]);
+        for (const invitation of invitations.rows) { const nonce = this.tokens.createNonce(); const token = this.tokens.deriveToken("review", invitation.public_id, nonce); await connection.query("update submission_contact_invitations set token_hash=$2,token_nonce=$3,token_expires_at=$4,status='QUEUED',closed_at=null,closed_reason=null,email_queued_at=now(),updated_at=now() where id=$1", [invitation.id, this.tokens.hash(token), nonce, deadline]); await connection.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id,invitation_id) values($1,'LENDER_INITIAL',$2,$3,'PENDING',now(),$4,$5)`, [`reissue:${invitation.id}:${deadline.toISOString()}`, invitation.email, {invitationId: invitation.id}, row.id, invitation.id]); }
+        await connection.query("commit");
+      } catch (error) { await connection.query("rollback"); throw error; } finally { connection.release(); }
     } else throw new DeliveryError("ADMIN_ACTION_INVALID", 400, "הפעולה המבוקשת אינה נתמכת.");
     await this.audit(this.pool, actor.userId, `COMPANY_SUBMISSION_${action.toUpperCase().replace(/-/g, "_")}`, "company_submission", row.id, {publicId}, context); this.scheduleJobs(); return this.getAdminSubmission(publicId);
   }
@@ -1458,8 +1504,16 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
       update company_submissions cs set delivery_status=(case when state.sent=state.total and state.total>0 then 'SENT' when state.sent>0 and state.failed>0 then 'PARTIALLY_SENT' when state.failed=state.total and state.total>0 then 'FAILED' else 'QUEUED' end)::company_delivery_status,updated_at=now() from state where cs.id=$1`, [submissionId]);
   }
 
-  private async processOutbox(): Promise<void> {
-    const due = await this.pool.query("select * from email_outbox where status='PENDING' and available_at <= now() order by id limit 25");
+  private async processOutbox(onlyIdempotencyKey?: string): Promise<void> {
+    if (!onlyIdempotencyKey) {
+      // שורה שנתפסה (PROCESSING) ונתקעה — למשל ה-worker נהרג באמצע שליחה — חוזרת לתור אחרי 10 דקות
+      // במקום להיעלם לתמיד. מספר הניסיונות כבר עלה בעת התפיסה, כך שמגבלת 3 הניסיונות נשמרת.
+      const recovered = await this.pool.query("update email_outbox set status='PENDING',locked_at=null,updated_at=now() where status='PROCESSING' and locked_at < now() - interval '10 minutes' returning id");
+      if (recovered.rowCount) console.warn("Recovered stale outbox rows", {errorCode: "OUTBOX_STALE_RECOVERED", count: recovered.rowCount});
+    }
+    const due = onlyIdempotencyKey
+      ? await this.pool.query("select * from email_outbox where status='PENDING' and available_at <= now() and idempotency_key=$1", [onlyIdempotencyKey])
+      : await this.pool.query("select * from email_outbox where status='PENDING' and available_at <= now() order by id limit 25");
     for (const item of due.rows) {
       const claimed = await this.pool.query("update email_outbox set status='PROCESSING',locked_at=now(),attempts=attempts+1,updated_at=now() where id=$1 and status='PENDING' returning *", [item.id]); if (!claimed.rows[0]) continue;
       try {
@@ -1495,21 +1549,35 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     const context = {requestId: `scheduler-${this.now().toISOString()}`}; const now = this.now(); const calendar = await this.calendar();
     const pending = await this.pool.query(`select cs.id submission_id,cs.response_deadline_at,cs.decision_status,cs.advisor_id,cs.public_id submission_public_id,cs.reminder_sent_at,l.name company_name,c.id client_id,c.public_case_number from company_submissions cs join lenders l on l.id=cs.company_id join case_versions cv on cv.id=cs.case_version_id join clients c on c.id=cv.client_id where cs.decision_status in('PENDING','PENDING_VERIFICATION')`);
     for (const row of pending.rows) {
-      const deadline = new Date(row.response_deadline_at); if (deadline.getTime() <= now.getTime()) { await this.expireSubmission(row, context); continue; }
-      if (row.reminder_sent_at) continue;
-      const reminderAt = calendar.calculateReminderSchedule(new Date(0), deadline);
-      if (now < reminderAt) continue;
-      const recipient = await this.pool.query("select sci.id,lc.email from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id where sci.company_submission_id=$1 and sci.closed_at is null order by lc.is_primary desc,sci.id limit 1", [row.submission_id]);
-      if (!recipient.rows[0]) continue;
-      const claimed = await this.pool.query("update company_submissions set reminder_sent_at=now(),updated_at=now() where id=$1 and reminder_sent_at is null returning id", [row.submission_id]);
-      if (!claimed.rows[0]) continue;
-      const invitation = recipient.rows[0];
-      await this.pool.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id,invitation_id) values($1,'LENDER_REMINDER',$2,$3,'PENDING',now(),$4,$5) on conflict(idempotency_key) do nothing`, [`LENDER_REMINDER:${row.submission_id}`, invitation.email, {invitationId: invitation.id}, row.submission_id, invitation.id]);
-      await this.pool.query("update submission_contact_invitations set reminder_one_sent_at=now(),updated_at=now() where id=$1", [invitation.id]);
+      // כל הגשה מבודדת: שגיאה בהגשה אחת לא עוצרת את התזמונים של כל השאר ואת תור המיילים.
+      try { await this.processSubmissionSchedule(row, now, calendar, context); } catch (error) {
+        console.error("Submission schedule failed", {errorCode: "SUBMISSION_SCHEDULE_FAILED", submissionId: Number(row.submission_id), errorName: error instanceof Error ? error.name : "unknown"});
+      }
     }
     const expiredAccess = await this.pool.query("update company_submissions set access_status='EXPIRED',updated_at=now() where access_status='ACTIVE' and full_access_expires_at <= now() returning id");
     for (const row of expiredAccess.rows) { await this.pool.query("update external_portal_sessions set revoked_at=coalesce(revoked_at,now()) where access_grant_id in(select id from company_portal_access_grants where company_submission_id=$1)", [row.id]); await this.event(this.pool, {submissionId: Number(row.id), actorType: "SYSTEM", type: "FULL_ACCESS_EXPIRED"}, context); }
     await this.pool.query("update otp_challenges set cancelled_at=now(),updated_at=now() where expires_at <= now() and used_at is null and cancelled_at is null"); await this.pool.query("update external_portal_sessions set revoked_at=now() where revoked_at is null and (expires_at <= now() or idle_expires_at <= now())");
+  }
+
+  // תזמון של הגשה בודדת: פקיעה בדדליין, או תזכורת אחת בלבד ביום הדדליין ב-09:00.
+  // התפיסה (reminder_sent_at) והכנסת המייל לתור באותה טרנזקציה — קריסה בין השניים לא תבלע תזכורת.
+  private async processSubmissionSchedule(row: Row, now: Date, calendar: IsraelBusinessCalendarService, context: DeliveryContext): Promise<void> {
+    const deadline = new Date(row.response_deadline_at);
+    if (deadline.getTime() <= now.getTime()) { await this.expireSubmission(row, context); return; }
+    if (row.reminder_sent_at) return;
+    const reminderAt = calendar.calculateReminderSchedule(new Date(0), deadline);
+    if (now < reminderAt) return;
+    const connection = await this.pool.connect();
+    try {
+      await connection.query("begin");
+      const recipient = await connection.query("select sci.id,lc.email from submission_contact_invitations sci join lender_contacts lc on lc.id=sci.contact_id where sci.company_submission_id=$1 and sci.closed_at is null and lc.active=true and lc.deleted_at is null order by lc.is_primary desc,sci.id limit 1", [row.submission_id]);
+      const invitation = recipient.rows[0];
+      const claimed = invitation ? await connection.query("update company_submissions set reminder_sent_at=now(),updated_at=now() where id=$1 and reminder_sent_at is null returning id", [row.submission_id]) : null;
+      if (!invitation || !claimed?.rows[0]) { await connection.query("rollback"); return; }
+      await connection.query(`insert into email_outbox(idempotency_key,template,recipient,payload,status,available_at,company_submission_id,invitation_id) values($1,'LENDER_REMINDER',$2,$3,'PENDING',now(),$4,$5) on conflict(idempotency_key) do nothing`, [`LENDER_REMINDER:${row.submission_id}`, invitation.email, {invitationId: invitation.id}, row.submission_id, invitation.id]);
+      await connection.query("update submission_contact_invitations set reminder_one_sent_at=now(),updated_at=now() where id=$1", [invitation.id]);
+      await connection.query("commit");
+    } catch (error) { await connection.query("rollback"); throw error; } finally { connection.release(); }
   }
 
   async processJobs(options: {processEmail?: boolean} = {}): Promise<void> {
@@ -1521,9 +1589,10 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
         // notification/email) — this is the System Health screen's only
         // source of truth for "is the worker alive", read back via
         // getSystemHealth() below. Every tick overwrites the same row.
-        await connection.query("insert into system_settings(key,value,category) values('admin_worker_heartbeat_at',$1,'SYSTEM_HEALTH') on conflict(key) do update set value=excluded.value,updated_at=now()", [this.now().toISOString()]);
         await this.processSchedules();
         if (options.processEmail !== false) await this.processOutbox();
+        // הדופק נכתב רק אחרי סבב שהצליח — כך מסך "בריאות מערכת" לא מציג ירוק כשכל סבב נכשל.
+        await connection.query("insert into system_settings(key,value,category) values('admin_worker_heartbeat_at',$1,'SYSTEM_HEALTH') on conflict(key) do update set value=excluded.value,updated_at=now()", [this.now().toISOString()]);
       } finally { await connection.query("select pg_advisory_unlock(8247331)"); }
     } finally { connection.release(); }
   }
