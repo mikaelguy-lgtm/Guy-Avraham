@@ -128,7 +128,7 @@ describe("Admin notification failure never blocks the lender-interested decision
     if (!advisor.rows[0]) throw new Error("No seeded advisor found — run npm run db:seed first");
     const advisorId = advisor.rows[0].advisor_id;
     const advisorUserId = advisor.rows[0].user_id;
-    const lender = await pool.query("select id from lenders limit 1");
+    const lender = await pool.query("select id from lenders where deleted_at is null order by id limit 1");
     if (!lender.rows[0]) throw new Error("No seeded lender found — run npm run db:seed first");
     const enc = (value: string) => encryption.encrypt(value);
     const caseNumber = `SC-FAILISO-${randomBytes(4).toString("hex")}`;

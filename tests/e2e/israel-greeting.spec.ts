@@ -13,22 +13,26 @@ async function loginAsAdvisor(page: Page): Promise<void> {
   await expect(page.getByRole("heading", {name: "ברוך הבא ללוח הבקרה"})).toBeVisible();
 }
 
+// The 5-minute idle timeout (server- and client-enforced) means a test can no
+// longer jump the clock an hour with no input: that correctly logs the user
+// out and a later mouse move must NOT revive the session. The timeline below
+// therefore stays inside 5 minutes while still crossing the 22:59 → 23:00
+// Asia/Jerusalem boundary (UTC+3 in August), from a Los Angeles browser.
 test("Israel greeting refreshes on SPA load, visibility and time boundary", async ({page}) => {
-  await page.clock.install({time: new Date("2026-08-01T18:54:00.000Z")});
+  await page.clock.install({time: new Date("2026-08-01T19:57:30.000Z")}); // 22:57:30 Israel
   await loginAsAdvisor(page);
   const greeting = page.locator(".advisor-hero .eyebrow");
   await expect(greeting).toHaveText(/^ערב טוב, .+/u);
 
-  await page.clock.setSystemTime(new Date("2026-08-01T19:59:30.000Z"));
+  await page.clock.fastForward(120_000); // 22:59:30 Israel
+  await page.mouse.move(250, 250);
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await expect(greeting).toHaveText(/^ערב טוב, .+/u);
 
-  await page.clock.fastForward(31_000);
+  await page.clock.fastForward(31_000); // 23:00:01 Israel
+  await page.mouse.move(260, 250);
   await expect(greeting).toHaveText(/^לילה טוב, .+/u);
 
-  await page.clock.setSystemTime(new Date("2026-08-01T18:54:00.000Z"));
-  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await expect(greeting).toHaveText(/^ערב טוב, .+/u);
   await page.reload();
-  await expect(page.locator(".advisor-hero .eyebrow")).toHaveText(/^ערב טוב, .+/u);
+  await expect(page.locator(".advisor-hero .eyebrow")).toHaveText(/^לילה טוב, .+/u);
 });
