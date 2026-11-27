@@ -238,9 +238,8 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
     Consistent, but unstyled and it blocks automation tooling; replace with
     one app-level confirm dialog in a dedicated change (E2E dialog handlers
     must move with it).
-31. **Redacted free text shows `********`.** In the masked portal/PDF this
-    reads like a password mask. Consider a visible token such as "[פרט מזהה
-    הוסר]" — affects only new case versions (frozen snapshots keep theirs).
+31. ~~**Redacted free text shows `********`.**~~ — DECIDED 2026-11-27 by the
+    product owner: keep `********` as the redaction marker. No change.
 32. **Long document lists in the full PDF** may still start a page with a
     single continuation row (lists longer than 4 rows intentionally flow).
 
