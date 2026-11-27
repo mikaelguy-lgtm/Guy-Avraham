@@ -159,6 +159,18 @@ Scripts present in the repo (`scripts/`): `build-release-artifact.sh` (new,
 `healthcheck-production.sh`, `install-production-timers.sh`,
 `production-common.sh`.
 
+## 2026-11-27 — full-product audit releases (current state; server `77.216.129.137`, see `docs/SERVER_ACCESS.md`)
+
+| Item | Value |
+| --- | --- |
+| Active release | `30a9c1ec803977a880fc2c8a7c07a9e2572bc39c` (`readlink -f /opt/syncash/current`) |
+| Release 1 | `04cfb9b` — security/reliability (trust proxy, legacy submission routes 410, lender-view redaction, contact revocation, outbox recovery, send idempotency, zip-slip, error handling). No migration. Live-verified: rate-limit key = real client IP, forged `X-Forwarded-For` ignored |
+| Release 2 | `30a9c1e` — PDFs without the placeholder loan term / truncation, short case numbers `SC-` + 7 digits (new cases only), Hebrew labels in admin, activity trends bucketed by Israeli day, Heebo typography, deploy/build leak scans list real secret names. No migration |
+| Failed attempt | `31da46a`: its images started but the deploy health gate rejected the bundle (substring match on the label `SMTP_PASSWORD_CLEARED`); rolled back with `rollback-production.sh` to `04cfb9b` (images only, no data touched), fixed forward in `30a9c1e` |
+| nginx | `/etc/nginx/sites-available/app.syncash.co.il.conf` = repo file; `/external/` and `/` now carry HSTS/nosniff/DENY/Permissions-Policy; SPA CSP is **Report-Only** (0 violations on public screens; enforce after a clean real login). Backup of the previous vhost: `/opt/syncash/shared/logs/app.syncash.co.il.conf.bak-20261127T150315` |
+| Row counts | identical before/after both releases (users 2, clients 1, borrowers 1, documents 1, all delivery tables 0) |
+| Checks | 6/6 healthy, `/api/health` 200, 0 error lines in API/worker logs after each deploy, pre-deploy encrypted backups taken by the deploy script |
+
 ## 4. Operational state — live-verified 2026-09-26 (post `d875d23` deploy; `2f0a7b5` evidence retained below)
 
 | Check | Result |
