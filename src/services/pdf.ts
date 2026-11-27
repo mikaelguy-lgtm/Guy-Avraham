@@ -267,9 +267,13 @@ function keepTogether(document: PDFKit.PDFDocument, height: number, title: strin
 // the heading gives every section a coherent first impression without ever
 // forcing a short block to abandon a mostly-empty page.
 const MIN_ROWS_WITH_HEADING = 2;
+// A grid this short is always reserved whole: splitting it left a single
+// card (e.g. the advisor's last field) alone on an otherwise empty page.
+const KEEP_WHOLE_MAX_ROWS = 4;
 
 function minRowsHeight(fields: PdfField[]): number {
-  return Math.min(MIN_ROWS_WITH_HEADING, layoutFieldRows(fields).length) * FIELD_ROW_STEP;
+  const rows = layoutFieldRows(fields).length;
+  return (rows <= KEEP_WHOLE_MAX_ROWS ? rows : MIN_ROWS_WITH_HEADING) * FIELD_ROW_STEP;
 }
 
 // A titled field grid, reserved as one page-break unit for its heading plus
@@ -437,11 +441,16 @@ function primaryIncomeFields(borrower: FullCaseBorrowerSnapshot | MaskedCaseSnap
   }
   return [
     {label: "סוג תעסוקה", value: formatEmploymentType(borrower.employment.employmentType)},
-    {label: "מקום עבודה", value: masked ? "********" : (borrower as FullCaseBorrowerSnapshot).employment.employerName},
+    {label: "מקום עבודה", value: masked ? "מוסתר בשלב זה" : (borrower as FullCaseBorrowerSnapshot).employment.employerName},
     {label: "תפקיד", value: borrower.employment.jobTitle},
     {label: "ותק", value: `${borrower.employment.employmentSeniorityYears} שנים`},
     {label: "הכנסה חודשית נטו", value: formatCurrency(borrower.employment.monthlyNetIncome)}
   ];
+}
+
+function childrenDisplay(borrower: {numberOfChildren: number; childrenAges: number[]}): string {
+  if (!borrower.numberOfChildren) return "אין";
+  return borrower.childrenAges.length ? `${borrower.numberOfChildren} (גילאים ${borrower.childrenAges.join(", ")})` : String(borrower.numberOfChildren);
 }
 
 function loanPurposeDisplay(loanRequest: {purpose: string; purposeOther: string | null}): string {
@@ -555,7 +564,7 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
       borrower,
       fields: [
         {label: "עיר מגורים", value: borrower.residenceCity}, {label: "סטטוס מגורים", value: housingStatusDisplay(borrower)}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
-        {label: "מספר ילדים", value: borrower.numberOfChildren}, {label: "גילאי ילדים", value: borrower.childrenAges.length ? borrower.childrenAges.join(", ") : "אין"}
+        {label: "ילדים", value: childrenDisplay(borrower)}
       ]
     })), title, subtitle);
 
@@ -632,9 +641,8 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
 
     // 2. סיכום פיננסי ומשפחתי
     sectionWithFields(document, "סיכום פיננסי ומשפחתי", [
-      {label: "סך הכנסה", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
-      {label: "סך החזרים", value: formatCurrency(snapshot.totals.monthlyPayments)},
-      {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)},
+      {label: "סך הכנסה חודשית", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
+      {label: "סך החזרים חודשיים", value: formatCurrency(snapshot.totals.monthlyPayments)},
       {label: "גילאי הילדים", value: snapshot.household.childrenAges.length ? snapshot.household.childrenAges.join(", ") : "אין ילדים"}
     ], title, subtitle);
 
@@ -660,7 +668,7 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
         {label: "תאריך לידה", value: formatDate(borrower.dateOfBirth)}, {label: "טלפון", value: borrower.phone, ltr: true},
         {label: "דוא״ל", value: borrower.email, ltr: true}, {label: "עיר מגורים", value: borrower.city},
         {label: "רחוב ומספר בית", value: borrower.streetAddress}, {label: "סטטוס מגורים", value: housingStatusDisplay(borrower)}, {label: "מצב משפחתי", value: formatMaritalStatus(borrower.maritalStatus)},
-        {label: "מספר ילדים", value: borrower.numberOfChildren}, {label: "גילאי ילדים", value: borrower.childrenAges.length ? borrower.childrenAges.join(", ") : "אין"}
+        {label: "ילדים", value: childrenDisplay(borrower)}
       ];
       sectionWithFields(document, `פרטי לווה ${borrower.order} — ${borrowerHeading(borrower)}`, personalFields, title, subtitle);
 
@@ -700,14 +708,12 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     sectionWithParagraph(document, "פירוט העסקה", snapshot.dealDetails, title, subtitle);
 
     // 12. מסמכי התיק
-    const requiredDocuments = documentStatusFields(snapshot.documents, snapshot.borrowers);
-    const documentStatusText = requiredDocuments.every((field) => field.value === "קיים בתיק") ? "כל מסמכי החובה קיימים בתיק." : "חסרים מסמכי חובה בתיק.";
-    const {height: documentStatusHeight} = measureParagraph(document, documentStatusText);
-    keepTogether(document, SECTION_HEADING_HEIGHT + documentStatusHeight + 8 + minRowsHeight(requiredDocuments), title, subtitle, () => {
-      sectionTitle(document, "סטטוס מסמכי חובה", title, subtitle);
-      paragraph(document, documentStatusText, title, subtitle);
-      fieldRows(document, requiredDocuments, title, subtitle);
-    });
+    // The required-documents status used to repeat, card by card, the same
+    // documents listed right below it. Now it is one line: all present, or
+    // exactly which required documents are missing.
+    const missingDocuments = documentStatusFields(snapshot.documents, snapshot.borrowers).filter((field) => field.value === "חסר").map((field) => field.label);
+    const documentStatusText = missingDocuments.length ? `חסרים מסמכי חובה: ${missingDocuments.join(", ")}.` : "כל מסמכי החובה קיימים בתיק.";
+    sectionWithParagraph(document, "סטטוס מסמכי חובה", documentStatusText, title, subtitle);
     if (snapshot.documents.length) {
       sectionWithFields(document, "מסמכים בתיק", snapshot.documents.flatMap((item, index) => [
         {label: `מסמך ${index + 1}`, value: getDocumentDisplayName(item, item.borrowerOrder)},
@@ -718,13 +724,7 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     sectionWithFields(document, "פרטי היועץ", [
       {label: "שם", value: snapshot.advisor.fullName}, {label: "שם העסק", value: snapshot.advisor.businessName},
       {label: "טלפון", value: snapshot.advisor.phone, ltr: true}, {label: "דוא״ל", value: snapshot.advisor.email, ltr: true},
-      // Bug found during layout QA: substituting the Hebrew "לא צוין" fallback
-      // here (instead of passing null) bypassed pdfText()'s own RTL-safe
-      // fallback rendering, since that guard only activates for a genuinely
-      // missing (null/undefined/"") value — a caller-supplied Hebrew string
-      // marked ltr:true rendered backwards ("צוילא"). Passing null lets
-      // pdfText() apply the same fallback the correct (RTL) way.
-      {label: "אתר", value: snapshot.advisor.website, ltr: true}
+      ...(snapshot.advisor.website?.trim() ? [{label: "אתר", value: snapshot.advisor.website, ltr: true}] : [])
     ], title, subtitle);
     finish(document, metadata.createdAt);
   });

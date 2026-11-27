@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEAL_TYPES } from "../../src/domain/clientFields";
-import { emailServerAcceptedMessage, formatAdditionalIncomeType, formatClientStatus, formatCurrency, formatDate, formatDealType, formatEmploymentType, formatHousingStatus, formatIsraelDateTime, formatIsraelTimeGreeting, formatMaritalStatus, formatPropertyType, formatRegion, getIsraelTimeGreeting, maskEmailAddress } from "../../src/utils/formatters";
+import { emailServerAcceptedMessage, formatAdditionalIncomeType, formatClientStatus, formatCurrency, formatDate, formatDealType, formatEmploymentType, formatHousingStatus, formatIsraelDateTime, formatIsraelTimeGreeting, formatMaritalStatus, formatPropertyType, formatRegion, getIsraelTimeGreeting, maskEmailAddress, householdChildrenDisplay } from "../../src/utils/formatters";
 
 describe("Hebrew display formatters", () => {
   it("never exposes business enums", () => {
@@ -74,5 +74,14 @@ describe("Hebrew display formatters", () => {
     expect(message).toContain("נשלח לשרת הדואר");
     expect(message).toContain("ספאם, דואר זבל וקידומי מכירות");
     expect(message).not.toContain("advisor@example.com");
+  });
+});
+
+describe("householdChildrenDisplay", () => {
+  it("shows the household's children once, in Hebrew", () => {
+    expect(householdChildrenDisplay(0, [])).toBe("אין ילדים");
+    expect(householdChildrenDisplay(undefined, undefined)).toBe("אין ילדים");
+    expect(householdChildrenDisplay(2, [4, 8])).toBe("ילד 1: 4 · ילד 2: 8");
+    expect(householdChildrenDisplay(2, [])).toBe("לא צוין");
   });
 });

@@ -233,3 +233,14 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
 29. **Off-server backups.** Daily encrypted backups still live on the same disk
     as the data (Contabo Auto Backup is the only off-host copy). Lesson from the
     2026-11 server loss.
+30. **Confirmations use the native `window.confirm()`** in 9 components
+    (document delete, admin actions, "not interested", relationship change).
+    Consistent, but unstyled and it blocks automation tooling; replace with
+    one app-level confirm dialog in a dedicated change (E2E dialog handlers
+    must move with it).
+31. **Redacted free text shows `********`.** In the masked portal/PDF this
+    reads like a password mask. Consider a visible token such as "[פרט מזהה
+    הוסר]" — affects only new case versions (frozen snapshots keep theirs).
+32. **Long document lists in the full PDF** may still start a page with a
+    single continuation row (lists longer than 4 rows intentionally flow).
+

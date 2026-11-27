@@ -278,3 +278,10 @@ export function maskIdentityNumber(value: string): string {
 export function formatPercentage(value: number): string {
   return `${Number(value.toFixed(2))}%`;
 }
+
+// משק הבית מוצג פעם אחת בתקציר התיק (ולא שוב בכל כרטיס לווה, שם הוא חזר זהה).
+export function householdChildrenDisplay(children: number | undefined, ages: number[] | undefined): string {
+  if (children === 0 || (children === undefined && !ages?.length)) return "אין ילדים";
+  if (!ages?.length) return "לא צוין";
+  return ages.map((age, index) => `ילד ${index + 1}: ${age}`).join(" · ");
+}

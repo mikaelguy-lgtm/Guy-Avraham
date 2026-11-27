@@ -596,3 +596,24 @@ public site — one family, no third-party requests.
 
 **Case status "ACTIVE" reads "בהכנה" (cases only).** "פעיל" next to "נשלח
 לחברות מימון" was ambiguous. User-account status "ACTIVE" still reads "פעיל".
+
+## 2026-11-27 — Second-pass product review (lender experience + PDF)
+
+**Household data is shown once.** Relationship and children belong to the
+household, but the lender portal repeated them in every borrower card (from the
+same `household` object) and the PDFs repeated them three times. They now
+appear once in the case summary; per-borrower PDF cards keep a single
+"ילדים" field.
+
+**PDF grids of up to 4 rows are kept whole.** Splitting them left the
+advisor's last card ("אתר: לא צוין") alone on a fifth page. An empty advisor
+website is omitted. Full-PDF document status is one line (all present / which
+are missing) instead of repeating the uploaded-documents list. Labels match
+across PDF and portal ("סך הכנסה חודשית", "סך החזרים חודשיים"). The masked
+employer reads "מוסתר בשלב זה" instead of asterisks. `PDF_RENDERER_VERSION`
+7 → 8, so stored PDFs re-render from their frozen snapshots on next access
+(content hash is over the data, unchanged).
+
+**Lender decision is reachable from the top.** The decision panel stays after
+the case (read first, decide after), with a "מעבר להחלטה" shortcut beside the
+response deadline.

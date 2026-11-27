@@ -36,9 +36,11 @@ const borrower: ExternalBorrowerDetailsModel = {
 describe("ExternalBorrowerDetails", () => {
   it("renders allowed masked fields and never renders full PII or employer data", () => {
     const markup = renderToStaticMarkup(<ExternalBorrowerCard mode="MASKED" borrower={borrower} index={0} borrowerRelationship="MARRIED" household={{numberOfChildren: 2, childrenAges: [4, 8]}} />);
-    for (const visible of ["לווה 1", "גיל 41", "תל אביב", "נשואים", "ילד 1: 4", "שכיר", "מנהלת כספים", "20,000", "הלוואה אישית"]) expect(markup).toContain(visible);
+    for (const visible of ["לווה 1", "גיל 41", "תל אביב", "שכיר", "מנהלת כספים", "20,000", "הלוואה אישית"]) expect(markup).toContain(visible);
     for (const hidden of ["דנה", "לוי", "123456789", "1985-06-15", "0501234567", "very-long-borrower", "רחוב סודי", "חברה סודית"]) expect(markup).not.toContain(hidden);
     expect(markup).not.toMatch(/SALARIED|MARRIED|LOAN|RENTAL_INCOME/u);
+    // Household data (relationship, children) is shown once in the case summary, not repeated per borrower.
+    expect(markup).not.toContain("משק בית");
   });
 
   it("renders complete verified borrower details with localized values and a long email", () => {

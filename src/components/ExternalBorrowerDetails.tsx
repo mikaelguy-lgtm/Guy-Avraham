@@ -1,10 +1,9 @@
-import {BriefcaseBusiness, CircleUserRound, HandCoins, House, UsersRound} from "lucide-react";
+import {BriefcaseBusiness, CircleUserRound, HandCoins, House} from "lucide-react";
 import type {ReactNode} from "react";
 import {currentIsraelYear} from "../domain/clientFields";
 import {calculateRemainingCommitmentPeriod} from "../utils/commitmentPeriod";
 import {
   formatAdditionalIncomeType,
-  formatBorrowerRelationship,
   formatCurrency,
   formatDate,
   formatEmploymentType,
@@ -90,12 +89,6 @@ function optionalYear(value: number | null | undefined): string {
   return value === null || value === undefined || !Number.isInteger(value) ? missingValue : String(value);
 }
 
-function childrenAges(children: number | undefined, ages: number[] | undefined): string {
-  if (children === 0) return "אין ילדים";
-  if (!ages?.length) return missingValue;
-  return ages.map((age, index) => `ילד ${index + 1}: ${age}`).join(" · ");
-}
-
 function housingStatusDisplay(borrower: ExternalBorrowerDetailsModel): string {
   if (!borrower.housingStatus) return missingValue;
   const label = formatHousingStatus(borrower.housingStatus);
@@ -157,9 +150,7 @@ export function BorrowerLiabilitiesList({liabilities = [], mode, emptyMessage = 
 // Full-portal-only: one borrower's personal/household details (name+age
 // adjacent, per the product rebuild spec). Income, additional incomes and
 // liabilities are rendered as separate top-level sections, not nested here.
-export function BorrowerPersonalCard({mode, borrower, index, borrowerRelationship, household}: {mode: ExternalBorrowerMode; borrower: ExternalBorrowerDetailsModel; index: number; borrowerRelationship?: string | null; household?: HouseholdDetails}) {
-  const childCount = household?.numberOfChildren ?? borrower.numberOfChildren;
-  const childAges = household?.childrenAges ?? borrower.childrenAges;
+export function BorrowerPersonalCard({mode, borrower, index}: {mode: ExternalBorrowerMode; borrower: ExternalBorrowerDetailsModel; index: number; borrowerRelationship?: string | null; household?: HouseholdDetails}) {
   return <article className="external-borrower-card" data-borrower-mode={mode.toLowerCase()}>
     <header className="external-borrower-header">
       <BorrowerNameHeading mode={mode} borrower={borrower} index={index} />
@@ -176,11 +167,6 @@ export function BorrowerPersonalCard({mode, borrower, index, borrowerRelationshi
       {mode === "FULL" && <DetailField label="סטטוס מגורים" value={housingStatusDisplay(borrower)} />}
       {mode === "MASKED" && <DetailField label="עיר מגורים" value={borrower.residenceCity} />}
       {mode === "MASKED" && <DetailField label="סטטוס מגורים" value={housingStatusDisplay(borrower)} />}
-    </DetailsSection>
-    <DetailsSection icon={<UsersRound />} title="משק בית">
-      <DetailField label="קשר בין הלווים" value={formatBorrowerRelationship(borrowerRelationship ?? null)} />
-      <DetailField label="מספר ילדים" value={childCount === undefined ? missingValue : childCount} />
-      <DetailField label="גילאי הילדים" value={childrenAges(childCount, childAges)} wide />
     </DetailsSection>
   </article>;
 }
@@ -239,10 +225,8 @@ export function BorrowerAdditionalIncomesCard({mode, borrower, index}: {mode: Ex
 
 // Legacy single-card layout — still used for the masked/initial review,
 // which was not in scope for the full-portal section-order rebuild.
-export function ExternalBorrowerCard({mode, borrower, index, borrowerRelationship, household}: {mode: ExternalBorrowerMode; borrower: ExternalBorrowerDetailsModel; index: number; borrowerRelationship?: string | null; household?: HouseholdDetails}) {
+export function ExternalBorrowerCard({mode, borrower, index}: {mode: ExternalBorrowerMode; borrower: ExternalBorrowerDetailsModel; index: number; borrowerRelationship?: string | null; household?: HouseholdDetails}) {
   const employment = borrower.employment;
-  const childCount = household?.numberOfChildren ?? borrower.numberOfChildren;
-  const childAges = household?.childrenAges ?? borrower.childrenAges;
   const additionalIncomes = employment?.additionalIncomes ?? (employment?.hasAdditionalIncome && employment.additionalIncomeType ? [{type: employment.additionalIncomeType, monthlyAmount: employment.additionalIncomeAmount, description: employment.additionalIncomeDescription}] : []);
   const additionalIncome = additionalIncomes.reduce((sum, income) => sum + (income.monthlyAmount ?? 0), 0);
   const totalIncome = employment?.monthlyNetIncome === null || employment?.monthlyNetIncome === undefined
@@ -267,12 +251,6 @@ export function ExternalBorrowerCard({mode, borrower, index, borrowerRelationshi
       {mode === "FULL" && <DetailField label="סטטוס מגורים" value={housingStatusDisplay(borrower)} />}
       {mode === "MASKED" && <DetailField label="עיר מגורים" value={borrower.residenceCity} />}
       {mode === "MASKED" && <DetailField label="סטטוס מגורים" value={housingStatusDisplay(borrower)} />}
-    </DetailsSection>
-
-    <DetailsSection icon={<UsersRound />} title="משק בית">
-      <DetailField label="קשר בין הלווים" value={formatBorrowerRelationship(borrowerRelationship ?? null)} />
-      <DetailField label="מספר ילדים" value={childCount === undefined ? missingValue : childCount} />
-      <DetailField label="גילאי הילדים" value={childrenAges(childCount, childAges)} wide />
     </DetailsSection>
 
     <DetailsSection icon={<BriefcaseBusiness />} title="תעסוקה והכנסות">

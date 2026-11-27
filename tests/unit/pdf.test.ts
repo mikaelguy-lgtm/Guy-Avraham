@@ -68,7 +68,9 @@ describe("anonymous PDF", () => {
     // not just a generic heading buffer; see docs/DECISIONS.md) — any
     // content/layout change to pdf.ts must bump this counter so cached MinIO
     // PDFs are regenerated rather than served stale.
-    expect(PDF_RENDERER_VERSION).toBe(7);
+    // 8: second-pass review — small grids kept whole, no empty advisor
+    // website card, one children field, single-line document status.
+    expect(PDF_RENDERER_VERSION).toBe(8);
   });
 
   it("is generated only from the anonymous snapshot", async () => {
@@ -181,6 +183,28 @@ describe("PDF content integrity (2026-11 audit)", () => {
     expect(info.Title?.toLowerCase()).not.toContain("masked");
     expect(info.Author).toBe("SynCash");
     expect(masked.normalizedText).not.toMatch(/סטטוס\s+פעיל/u);
+  });
+
+  it("keeps the advisor block whole and never prints an empty website card", async () => {
+    const full = await pdfContent(await createFullCasePdf(fullSnapshot, {versionNumber: 1, createdAt}));
+    expect(full.normalizedText).not.toContain("אתר");
+    const advisorPage = full.pages.findIndex((page) => page.includes("פרטי היועץ"));
+    expect(advisorPage).toBeGreaterThanOrEqual(0);
+    expect(full.pages[advisorPage]).toContain("advisor@example.com");
+    expect(full.pages.slice(advisorPage + 1).join(" ").trim()).toBe("");
+  });
+
+  it("does not repeat household or document-status data across sections", async () => {
+    const full = await pdfContent(await createFullCasePdf(fullSnapshot, {versionNumber: 1, createdAt}));
+    // Every label is extracted twice (visual glyphs + the hidden logical search layer),
+    // so compare against a label that is known to appear exactly once.
+    const occurrences = (label: string) => full.normalizedText.split(label).length - 1;
+    expect(occurrences("קשר בין הלווים")).toBe(occurrences("מספר לווים"));
+    expect(full.normalizedText).not.toContain("קיים בתיק");
+    expect(full.normalizedText).not.toContain("גילאי ילדים");
+    const masked = await pdfContent(await createMaskedCasePdf(new CaseRedactionService().redact(fullSnapshot).maskedSnapshot, {versionNumber: 1, createdAt}));
+    expect(masked.normalizedText).toContain("מוסתר בשלב זה");
+    expect(masked.normalizedText).not.toContain("****");
   });
 
   it("omits an empty 'notes' card for liabilities without notes", async () => {
