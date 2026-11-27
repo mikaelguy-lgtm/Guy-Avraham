@@ -26,7 +26,10 @@ async function login(page: Page, role: "SUPER_ADMIN" | "ADVISOR") {
   // ממתינים שהאפליקציה תסיים את הטעינה הראשונית, ואז מקפיאים את השעון: מכאן הזמן זז רק דרך runFor,
   // כך שזמן אמיתי שעובר בין פעולות הבדיקה (במיוחד בין שתי לשוניות) לא נספר כחוסר פעילות.
   await expect(page.getByRole("button", {name: "יציאה"}).first()).toBeVisible();
-  await page.clock.pauseAt(Date.now());
+  // מקפיאים לפי השעון של הדפדפן עצמו (לא Date.now של Node): שני השעונים רצים בנפרד, ו-pauseAt
+  // לרגע שהדפדפן כבר עבר נכשל. 250ms קדימה מכסים את זמן ההלוך-חזור, והבדיקה הצפופה ביותר (4:29 מול 4:30) משאירה שנייה שלמה.
+  const pageNow = await page.evaluate(() => Date.now());
+  await page.clock.pauseAt(pageNow + 250);
 }
 
 const warning = (page: Page) => page.getByRole("alertdialog");

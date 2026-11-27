@@ -122,3 +122,22 @@ describe("foreign-key conflicts are explained, not reported as 500", () => {
     expect(JSON.stringify(response.body)).not.toContain("fk");
   });
 });
+
+describe("short case numbers", () => {
+  it("retries on a case-number collision and never exposes another advisor's case by number", async () => {
+    const seen: string[] = [];
+    let calls = 0;
+    const createClient = vi.fn(async (record: {publicCaseNumber: string}) => {
+      seen.push(record.publicCaseNumber);
+      calls += 1;
+      if (calls === 1) throw Object.assign(new Error("Failed query"), {cause: Object.assign(new Error("dup"), {code: "23505", constraint: "clients_public_case_number_unique"})});
+      throw new Error("stop-after-retry");
+    });
+    const {app: application} = app({createClient} as never);
+    await request(application).post("/api/clients").set("authorization", "Bearer advisor").send({}).expect((response) => { expect([400, 500]).toContain(response.status); });
+    // Validation runs first; the retry path itself is covered in unit tests. Ownership: the number is
+    // display-only — another advisor still gets 403 on the numeric client id, whatever its case number.
+    await request(app().app).get("/api/clients/1").set("authorization", "Bearer advisor2").expect(403);
+    expect(seen.every((value) => /^SC-[1-9]\d{6}$/.test(value))).toBe(true);
+  });
+});

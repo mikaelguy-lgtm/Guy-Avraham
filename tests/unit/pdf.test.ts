@@ -147,3 +147,46 @@ describe("anonymous PDF", () => {
     expect(maskedText).toContain("עיקולים");
   });
 });
+
+describe("PDF content integrity (2026-11 audit)", () => {
+  const createdAt = new Date("2026-11-27T10:30:00.000Z");
+
+  it("never prints the placeholder loan term the advisor was never asked for", async () => {
+    const masked = await pdfContent(await createMaskedCasePdf(new CaseRedactionService().redact(fullSnapshot).maskedSnapshot, {versionNumber: 1, createdAt}));
+    const full = await pdfContent(await createFullCasePdf(fullSnapshot, {versionNumber: 1, createdAt}));
+    for (const content of [masked, full]) {
+      expect(content.normalizedText).not.toContain("תקופה מבוקשת");
+      expect(content.normalizedText).not.toContain("חודשים 1");
+      expect(content.normalizedText).toContain("(LTV)");
+    }
+  });
+
+  it("shows long values in full instead of truncating them with an ellipsis", async () => {
+    const longEmployer = "חברת השקעות ונדל״ן בינלאומית מאוחדת בע״מ";
+    const longTitle = "סמנכ״לית כספים ומנהלת פיתוח עסקי אזורי";
+    const snapshot: FullCaseSnapshot = structuredClone(fullSnapshot);
+    snapshot.borrowers[0].employment.employerName = longEmployer;
+    snapshot.borrowers[0].employment.jobTitle = longTitle;
+    const full = await pdfContent(await createFullCasePdf(snapshot, {versionNumber: 1, createdAt}));
+    expect(full.normalizedText).not.toContain("…");
+    expect(full.normalizedText).toContain("מאוחדת");
+    expect(full.normalizedText).toContain("אזורי");
+  });
+
+  it("uses a Hebrew document title without the word 'masked' and keeps internal status off the initial PDF", async () => {
+    const maskedBuffer = await createMaskedCasePdf(new CaseRedactionService().redact(fullSnapshot).maskedSnapshot, {versionNumber: 1, createdAt});
+    const masked = await pdfContent(maskedBuffer);
+    const {info} = await masked.document.getMetadata() as {info: {Title?: string; Author?: string}};
+    expect(info.Title).toContain("תיק לבחינה ראשונית");
+    expect(info.Title?.toLowerCase()).not.toContain("masked");
+    expect(info.Author).toBe("SynCash");
+    expect(masked.normalizedText).not.toMatch(/סטטוס\s+פעיל/u);
+  });
+
+  it("omits an empty 'notes' card for liabilities without notes", async () => {
+    const snapshot: FullCaseSnapshot = structuredClone(fullSnapshot);
+    snapshot.borrowers[0].liabilities = snapshot.borrowers[0].liabilities.map((liability) => ({...liability, notes: ""}));
+    const full = await pdfContent(await createFullCasePdf(snapshot, {versionNumber: 1, createdAt}));
+    expect(full.normalizedText).not.toContain("הערות");
+  });
+});

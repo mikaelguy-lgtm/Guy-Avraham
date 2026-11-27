@@ -5,13 +5,16 @@ interface SynCashLogoProps {
   showText?: boolean;
   showSubtitle?: boolean;
   className?: string;
+  // "inline": סמל ליד שם המותג — לכותרות נמוכות (למשל הכותרת במובייל, 68px), שבהן הערימה האנכית נחתכת.
+  layout?: "stacked" | "inline";
 }
 
 export default function SynCashLogo({
   size = "md",
   showText = true,
   showSubtitle = true,
-  className = ""
+  className = "",
+  layout = "stacked"
 }: SynCashLogoProps) {
   // Determine dimensions based on size
   const dimensions = {
@@ -20,13 +23,14 @@ export default function SynCashLogo({
     lg: { symbolSize: 96, textSize: "text-3xl", subtitleSize: "text-sm" },
     xl: { symbolSize: 140, textSize: "text-4xl", subtitleSize: "text-base" }
   }[size];
+  const symbolSize = layout === "inline" ? Math.min(dimensions.symbolSize, 32) : dimensions.symbolSize;
 
   return (
-    <div className={`flex flex-col items-center justify-center text-center ${className}`}>
+    <div className={`${layout === "inline" ? "flex flex-row items-center gap-2" : "flex flex-col items-center justify-center text-center"} ${className}`}>
       {/* SVG Icon Logo symbol */}
       <svg
-        width={dimensions.symbolSize}
-        height={dimensions.symbolSize}
+        width={symbolSize}
+        height={symbolSize}
         viewBox="0 0 200 200"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
@@ -100,20 +104,21 @@ export default function SynCashLogo({
 
       {/* Brand Text */}
       {showText && (
-        <div className="mt-4 select-none">
-          <h2
-            className={`font-sans tracking-[0.25em] font-extrabold uppercase text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-slate-100 to-amber-200 ${dimensions.textSize} leading-none`}
+        <div className={layout === "inline" ? "select-none" : "mt-4 select-none"}>
+          {/* לא כותרת (h2): שם המותג מופיע בכל מסך ואסור שיזהם את מבנה הכותרות של קורא המסך. */}
+          <span
+            className={`block font-sans tracking-[0.25em] font-extrabold uppercase text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-slate-100 to-amber-200 ${dimensions.textSize} leading-none`}
             style={{ fontFamily: "'Space Grotesk', sans-serif" }}
           >
-            — SYNCASH —
-          </h2>
+            {layout === "inline" ? "SYNCASH" : "— SYNCASH —"}
+          </span>
 
           {/* Thin elegant separator with center dot */}
-          <div className="flex items-center justify-center gap-3 my-2.5 opacity-60">
+          {layout !== "inline" && <div className="flex items-center justify-center gap-3 my-2.5 opacity-60" aria-hidden="true">
             <div className="h-[1px] w-12 bg-gradient-to-r from-transparent to-amber-500/50"></div>
             <div className="w-1 h-1 rounded-full bg-amber-400"></div>
             <div className="h-[1px] w-12 bg-gradient-to-l from-transparent to-amber-500/50"></div>
-          </div>
+          </div>}
 
           {showSubtitle && (
             <p className={`font-medium tracking-wide text-amber-400/90 font-sans ${dimensions.subtitleSize}`}>

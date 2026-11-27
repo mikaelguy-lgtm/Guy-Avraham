@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { formatActorType } from "../utils/auditLabels";
+import { formatDeliveryEvent } from "../utils/formatters";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, FileText, X } from "lucide-react";
 import type { AdminCaseDetail } from "../types";
@@ -74,7 +76,7 @@ export default function AdminCaseDetailView() {
     </section>
 
     <section className="panel"><header className="section-heading compact"><div><h2>ציר זמן</h2></div></header>
-      {detail.timeline.length === 0 ? <div className="empty-state">אין אירועים לתיק זה.</div> : <ul className="timeline">{detail.timeline.map((event, index) => <li key={index}><span /><div><strong>{event.type}</strong><p>{formatIsraelDateTime(event.createdAt)} · {event.actorType}</p></div></li>)}</ul>}
+      {detail.timeline.length === 0 ? <div className="empty-state">אין אירועים לתיק זה.</div> : <ul className="timeline">{detail.timeline.map((event, index) => <li key={index}><span /><div><strong>{formatDeliveryEvent(event.type)}</strong><p>{formatIsraelDateTime(event.createdAt)} · {formatActorType(event.actorType)}</p></div></li>)}</ul>}
     </section>
 
     <section className="panel"><header className="section-heading compact"><div><h2>היסטוריית דוא״ל</h2><p>מיילים שנקשרו לתיק זה בפועל בלבד (דרך שליחה/הזמנה), לא לפי כתובת נמען.</p></div></header>

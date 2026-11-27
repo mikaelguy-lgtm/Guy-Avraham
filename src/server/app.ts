@@ -31,6 +31,7 @@ import type { LegalDocumentType } from "../domain/legalDocuments.js";
 import { privacyRequestSubmitSchema, privacyRequestUpdateSchema } from "../domain/privacyRequests.js";
 import type { GeminiService } from "../services/gemini.js";
 import { EncryptionService, hashToken } from "../utils/crypto.js";
+import { generateCaseNumber, isPublicCaseNumberConflict } from "../domain/caseNumber.js";
 import { calculateAge } from "../utils/age.js";
 import type { SecretProvider } from "../utils/secretManager.js";
 import {DeliveryError} from "../domain/lenderDelivery.js";
@@ -774,10 +775,16 @@ export function createApp(services: AppServices) {
     const input = newClientInputSchema.parse(request.body);
     const advisorId = request.user!.advisorId;
     if (!advisorId) { response.status(403).json({error: "ADVISOR_PROFILE_REQUIRED"}); return; }
-    const publicCaseNumber = `SC-${randomBytes(8).toString("hex").toUpperCase()}`;
-    const client = await services.store.createClient({
-      publicCaseNumber, advisorId, ...clientMutationRecord(input, services.encryption, request.user!.id)
-    });
+    // מספר תיק קצר (SC-1234567). במקרה נדיר של התנגשות ב-unique — מנסים מספר חדש.
+    const mutation = clientMutationRecord(input, services.encryption, request.user!.id);
+    let client: Awaited<ReturnType<typeof services.store.createClient>> | null = null;
+    let publicCaseNumber = "";
+    for (let attempt = 0; attempt < 5 && !client; attempt += 1) {
+      publicCaseNumber = generateCaseNumber();
+      try { client = await services.store.createClient({publicCaseNumber, advisorId, ...mutation}); }
+      catch (error) { if (!isPublicCaseNumberConflict(error) || attempt === 4) throw error; }
+    }
+    if (!client) throw new Error("CASE_NUMBER_ALLOCATION_FAILED");
     await services.store.addAudit(request.user!.id, "CLIENT_CREATED", "client", client.id, {publicCaseNumber}, request.requestId, request.ip, request.header("user-agent"));
     await notifySuperAdminsOfEvent("SUPER_ADMIN_CASE_CREATED", "תיק חדש נוצר", `תיק ${publicCaseNumber} נוצר על ידי ${request.user!.firstName} ${request.user!.lastName}.`, "client", client.id, `CASE_CREATED:${client.id}`, (settings) => settings.notifyNewCase, "SUPER_ADMIN_CASE_CREATED", {clientId: client.id}, request.requestId);
     response.status(201).json(await publicClient(client, services.store, services.encryption));

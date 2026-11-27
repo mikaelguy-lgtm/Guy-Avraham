@@ -1,9 +1,17 @@
 @import "tailwindcss";
 
+/* Heebo — אותו פונט כמו באתר הציבורי, מוגש מהשרת שלנו (ללא צד שלישי, תואם CSP). */
+@font-face { font-family: 'Heebo'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/Heebo-400-hebrew.woff2') format('woff2'); unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F; }
+@font-face { font-family: 'Heebo'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/Heebo-400-latin.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Heebo'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/Heebo-500-hebrew.woff2') format('woff2'); unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F; }
+@font-face { font-family: 'Heebo'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/Heebo-500-latin.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Heebo'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/Heebo-700-hebrew.woff2') format('woff2'); unicode-range: U+0307-0308, U+0590-05FF, U+200C-2010, U+20AA, U+25CC, U+FB1D-FB4F; }
+@font-face { font-family: 'Heebo'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/Heebo-700-latin.woff2') format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
 :root {
   color: #e8eef8;
   background: #020618;
-  font-family: Inter, Arial, sans-serif;
+  font-family: "Heebo", system-ui, "Segoe UI", Arial, sans-serif;
   font-synthesis: none;
   --bg: #020618;
   --surface: rgba(15, 23, 43, .88);
@@ -812,3 +820,20 @@ h4 { font-size: 1rem; font-weight: 700; }
 .public-site-status.inactive { color: #f1c96f; background: rgba(220, 167, 55, .14); border: 1px solid rgba(220, 167, 55, .35); }
 .public-site-hint { margin: .35rem 0 0; color: var(--muted); font-size: .9rem; }
 .public-site-preview { direction: ltr; unicode-bidi: isolate; word-break: break-all; color: var(--muted); font-size: .85rem; }
+
+/* --- 2026-11 audit: admin dashboard trends, system health meta --- */
+.activity-trends { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .8rem; }
+.activity-trend { display: grid; gap: .35rem; padding: .9rem 1rem; border: 1px solid var(--border-soft); border-radius: 14px; background: rgba(3, 11, 27, .48); }
+.activity-trend header { display: flex; align-items: center; gap: .5rem; color: var(--muted); font-size: .85rem; font-weight: 600; }
+.activity-trend-dot { inline-size: 9px; block-size: 9px; border-radius: 50%; flex: none; }
+.activity-trend strong { font-size: 1.6rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.activity-trend svg { inline-size: 100%; block-size: 56px; }
+.activity-trend small { color: var(--muted); font-size: .78rem; }
+.recent-activity-toggle { margin-block-start: .6rem; }
+.system-health-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .8rem; margin: 0; }
+.system-health-meta > div { display: grid; gap: .3rem; padding: .85rem 1rem; border: 1px solid var(--border-soft); border-radius: 13px; background: rgba(3, 11, 27, .35); }
+.system-health-meta > div.attention { border-color: rgba(251, 113, 133, .45); background: rgba(127, 29, 29, .16); }
+.system-health-meta dt { color: var(--muted); font-size: .82rem; }
+.system-health-meta dd { margin: 0; display: flex; align-items: baseline; gap: .6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.system-health-meta dd a { color: #67e8f9; font-size: .82rem; font-weight: 600; }
+.system-health-meta .muted-value { color: var(--muted); font-weight: 500; font-size: .9rem; }

@@ -17,6 +17,7 @@ describe("Hebrew display formatters", () => {
     expect(formatRegion("SOUTH")).toBe("דרום");
     expect(formatRegion("JERUSALEM")).toBe("ירושלים");
     expect(formatClientStatus("DRAFT")).toBe("טיוטה");
+    expect(formatClientStatus("ACTIVE")).toBe("בהכנה");
     expect(formatMaritalStatus("COMMON_LAW")).toBe("ידועים בציבור");
     expect(formatMaritalStatus("SEPARATED")).toBe("פרוד/ה");
     expect(formatAdditionalIncomeType("RENTAL_INCOME")).toBe("שכר דירה");

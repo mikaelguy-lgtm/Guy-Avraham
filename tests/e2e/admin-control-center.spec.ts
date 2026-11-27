@@ -15,7 +15,7 @@ test("SUPER ADMIN: dashboard loads with real KPIs, then drills into a case via t
   await loginAsSuperAdmin(page);
 
   await expect(page.getByRole("heading", {name: "לוח הבקרה"})).toBeVisible();
-  await expect(page.getByRole("region", {name: "KPI ראשיים"})).toBeVisible();
+  await expect(page.getByRole("region", {name: "מדדים ראשיים"})).toBeVisible();
   await expect(page.getByText("יועצים סה״כ")).toBeVisible();
   await expect(page.getByText("תיקים סה״כ")).toBeVisible();
 

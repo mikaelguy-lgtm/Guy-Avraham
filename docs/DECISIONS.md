@@ -548,3 +548,51 @@ pre-existing duplicate-reminder rows from before this fix were left in
 `email_outbox` untouched, as historical evidence, not retroactively
 cleaned up — see `docs/PRODUCTION_HANDOFF.md` section 4 and
 `docs/TODO.md` item 19.
+
+## 2026-11-27 full-product audit — decisions
+
+**Trust exactly one proxy hop (`app.set("trust proxy", 1)`).** The API is
+only reachable through the host nginx on `127.0.0.1:3181`, which appends the
+real client address last in `X-Forwarded-For`. Without this, `request.ip` was
+the Docker gateway for every visitor, so every anonymous rate limit (login
+attempts, forgot-password, lender OTP) was one bucket shared by the whole
+internet. Rightmost-hop trust is spoof-safe; verified live on 2026-11-27
+(a forged `X-Forwarded-For` was ignored).
+
+**Legacy advisor-selected submission routes return 410.** The UI stopped
+using `POST /api/clients/:id/submissions` and `/api/submissions/:id/retry-delivery`
+long ago, but the API still accepted them — letting an advisor pick lenders,
+skip the immutable case version and send unthrottled English emails. Existing
+history (GET) stays readable.
+
+**Initial lender view sanitizes every free-text field.** `loanRequest.purposeOther`,
+`jobTitle` and `property.city` now go through the same redactor as other
+free text; the redactor also catches Israeli ID/phone formats with separators,
+`972` without `+`, `www.` links and the advisor's own details. Already-sent
+versions are immutable and are not re-redacted.
+
+**The placeholder loan term is never shown.** The advisor is never asked for a
+term; the store writes `requested_term_months = 1`, and PDFs/portal printed
+"1 חודשים" to every lender. Removed from all displays. Adding a real term field
+is a product decision (see `docs/TODO.md`).
+
+**Short display case number `SC-` + 7 random digits (new cases only).** Same
+`clients.public_case_number` column (varchar 32, unique) — no migration.
+Random, not sequential, so it does not reveal case volume to lenders. A
+unique-constraint collision retries with a new number. Existing cases keep
+their 16-hex numbers; nothing historical is rewritten. Authorization never
+uses the case number (numeric id + ownership check).
+
+**SPA CSP shipped Report-Only.** A wrong CSP would lock every user out of
+Firebase sign-in, and a real production login could not be exercised from the
+audit session. Switch to enforcing after one clean real login (no violations in
+the console). Zod's `new Function` feature probe is disabled with
+`z.config({jitless: true})` so it does not produce reports.
+
+**App typography = Heebo, self-hosted.** The app declared `Inter, Arial`; Inter
+has no Hebrew glyphs, so every Hebrew character fell back to Arial. The app now
+uses the same self-hosted Heebo (400/500/700, Hebrew+Latin subsets) as the
+public site — one family, no third-party requests.
+
+**Case status "ACTIVE" reads "בהכנה" (cases only).** "פעיל" next to "נשלח
+לחברות מימון" was ambiguous. User-account status "ACTIVE" still reads "פעיל".

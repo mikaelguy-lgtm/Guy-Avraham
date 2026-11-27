@@ -198,3 +198,30 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
     this phase's code changes actually touched. Worth a dedicated pass later
     if the team wants full automated coverage of the untouched-but-already-
     correct paths too.
+
+## Open from the 2026-11-27 full-product audit
+
+22. **Borrower removal is a hard delete.** Removing a co-borrower whose
+    document is referenced by a sent (immutable) case version cannot succeed
+    (FK). The API now answers 409 with a Hebrew explanation instead of 500; the
+    real fix is a borrower soft-delete (additive migration + query updates).
+23. **Full-portal re-entry after the 12-hour session.** The 7-day access grant
+    exists, but no `FULL_ACCESS` email with the access link is ever sent, so a
+    lender whose session ended cannot get back in. Business decision: send the
+    access link after "Interested", or shorten the grant to the session.
+24. **Loan term.** Decide whether the advisor should enter a requested term
+    (then add the field, validation and display) or keep it out of the product.
+25. **Liability notes are required for every liability.** Friction for the
+    advisor with little lender value; consider making them optional.
+26. **SPA CSP: switch Report-Only → enforcing** after one real login with no
+    console violations (see DECISIONS 2026-11-27).
+27. **Advisor notifications/SSE are process-local.** Events published by the
+    worker reach no browser; expiry/delivery-failure notifications appear only
+    after a reload. Use Postgres LISTEN/NOTIFY or Redis pub/sub.
+28. **Missing indexes** identified by query pattern (email_outbox by
+    submission/template/status and invitation, notifications by user/unread,
+    audit_logs by created_at and entity) — add with EXPLAIN evidence once data
+    volume makes it measurable.
+29. **Off-server backups.** Daily encrypted backups still live on the same disk
+    as the data (Contabo Auto Backup is the only off-host copy). Lesson from the
+    2026-11 server loss.

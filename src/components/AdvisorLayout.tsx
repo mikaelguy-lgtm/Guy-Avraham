@@ -32,7 +32,7 @@ export default function AdvisorLayout({user}: {user: CurrentUser}) {
   </aside>;
 
   return <AdvisorNotificationsProvider><div className="advisor-app" dir="rtl">
-    <header className="advisor-mobile-header"><SynCashLogo size="sm" showSubtitle={false} /><div className="advisor-mobile-actions"><AdvisorNotificationBell /><button type="button" className="icon-button" aria-label={drawerOpen ? "סגירת תפריט" : "פתיחת תפריט"} onClick={() => setDrawerOpen((open) => !open)}>{drawerOpen ? <X /> : <Menu />}</button></div></header>
+    <header className="advisor-mobile-header"><SynCashLogo size="sm" showSubtitle={false} layout="inline" /><div className="advisor-mobile-actions"><AdvisorNotificationBell /><button type="button" className="icon-button" aria-label={drawerOpen ? "סגירת תפריט" : "פתיחת תפריט"} onClick={() => setDrawerOpen((open) => !open)}>{drawerOpen ? <X /> : <Menu />}</button></div></header>
     {sidebar}
     {drawerOpen && <button type="button" className="drawer-backdrop" aria-label="סגירת תפריט" onClick={() => setDrawerOpen(false)} />}
     <div className="advisor-main"><header className="advisor-topbar"><div><strong>SynCash</strong><small>סביבת העבודה של היועץ</small></div><AdvisorNotificationBell /></header><Outlet /></div>

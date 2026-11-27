@@ -32,17 +32,17 @@ export default function AdminSystemHealthView() {
       <header className="section-heading compact"><div><h1>בריאות מערכת</h1><p>סטטוס חי של רכיבי המערכת. מתעדכן אוטומטית כל 30 שניות.</p></div></header>
       {loading ? <div className="empty-state">בודק סטטוס…</div> : !health ? <div className="empty-state">לא ניתן היה לטעון את סטטוס המערכת.</div> : <>
         <div className="system-health-grid">
-          <StatusRow label="API" status={health.api} />
-          <StatusRow label="Worker" status={health.worker} />
-          <StatusRow label="PostgreSQL" status={health.postgres} />
-          <StatusRow label="Redis" status={health.redis} />
-          <StatusRow label="MinIO" status={health.minio} />
+          <StatusRow label="שרת האפליקציה (API)" status={health.api} />
+          <StatusRow label="תהליך רקע — מיילים ותזכורות (Worker)" status={health.worker} />
+          <StatusRow label="מסד נתונים (PostgreSQL)" status={health.postgres} />
+          <StatusRow label="מגבלות קצב ומטמון (Redis)" status={health.redis} />
+          <StatusRow label="אחסון מסמכים (MinIO)" status={health.minio} />
         </div>
-        <dl className="company-stat-row">
-          <div><small>Heartbeat אחרון של ה-Worker</small><strong>{health.workerHeartbeatAt ? formatIsraelDateTime(health.workerHeartbeatAt) : "לא זמין"}</strong></div>
-          <div><small>מיילים שנכשלו</small><strong>{health.failedEmailCount}</strong></div>
-          <div><small>מיילים בתור</small><strong>{health.pendingEmailCount}</strong></div>
-          <div><small>גיבוי אחרון</small><strong>{health.lastBackup}</strong></div>
+        <dl className="system-health-meta">
+          <div><dt>סבב מוצלח אחרון של תהליך הרקע</dt><dd>{health.workerHeartbeatAt ? formatIsraelDateTime(health.workerHeartbeatAt) : "לא נרשם"}</dd></div>
+          <div className={health.failedEmailCount > 0 ? "attention" : undefined}><dt>מיילים שנכשלו</dt><dd>{health.failedEmailCount}{health.failedEmailCount > 0 && <Link to="/admin/email-logs">לפירוט</Link>}</dd></div>
+          <div><dt>מיילים ממתינים בתור</dt><dd>{health.pendingEmailCount}</dd></div>
+          <div><dt>גיבוי אחרון</dt><dd className="muted-value">{health.lastBackup}</dd></div>
         </dl>
       </>}
     </section>

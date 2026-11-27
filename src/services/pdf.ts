@@ -6,7 +6,7 @@ import {requiredDocumentLabel} from "../domain/requiredDocuments.js";
 import {getDocumentDisplayName} from "../utils/documentDisplay.js";
 import {REQUIRED_BORROWER_DOCUMENT_TYPES, REQUIRED_CLIENT_DOCUMENT_TYPES, currentIsraelYear} from "../domain/clientFields.js";
 import {
-  formatAdditionalIncomeType, formatBorrowerRelationship, formatClientStatus, formatCurrency, formatDate, formatDealType,
+  formatAdditionalIncomeType, formatBorrowerRelationship, formatCurrency, formatDate, formatDealType,
   formatEmploymentType, formatHousingStatus, formatLiabilityType, formatMaritalStatus, formatPropertyType
 } from "../utils/formatters.js";
 import {snapshotDisplayEntries} from "../utils/snapshotDisplay.js";
@@ -19,7 +19,7 @@ const colors = {
   goldSoft: "#fbf5df", ink: "#172b3a", muted: "#64748b", line: "#dbe5ec", paper: "#f7fafc", white: "#ffffff"
 };
 
-const page = {left: 42, right: 553, top: 118, bottom: 760, width: 511};
+const page = {left: 42, right: 553, top: 102, bottom: 762, width: 511};
 const require = createRequire(import.meta.url);
 const bidiFactory = require("bidi-js") as () => {
   getEmbeddingLevels(text: string, direction?: "ltr" | "rtl"): {levels: Uint8Array; paragraphs: Array<{start: number; end: number; level: number}>};
@@ -70,7 +70,7 @@ function createDocument(title: string, producedAt: Date): PDFKit.PDFDocument {
     size: "A4",
     margin: 42,
     bufferPages: true,
-    info: {Title: title, Author: "SynCash", Subject: "SynCash financing case", CreationDate: producedAt, ModDate: producedAt}
+    info: {Title: title, Author: "SynCash", Subject: "SynCash — תיק מימון", CreationDate: producedAt, ModDate: producedAt}
   });
   const documentInfo = document.info as PDFKit.DocumentInfo & Record<string, string>;
   documentInfo.PDFRendererVersion = String(PDF_RENDERER_VERSION);
@@ -162,13 +162,13 @@ function drawLogo(document: PDFKit.PDFDocument, x: number, y: number, scale = 0.
 }
 
 export function drawPageHeader(document: PDFKit.PDFDocument, title: string, subtitle: string): void {
-  document.rect(0, 0, 595.28, 96).fill(colors.navy);
-  document.rect(0, 92, 595.28, 4).fill(colors.gold);
-  drawLogo(document, 506, 17);
-  document.font(PDF_BOLD_FONT_NAME).fontSize(19).fillColor(colors.white);
-  pdfText(document, title, page.left, 25, {width: 445, align: "right"});
+  document.rect(0, 0, 595.28, 82).fill(colors.navy);
+  document.rect(0, 79, 595.28, 3).fill(colors.gold);
+  drawLogo(document, 506, 11);
+  document.font(PDF_BOLD_FONT_NAME).fontSize(18).fillColor(colors.white);
+  pdfText(document, title, page.left, 18, {width: 445, align: "right"});
   document.font(PDF_REGULAR_FONT_NAME).fontSize(9.5).fillColor("#b9c9d8");
-  pdfText(document, subtitle, page.left, 57, {width: 445, align: "right"});
+  pdfText(document, subtitle, page.left, 48, {width: 445, align: "right"});
   document.y = page.top;
 }
 
@@ -211,8 +211,30 @@ function sectionTitle(document: PDFKit.PDFDocument, label: string, title: string
 
 interface PdfField {label: string; value: string | number | null | undefined; ltr?: boolean}
 
+// גובה שורת שדות (כרטיס 40 + רווח 7). ערך ארוך מקבל שורה ברוחב מלא במקום להיחתך ב-"…" —
+// בתיק המלא זה מידע שגוף המימון צריך לראות במלואו (שם מעסיק, תפקיד, כתובת).
+// אותו כלל משמש גם לפריסה וגם להערכת הגובה לשבירת עמודים, כך שהשניים תמיד מסכימים.
+const FIELD_ROW_STEP = 47;
+const HALF_WIDTH_VALUE_CHARACTERS = 36;
+function isWideField(field: PdfField): boolean {
+  return String(field.value ?? "").length > HALF_WIDTH_VALUE_CHARACTERS;
+}
+function layoutFieldRows(fields: PdfField[]): PdfField[][] {
+  const rows: PdfField[][] = [];
+  let pending: PdfField | null = null;
+  for (const field of fields) {
+    if (isWideField(field)) {
+      if (pending) { rows.push([pending]); pending = null; }
+      rows.push([field]);
+      continue;
+    }
+    if (pending) { rows.push([pending, field]); pending = null; } else pending = field;
+  }
+  if (pending) rows.push([pending]);
+  return rows;
+}
 function fieldRowsHeight(fields: PdfField[]): number {
-  return Math.ceil(fields.length / 2) * 53;
+  return layoutFieldRows(fields).length * FIELD_ROW_STEP;
 }
 
 // A lighter-weight heading than sectionTitle(), for a card/block nested
@@ -247,7 +269,7 @@ function keepTogether(document: PDFKit.PDFDocument, height: number, title: strin
 const MIN_ROWS_WITH_HEADING = 2;
 
 function minRowsHeight(fields: PdfField[]): number {
-  return Math.min(MIN_ROWS_WITH_HEADING, Math.ceil(fields.length / 2)) * 53;
+  return Math.min(MIN_ROWS_WITH_HEADING, layoutFieldRows(fields).length) * FIELD_ROW_STEP;
 }
 
 // A titled field grid, reserved as one page-break unit for its heading plus
@@ -309,34 +331,33 @@ function sectionWithBorrowerFieldsCards(document: PDFKit.PDFDocument, label: str
 }
 
 function fieldRows(document: PDFKit.PDFDocument, fields: PdfField[], title: string, subtitle: string): void {
-  for (let index = 0; index < fields.length; index += 2) {
-    ensureSpace(document, 55, title, subtitle);
-    const row = fields.slice(index, index + 2);
+  for (const row of layoutFieldRows(fields)) {
+    ensureSpace(document, FIELD_ROW_STEP + 2, title, subtitle);
     const y = document.y;
     // A lone trailing field (odd field count) renders as one full-width card
     // instead of a half-width card beside a blank half — a small but visible
     // fix for the "wasted whitespace" look a dangling single field otherwise has.
     if (row.length === 1) {
       const [field] = row;
-      document.roundedRect(page.left, y, page.width, 45, 7).fillAndStroke(colors.paper, colors.line);
+      document.roundedRect(page.left, y, page.width, 40, 7).fillAndStroke(colors.paper, colors.line);
       document.font(PDF_REGULAR_FONT_NAME).fontSize(8).fillColor(colors.muted);
-      pdfText(document, field.label, page.left + 10, y + 8, {width: page.width - 20, align: "right"});
+      pdfText(document, field.label, page.left + 10, y + 7, {width: page.width - 20, align: "right"});
       document.font(PDF_BOLD_FONT_NAME).fontSize(10.2).fillColor(colors.ink);
-      pdfText(document, field.value, page.left + 10, y + 23, {width: page.width - 20, align: "right", ellipsis: true, direction: field.ltr ? "ltr" : "rtl"});
-      document.y = y + 53;
+      pdfText(document, field.value, page.left + 10, y + 20, {width: page.width - 20, align: "right", ellipsis: true, direction: field.ltr ? "ltr" : "rtl"});
+      document.y = y + FIELD_ROW_STEP;
       continue;
     }
     const gap = 10;
     const width = (page.width - gap) / 2;
     row.forEach((field, column) => {
       const x = page.right - width - column * (width + gap);
-      document.roundedRect(x, y, width, 45, 7).fillAndStroke(colors.paper, colors.line);
+      document.roundedRect(x, y, width, 40, 7).fillAndStroke(colors.paper, colors.line);
       document.font(PDF_REGULAR_FONT_NAME).fontSize(8).fillColor(colors.muted);
-      pdfText(document, field.label, x + 10, y + 8, {width: width - 20, align: "right"});
+      pdfText(document, field.label, x + 10, y + 7, {width: width - 20, align: "right"});
       document.font(PDF_BOLD_FONT_NAME).fontSize(10.2).fillColor(colors.ink);
-      pdfText(document, field.value, x + 10, y + 23, {width: width - 20, align: "right", ellipsis: true, direction: field.ltr ? "ltr" : "rtl"});
+      pdfText(document, field.value, x + 10, y + 20, {width: width - 20, align: "right", ellipsis: true, direction: field.ltr ? "ltr" : "rtl"});
     });
-    document.y = y + 53;
+    document.y = y + FIELD_ROW_STEP;
   }
 }
 
@@ -367,9 +388,9 @@ function liabilityHeading(liability: FullCaseLiabilitySnapshot, index: number): 
 function liabilityFields(liability: FullCaseLiabilitySnapshot): PdfField[] {
   const fields: PdfField[] = [
     {label: "החזר חודשי", value: formatCurrency(liability.monthlyPayment)},
-    {label: "תאריך סיום", value: liability.endDate ? formatDate(liability.endDate) : "לא צוין"},
-    {label: "הערות", value: liability.notes || "לא צוין"}
+    {label: "תאריך סיום", value: liability.endDate ? formatDate(liability.endDate) : "לא צוין"}
   ];
+  if (liability.notes?.trim()) fields.push({label: "הערות", value: liability.notes.trim()});
   if (liability.type !== "ALIMONY" && liability.type !== "RENT") fields.unshift({label: "יתרה נוכחית", value: formatCurrency(liability.currentBalance)});
   if ((liability.type === "LOAN" || liability.type === "MORTGAGE") && liability.financialInstitution) fields.unshift({label: "גוף פיננסי", value: liability.financialInstitution});
   return fields;
@@ -505,35 +526,28 @@ function caseSubtitle(publicCaseNumber: string, createdAt: Date): string {
 export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata: {versionNumber: number; createdAt: Date}): Promise<Buffer> {
   const title = "תיק מימון לבחינה ראשונית";
   const subtitle = caseSubtitle(snapshot.publicCaseNumber, metadata.createdAt);
-  const document = createDocument(`SynCash masked case ${snapshot.publicCaseNumber}`, metadata.createdAt);
+  const document = createDocument(`SynCash — תיק לבחינה ראשונית ${snapshot.publicCaseNumber}`, metadata.createdAt);
   return toBuffer(document, () => {
     drawPageHeader(document, title, subtitle);
 
     // 1. תקציר העסקה
     sectionWithFields(document, "תקציר העסקה", [
-      {label: "מספר תיק", value: snapshot.publicCaseNumber, ltr: true}, {label: "סטטוס", value: formatClientStatus(snapshot.status ?? "ACTIVE")},
-      {label: "מספר לווים", value: snapshot.numberOfBorrowers},
       {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)},
-      {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מטרת ההלוואה", value: loanPurposeDisplay(snapshot.loanRequest)}
+      {label: "אחוז מימון (LTV)", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מספר לווים", value: snapshot.numberOfBorrowers},
+      {label: "מטרת ההלוואה", value: loanPurposeDisplay(snapshot.loanRequest)}
     ], title, subtitle);
 
     // 2. סיכום פיננסי ומשפחתי
     sectionWithFields(document, "סיכום פיננסי ומשפחתי", [
       {label: "סך הכנסה חודשית", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
-      {label: "סך החזרים חודשיים", value: formatCurrency(snapshot.totals.monthlyPayments)}, {label: "מספר לווים", value: snapshot.numberOfBorrowers},
+      {label: "סך החזרים חודשיים", value: formatCurrency(snapshot.totals.monthlyPayments)},
       {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)},
       {label: "גילאי הילדים", value: snapshot.household.childrenAges.length ? snapshot.household.childrenAges.join(", ") : "אין ילדים"}
     ], title, subtitle);
 
     // 3. חיווי אשראי
     if (snapshot.creditIndication) {
-      const creditFields = creditIndicationFields(snapshot.creditIndication);
-      const {height: noticeHeight} = measureParagraph(document, "האם היו ב-3 השנים האחרונות:");
-      keepTogether(document, SECTION_HEADING_HEIGHT + noticeHeight + 8 + minRowsHeight(creditFields), title, subtitle, () => {
-        sectionTitle(document, "חיווי אשראי", title, subtitle);
-        paragraph(document, "האם היו ב-3 השנים האחרונות:", title, subtitle);
-        fieldRows(document, creditFields, title, subtitle);
-      });
+      sectionWithFields(document, "חיווי אשראי — ב-3 השנים האחרונות", creditIndicationFields(snapshot.creditIndication), title, subtitle);
     }
 
     // 4. פרטי לווים מוגבלים
@@ -588,7 +602,7 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
     sectionWithFields(document, "נכס ובקשת מימון", [
       {label: "סוג נכס", value: formatPropertyType(snapshot.property.propertyType)}, {label: "עיר הנכס", value: snapshot.property.city},
       {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)}, {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)},
-      {label: "תקופה מבוקשת", value: `${snapshot.loanRequest.requestedTermMonths} חודשים`}, {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}
+      {label: "אחוז מימון (LTV)", value: `${snapshot.loanRequest.loanToValue}%`}
     ], title, subtitle);
 
     // 8. פירוט העסקה
@@ -605,35 +619,28 @@ export async function createMaskedCasePdf(snapshot: MaskedCaseSnapshot, metadata
 export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {versionNumber: number; createdAt: Date}): Promise<Buffer> {
   const title = "תיק מימון מלא";
   const subtitle = caseSubtitle(snapshot.publicCaseNumber, metadata.createdAt);
-  const document = createDocument(`SynCash full case ${snapshot.publicCaseNumber}`, metadata.createdAt);
+  const document = createDocument(`SynCash — תיק מלא ${snapshot.publicCaseNumber}`, metadata.createdAt);
   return toBuffer(document, () => {
     drawPageHeader(document, title, subtitle);
 
     // 1. תקציר בקשת המימון
     sectionWithFields(document, "תקציר בקשת המימון", [
-      {label: "מספר תיק", value: snapshot.publicCaseNumber, ltr: true}, {label: "סטטוס", value: formatClientStatus(snapshot.status ?? "ACTIVE")},
-      {label: "מספר לווים", value: snapshot.numberOfBorrowers},
-      {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)}, {label: "מטרת ההלוואה", value: loanPurposeDisplay(snapshot.loanRequest)},
-      {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)}
+      {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)},
+      {label: "אחוז מימון (LTV)", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מספר לווים", value: snapshot.numberOfBorrowers},
+      {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)}, {label: "מטרת ההלוואה", value: loanPurposeDisplay(snapshot.loanRequest)}
     ], title, subtitle);
 
     // 2. סיכום פיננסי ומשפחתי
     sectionWithFields(document, "סיכום פיננסי ומשפחתי", [
       {label: "סך הכנסה", value: formatCurrency(snapshot.totals.monthlyIncome)}, {label: "סך התחייבויות", value: formatCurrency(snapshot.totals.liabilityBalance)},
-      {label: "סך החזרים", value: formatCurrency(snapshot.totals.monthlyPayments)}, {label: "מספר לווים", value: snapshot.numberOfBorrowers},
+      {label: "סך החזרים", value: formatCurrency(snapshot.totals.monthlyPayments)},
       {label: "קשר בין הלווים", value: formatBorrowerRelationship(snapshot.borrowerRelationship)},
       {label: "גילאי הילדים", value: snapshot.household.childrenAges.length ? snapshot.household.childrenAges.join(", ") : "אין ילדים"}
     ], title, subtitle);
 
     // 3. חיווי אשראי (full PDF only)
     if (snapshot.creditIndication) {
-      const creditFields = creditIndicationFields(snapshot.creditIndication);
-      const {height: noticeHeight} = measureParagraph(document, "האם היו ב-3 השנים האחרונות:");
-      keepTogether(document, SECTION_HEADING_HEIGHT + noticeHeight + 8 + minRowsHeight(creditFields), title, subtitle, () => {
-        sectionTitle(document, "חיווי אשראי", title, subtitle);
-        paragraph(document, "האם היו ב-3 השנים האחרונות:", title, subtitle);
-        fieldRows(document, creditFields, title, subtitle);
-      });
+      sectionWithFields(document, "חיווי אשראי — ב-3 השנים האחרונות", creditIndicationFields(snapshot.creditIndication), title, subtitle);
     }
 
     // 4/7. פרטי לווה N, 5/8. הכנסות לווה N, 6. הכנסות נוספות לווה N
@@ -685,8 +692,8 @@ export async function createFullCasePdf(snapshot: FullCaseSnapshot, metadata: {v
     sectionWithFields(document, "נכס ובקשת מימון", [
       {label: "סוג נכס", value: formatPropertyType(snapshot.property.propertyType)}, {label: "עיר", value: snapshot.property.city},
       {label: "רחוב ומספר בית", value: snapshot.property.address}, {label: "שווי הנכס", value: formatCurrency(snapshot.property.value)},
-      {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)}, {label: "תקופה מבוקשת", value: `${snapshot.loanRequest.requestedTermMonths} חודשים`},
-      {label: "אחוז מימון", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מטרת ההלוואה", value: loanPurposeDisplay(snapshot.loanRequest)}
+      {label: "סכום מבוקש", value: formatCurrency(snapshot.loanRequest.requestedAmount)},
+      {label: "אחוז מימון (LTV)", value: `${snapshot.loanRequest.loanToValue}%`}, {label: "מטרת ההלוואה", value: loanPurposeDisplay(snapshot.loanRequest)}
     ], title, subtitle);
 
     // 11. פירוט העסקה

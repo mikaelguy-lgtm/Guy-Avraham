@@ -42,7 +42,8 @@ test("SUPER ADMIN: notification bell renders, case edit reuses the advisor form 
 
   await page.goto("/admin/audit");
   await expect(page.getByRole("heading", {name: "יומן פעילות"})).toBeVisible();
-  await expect(page.locator("table.data-table tbody").getByText("CLIENT_PROPERTY_UPDATED").first()).toBeVisible();
+  await expect(page.locator("table.data-table tbody").getByText("עודכנו פרטי הנכס והמימון").first()).toBeVisible();
+  await expect(page.locator("table.data-table tbody").getByText("CLIENT_PROPERTY_UPDATED")).toHaveCount(0);
 });
 
 test("SUPER ADMIN: notification settings and system health screens load with real data", async ({page}) => {

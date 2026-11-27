@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { formatAuditAction, formatAuditRole } from "../utils/auditLabels";
 import { Link } from "react-router-dom";
 import type { AuditLogEntry } from "../types";
 import { api } from "../utils/apiClient";
@@ -33,7 +34,7 @@ export default function AdminAuditLogView() {
       <div className="client-toolbar">
         <label className="filter-field"><span>מתאריך</span><input type="date" value={since} onChange={(event) => setSince(event.target.value)} /></label>
         <label className="filter-field"><span>עד תאריך</span><input type="date" value={until} onChange={(event) => setUntil(event.target.value)} /></label>
-        <label className="filter-field"><span>פעולה</span><select value={action} onChange={(event) => setAction(event.target.value)}><option value="">כל הפעולות</option>{actionOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+        <label className="filter-field"><span>פעולה</span><select value={action} onChange={(event) => setAction(event.target.value)}><option value="">כל הפעולות</option>{actionOptions.map((option) => <option key={option} value={option}>{formatAuditAction(option)}</option>)}</select></label>
         <label className="filter-field"><span>סוג ישות</span><select value={entityType} onChange={(event) => setEntityType(event.target.value)}><option value="">כל הסוגים</option>{entityTypeOptions.map((option) => <option key={option} value={option}>{entityTypeLabel[option] ?? option}</option>)}</select></label>
       </div>
     </section>
@@ -43,8 +44,8 @@ export default function AdminAuditLogView() {
         <tbody>{entries.map((entry) => <tr key={entry.id}>
           <td>{formatIsraelDateTime(entry.createdAt)}</td>
           <td>{entry.actorName ?? "מערכת"}</td>
-          <td>{entry.actorRole ?? "—"}</td>
-          <td>{entry.action}</td>
+          <td>{formatAuditRole(entry.actorRole)}</td>
+          <td>{formatAuditAction(entry.action)}</td>
           <td>{entry.entityType ? entityTypeLabel[entry.entityType] ?? entry.entityType : "—"}</td>
           <td>{entry.caseNumber ?? (entry.entityId ? <Link to={adminEntityLink(entry.entityType, entry.entityId)}>{`#${entry.entityId}`}</Link> : "—")}</td>
         </tr>)}</tbody>

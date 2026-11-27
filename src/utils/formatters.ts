@@ -155,7 +155,10 @@ export const formatPrivacyRequestStatus = (value: string) => privacyRequestStatu
 
 export const formatUserRole = (value: UserRole | string) => labels[value] ?? "משתמש מערכת";
 export const formatUserStatus = (value: string) => labels[value] ?? "לא ידוע";
-export const formatClientStatus = (value: string) => labels[value] ?? "בטיפול";
+// סטטוס תיק נפרד מסטטוס משתמש: "פעיל" מתאים לחשבון משתמש, אבל לתיק שעוד לא נשלח
+// הוא מבלבל (ליד "נשלח לחברות מימון"). "בהכנה" אומר ליועץ בדיוק איפה התיק עומד.
+const clientStatusLabels: Record<string, string> = {DRAFT: "טיוטה", ACTIVE: "בהכנה", SUBMITTED: "נשלח לחברות מימון", CLOSED: "נסגר", ARCHIVED: "בארכיון"};
+export const formatClientStatus = (value: string) => clientStatusLabels[value] ?? labels[value] ?? "בטיפול";
 export const formatEmploymentType = (value: string) => labels[value] ?? "לא צוין";
 export const formatDealType = (value: string) => labels[value] ?? "לא צוין";
 export const formatLoanPurpose = formatDealType;

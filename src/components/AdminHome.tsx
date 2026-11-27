@@ -31,30 +31,42 @@ function activityLink(item: AdminRecentActivityItem): string {
   return adminEntityLink(item.entityType, item.entityId);
 }
 
-// גרף SVG קליל ללא תלות בספריית chart — הפרויקט אינו כולל כרגע ספריית
-// גרפים, ולסדרה קטנה של עד כמה עשרות נקודות אין הצדקה להוסיף אחת.
-function ActivityChart({points}: {points: AdminActivityPoint[]}) {
+// מגמות פעילות: כרטיס קטן לכל סדרה, עם סקאלה משלו, סה"כ לתקופה ושיא.
+// בגרף אחד משותף הסדרות נערמו על קו האפס (רוב הימים 0) והקו האחרון הסתיר את השאר — בלי צירים ובלי ערכים.
+const activitySeries: Array<{key: keyof AdminActivityPoint; label: string; color: string}> = [
+  {key: "new_advisors", label: "יועצים חדשים", color: "#22d3ee"},
+  {key: "new_cases", label: "תיקים חדשים", color: "#f5b942"},
+  {key: "cases_sent", label: "תיקים שנשלחו", color: "#34d399"},
+  {key: "interested", label: "חברות שהביעו עניין", color: "#f472b6"}
+];
+
+function ActivityTrends({points, unit}: {points: AdminActivityPoint[]; unit: string}) {
   if (!points.length) return <div className="empty-state">אין נתוני פעילות להצגה בתקופה שנבחרה.</div>;
-  const series: Array<{key: keyof AdminActivityPoint; label: string; color: string}> = [
-    {key: "new_advisors", label: "יועצים חדשים", color: "#22d3ee"},
-    {key: "new_cases", label: "תיקים חדשים", color: "#f99c00"},
-    {key: "cases_sent", label: "תיקים שנשלחו", color: "#10b981"},
-    {key: "interested", label: "חברות שהביעו עניין", color: "#fb7185"}
-  ];
-  const max = Math.max(1, ...points.flatMap((point) => series.map((item) => Number(point[item.key]))));
-  const width = 640; const height = 180; const padding = 24;
-  const stepX = points.length > 1 ? (width - padding * 2) / (points.length - 1) : 0;
-  const toY = (value: number) => height - padding - (value / max) * (height - padding * 2);
-  return <div className="activity-chart">
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="גרף פעילות">
-      {series.map((item) => {
-        const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${padding + index * stepX},${toY(Number(point[item.key]))}`).join(" ");
-        return <path key={item.key} d={path} fill="none" stroke={item.color} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" />;
-      })}
-    </svg>
-    <div className="activity-chart-legend">{series.map((item) => <span key={item.key}><i style={{background: item.color}} />{item.label}</span>)}</div>
+  const width = 220; const height = 56; const padding = 4;
+  return <div className="activity-trends">
+    {activitySeries.map((series) => {
+      const values = points.map((point) => Number(point[series.key]) || 0);
+      const total = values.reduce((sum, value) => sum + value, 0);
+      const peak = Math.max(...values);
+      const scale = Math.max(1, peak);
+      const stepX = values.length > 1 ? (width - padding * 2) / (values.length - 1) : 0;
+      const coordinates = values.map((value, index) => [padding + index * stepX, height - padding - (value / scale) * (height - padding * 2)] as const);
+      const line = coordinates.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+      const area = `${line} L${coordinates[coordinates.length - 1][0].toFixed(1)},${height - padding} L${padding},${height - padding} Z`;
+      return <article className="activity-trend" key={series.key}>
+        <header><span className="activity-trend-dot" style={{background: series.color}} aria-hidden="true" /><span>{series.label}</span></header>
+        <strong>{total.toLocaleString("he-IL")}</strong>
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${series.label}: ${total} בתקופה, שיא ${peak} ב${unit}`} preserveAspectRatio="none">
+          <path d={area} fill={series.color} opacity={0.12} />
+          <path d={line} fill="none" stroke={series.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        </svg>
+        <small>{total === 0 ? "אין פעילות בתקופה" : `שיא: ${peak} ב${unit}`}</small>
+      </article>;
+    })}
   </div>;
 }
+
+const RECENT_ACTIVITY_PREVIEW = 8;
 
 export default function AdminHome({user}: {user: CurrentUser}) {
   const greeting = useIsraelTimeGreeting(user.firstName);
@@ -64,6 +76,7 @@ export default function AdminHome({user}: {user: CurrentUser}) {
   const [recent, setRecent] = useState<AdminRecentActivityItem[]>([]);
   const [attention, setAttention] = useState<AdminAttention | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showAllRecent, setShowAllRecent] = useState(false);
   const isSuperAdmin = user.role === "SUPER_ADMIN";
 
   useEffect(() => {
@@ -88,7 +101,7 @@ export default function AdminHome({user}: {user: CurrentUser}) {
     {label: "תיקים שנשלחו בתקופה", value: stats.sent_in_period, icon: Mail, tone: "gold"},
     {label: "ממתינים לתשובה", value: stats.waiting_for_response, icon: Clock3, tone: "gold"},
     {label: "עם עניין מחברת מימון", value: stats.with_interest, icon: Handshake, tone: "green"},
-    {label: "ללא מענה אחרי deadline", value: stats.expired_no_response, icon: ShieldAlert, tone: "danger"},
+    {label: "ללא מענה עד המועד", value: stats.expired_no_response, icon: ShieldAlert, tone: "danger"},
     {label: "סך מימון מבוקש בתקופה", value: formatCurrency(stats.total_requested), icon: Banknote, tone: "cyan"},
     {label: "מימון מבוקש ממוצע", value: formatCurrency(stats.avg_requested), icon: Banknote, tone: "cyan"}
   ] : [];
@@ -102,7 +115,7 @@ export default function AdminHome({user}: {user: CurrentUser}) {
   ].filter((item) => item.value > 0) : [];
 
   return <main className="admin-page">
-    <section className="panel"><p className="eyebrow">{user.role === "SUPER_ADMIN" ? "SUPER ADMIN" : "ADMIN"}</p><h1>לוח הבקרה</h1><p>{greeting}, מכאן ניתן לנהל את סביבת SynCash בהתאם להרשאות שלך.</p></section>
+    <section className="panel"><p className="eyebrow">{user.role === "SUPER_ADMIN" ? "מנהל מערכת ראשי" : "מנהל מערכת"}</p><h1>לוח הבקרה</h1><p>{greeting}, מכאן ניתן לנהל את סביבת SynCash בהתאם להרשאות שלך.</p></section>
 
     {isSuperAdmin && <>
       <section className="panel dashboard-period-bar">
@@ -112,17 +125,18 @@ export default function AdminHome({user}: {user: CurrentUser}) {
 
       {loading && <div className="empty-state">טוען נתוני דשבורד…</div>}
 
-      {!loading && stats && <section className="stats-grid" aria-label="KPI ראשיים">{kpis.map(({label, value, icon: Icon, tone}) => <article className="stat-card" key={label}><span className={`stat-icon ${tone}`}><Icon /></span><span><small>{label}</small><strong>{value}</strong></span></article>)}</section>}
+      {!loading && stats && <section className="stats-grid" aria-label="מדדים ראשיים">{kpis.map(({label, value, icon: Icon, tone}) => <article className="stat-card" key={label}><span className={`stat-icon ${tone}`}><Icon /></span><span><small>{label}</small><strong>{value}</strong></span></article>)}</section>}
 
-      {!loading && <section className="panel"><header className="section-heading compact"><div><h2>גרף פעילות</h2><p>יועצים חדשים, תיקים חדשים, תיקים שנשלחו, וחברות שהביעו עניין — לפי {period === "all" ? "שבוע" : "יום"}.</p></div></header><ActivityChart points={activity} /></section>}
+      {!loading && <section className="panel"><header className="section-heading compact"><div><h2>מגמות פעילות</h2><p>סה״כ לתקופה שנבחרה, ומגמה לפי {period === "all" ? "שבוע" : "יום"}.</p></div></header><ActivityTrends points={activity} unit={period === "all" ? "שבוע" : "יום"} /></section>}
 
       {!loading && attentionItems.length > 0 && <section className="panel"><header className="section-heading compact"><div><h2><AlertTriangle size={20} aria-hidden="true" /> דורש טיפול</h2></div></header><ul className="attention-list">{attentionItems.map((item) => <li key={item.label}><Link to={item.to}><strong>{item.value}</strong><span>{item.label}</span></Link></li>)}</ul></section>}
 
       {!loading && <section className="panel"><header className="section-heading compact"><div><h2>פעילות אחרונה</h2></div></header>
-        {recent.length === 0 ? <div className="empty-state">אין פעילות אחרונה להצגה.</div> : <ul className="recent-activity-list">{recent.map((item, index) => <li key={`${item.type}-${item.entityId}-${index}`}><Link to={activityLink(item)}><span className="recent-activity-type">{activityTypeLabel[item.type] ?? item.type}</span><span className="recent-activity-label">{item.label}</span><time>{formatIsraelDateTime(item.at)}</time></Link></li>)}</ul>}
+        {recent.length === 0 ? <div className="empty-state">אין פעילות אחרונה להצגה.</div> : <><ul className="recent-activity-list">{(showAllRecent ? recent : recent.slice(0, RECENT_ACTIVITY_PREVIEW)).map((item, index) => <li key={`${item.type}-${item.entityId}-${index}`}><Link to={activityLink(item)}><span className="recent-activity-type">{activityTypeLabel[item.type] ?? item.type}</span><span className="recent-activity-label">{item.label}</span><time>{formatIsraelDateTime(item.at)}</time></Link></li>)}</ul>
+          {recent.length > RECENT_ACTIVITY_PREVIEW && <button type="button" className="icon-text-button recent-activity-toggle" onClick={() => setShowAllRecent((value) => !value)}>{showAllRecent ? "הצגת פחות" : `הצגת כל ${recent.length} האירועים`}</button>}</>}
       </section>}
     </>}
 
-    <section className="admin-card-grid">{sections.map((section) => <Link className="panel admin-card" to={section.to} key={section.to}><h2>{section.title}</h2><p>{section.description}</p></Link>)}</section>
+    {!isSuperAdmin && <section className="admin-card-grid">{sections.map((section) => <Link className="panel admin-card" to={section.to} key={section.to}><h2>{section.title}</h2><p>{section.description}</p></Link>)}</section>}
   </main>;
 }
