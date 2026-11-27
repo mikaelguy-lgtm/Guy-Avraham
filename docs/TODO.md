@@ -213,8 +213,10 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
     (then add the field, validation and display) or keep it out of the product.
 25. **Liability notes are required for every liability.** Friction for the
     advisor with little lender value; consider making them optional.
-26. **SPA CSP: switch Report-Only → enforcing** after one real login with no
-    console violations (see DECISIONS 2026-11-27).
+26. ~~**SPA CSP: switch Report-Only → enforcing**~~ — DONE 2026-11-27: enforced
+    after a real SUPER_ADMIN login, every admin screen and a blob: PDF iframe
+    showed zero violations. Advisor screens and /external/ share the same bundle
+    and code paths but were not walked logged-in under enforcement.
 27. **Advisor notifications/SSE are process-local.** Events published by the
     worker reach no browser; expiry/delivery-failure notifications appear only
     after a reload. Use Postgres LISTEN/NOTIFY or Redis pub/sub.
