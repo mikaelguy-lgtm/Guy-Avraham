@@ -1,19 +1,10 @@
 import {useEffect, useMemo, useState} from "react";
+import { formatEmailTemplate } from "../utils/auditLabels";
 import type {AdminEmailLogRecord} from "../types";
 import {api} from "../utils/apiClient";
 import {formatIsraelDateTime} from "../utils/formatters";
 
-const templateLabel = (template: string | null) => ({
-  ADVISOR_EMAIL_VERIFICATION: "אימות כתובת דוא״ל",
-  SMTP_CONFIGURATION_TEST: "בדיקת הגדרת דוא״ל",
-  LENDER_INITIAL: "הזמנה לחברת מימון",
-  LENDER_REMINDER: "תזכורת לחברת מימון",
-  INTEREST_OTP: "קוד אימות להתעניינות",
-  PORTAL_OTP: "קוד כניסה לפורטל",
-  FULL_ACCESS: "פתיחת גישה מלאה",
-  DECISION_CONFIRMATION: "אישור תגובת חברה",
-  ADVISOR_NOTIFICATION: "התראה ליועץ"
-})[template ?? ""] ?? "הודעת מערכת";
+const templateLabel = (template: string | null) => formatEmailTemplate(template);
 
 const smtpStatus = (status: string) => status === "SENT" ? "נשלח לשרת הדואר" : status === "FAILED" ? "השליחה נכשלה" : "ממתין לשליחה";
 

@@ -1172,13 +1172,18 @@ export class PostgresLenderDeliveryService implements LenderDeliveryApplication 
     const since = this.periodSince(period) ?? new Date(0);
     const bucket = period === "all" ? "week" : "day";
     const result = await this.pool.query(
-      `with buckets as (
-         select date_trunc($2, generate_series(coalesce($1::timestamptz,(select min(created_at) from users)), now(), ('1 '||$2)::interval)) as bucket
+      // כל הדליים מחושבים בשעון ישראל (Asia/Jerusalem), גם הסדרה וגם האירועים. בעבר הסדרה התחילה
+      // בחצות ישראל = 22:00 UTC של היום הקודם וחותכה ב-UTC, כך שכל דלי סומן יום מוקדם והיום הנוכחי
+      // לא נוצר בכלל — כל הפעילות של היום נעלמה מהגרף.
+      `with bounds as (
+         select date_trunc($2, coalesce($1::timestamptz, (select min(created_at) from users)) at time zone 'Asia/Jerusalem') as first_bucket,
+                date_trunc($2, now() at time zone 'Asia/Jerusalem') as last_bucket
        ),
-       new_advisors as (select date_trunc($2, created_at) as bucket, count(*) as value from users where role='ADVISOR' and created_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1),
-       new_cases as (select date_trunc($2, created_at) as bucket, count(*) as value from clients where deleted_at is null and created_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1),
-       cases_sent as (select date_trunc($2, first_sent_at) as bucket, count(*) as value from (select client_id, min(created_at) as first_sent_at from case_versions group by client_id) sends where first_sent_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1),
-       interested as (select date_trunc($2, decision_at) as bucket, count(*) as value from company_submissions where decision_status='INTERESTED' and decision_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1)
+       buckets as (select generate_series(first_bucket, last_bucket, ('1 '||$2)::interval) as bucket from bounds),
+       new_advisors as (select date_trunc($2, created_at at time zone 'Asia/Jerusalem') as bucket, count(*) as value from users where role='ADVISOR' and created_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1),
+       new_cases as (select date_trunc($2, created_at at time zone 'Asia/Jerusalem') as bucket, count(*) as value from clients where deleted_at is null and created_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1),
+       cases_sent as (select date_trunc($2, first_sent_at at time zone 'Asia/Jerusalem') as bucket, count(*) as value from (select client_id, min(created_at) as first_sent_at from case_versions group by client_id) sends where first_sent_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1),
+       interested as (select date_trunc($2, decision_at at time zone 'Asia/Jerusalem') as bucket, count(*) as value from company_submissions where decision_status='INTERESTED' and decision_at >= coalesce($1::timestamptz,'-infinity'::timestamptz) group by 1)
        select to_char(buckets.bucket, 'YYYY-MM-DD') as bucket,
               coalesce(new_advisors.value,0)::int as new_advisors,
               coalesce(new_cases.value,0)::int as new_cases,

@@ -57,6 +57,7 @@ const auditActionLabels: Record<string, string> = {
   PRIVACY_REQUEST_CREATED: "התקבלה בקשת פרטיות",
   PRIVACY_REQUEST_UPDATED: "עודכנה בקשת פרטיות",
   PUBLIC_SITE_SETTINGS_UPDATED: "עודכנו הגדרות האתר הציבורי",
+  SESSION_IDLE_TIMEOUT: "החיבור נותק אחרי 5 דקות ללא פעילות",
   SMTP_ACTIVATED: "הופעלה תצורת דוא״ל",
   SMTP_DRAFT_CREATED: "נשמרה טיוטת תצורת דוא״ל",
   SMTP_DRAFT_FAILED: "שמירת תצורת דוא״ל נכשלה",
@@ -68,6 +69,7 @@ const auditActionLabels: Record<string, string> = {
   TEST_ADVISOR_CLEANED: "נוקה חשבון בדיקה",
   USER_ARCHIVED: "משתמש הועבר לארכיון",
   USER_DISABLED: "משתמש הושבת",
+  USER_LOGOUT: "משתמש התנתק",
   USER_ENABLED: "משתמש הופעל",
   USER_RESTORED: "משתמש שוחזר",
   USER_SUSPENDED: "משתמש הושעה",
@@ -92,4 +94,40 @@ export function formatActorType(actorType: string | null | undefined): string {
 
 export function formatAuditRole(role: string | null | undefined): string {
   return role ? roleLabels[role] ?? "—" : "—";
+}
+
+const emailTemplateLabels: Record<string, string> = {
+  ADVISOR_EMAIL_VERIFICATION: "אימות כתובת דוא״ל",
+  ADVISOR_PASSWORD_RESET: "איפוס סיסמה",
+  SMTP_CONFIGURATION_TEST: "בדיקת הגדרת דוא״ל",
+  LENDER_INITIAL: "הזמנה לחברת מימון",
+  LENDER_REMINDER: "תזכורת לחברת מימון",
+  LENDER_DECISION: "אישור החלטה לחברת המימון",
+  LENDER_INTERESTED: "אישור התעניינות לחברת המימון",
+  LENDER_NOT_INTERESTED: "אישור תשובה שלילית לחברת המימון",
+  OTP: "קוד אימות",
+  INTEREST_OTP: "קוד אימות להתעניינות",
+  PORTAL_OTP: "קוד כניסה לפורטל",
+  FULL_ACCESS: "פתיחת גישה מלאה",
+  ADVISOR_DECISION: "עדכון ליועץ על תשובת חברה",
+  ADVISOR_DELIVERY_FAILURE: "עדכון ליועץ על כשל שליחה",
+  ADVISOR_EXPIRY: "עדכון ליועץ על תום מועד מענה",
+  ADVISOR_REGISTERED: "יועץ חדש נרשם (למנהל)",
+  SUPER_ADMIN_ADVISOR_REGISTERED: "יועץ חדש נרשם (למנהל)",
+  SUPER_ADMIN_CASE_CREATED: "תיק חדש נוצר (למנהל)",
+  SUPER_ADMIN_LENDER_INTERESTED: "חברת מימון התעניינה (למנהל)",
+  DECISION_CONFIRMATION: "אישור תגובת חברה",
+  ADVISOR_NOTIFICATION: "התראה ליועץ"
+};
+
+const outboxStatusLabels: Record<string, string> = {
+  PENDING: "ממתין לשליחה", PROCESSING: "בשליחה", SENT: "נשלח לשרת הדואר", FAILED: "השליחה נכשלה", CANCELLED: "בוטל"
+};
+
+export function formatEmailTemplate(template: string | null | undefined): string {
+  return template ? emailTemplateLabels[template] ?? "הודעת מערכת" : "הודעת מערכת";
+}
+
+export function formatOutboxStatus(status: string | null | undefined): string {
+  return status ? outboxStatusLabels[status] ?? status : "—";
 }

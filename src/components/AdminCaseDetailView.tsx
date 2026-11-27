@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { formatActorType } from "../utils/auditLabels";
+import { formatActorType, formatEmailTemplate, formatOutboxStatus } from "../utils/auditLabels";
 import { formatDeliveryEvent } from "../utils/formatters";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, FileText, X } from "lucide-react";
@@ -82,7 +82,7 @@ export default function AdminCaseDetailView() {
     <section className="panel"><header className="section-heading compact"><div><h2>היסטוריית דוא״ל</h2><p>מיילים שנקשרו לתיק זה בפועל בלבד (דרך שליחה/הזמנה), לא לפי כתובת נמען.</p></div></header>
       {detail.emailHistory.length === 0 ? <div className="empty-state">אין היסטוריית דוא״ל לתיק זה.</div> : <div className="table-scroll"><table className="data-table">
         <thead><tr><th>תבנית</th><th>נמען</th><th>סטטוס</th><th>נשלח</th></tr></thead>
-        <tbody>{detail.emailHistory.map((email) => <tr key={email.id}><td>{email.template}</td><td dir="ltr">{email.recipientMasked}</td><td>{email.status}</td><td>{email.sentAt ? formatIsraelDateTime(email.sentAt) : "—"}</td></tr>)}</tbody>
+        <tbody>{detail.emailHistory.map((email) => <tr key={email.id}><td>{formatEmailTemplate(email.template)}</td><td dir="ltr">{email.recipientMasked}</td><td>{formatOutboxStatus(email.status)}</td><td>{email.sentAt ? formatIsraelDateTime(email.sentAt) : "—"}</td></tr>)}</tbody>
       </table></div>}
     </section>
 
