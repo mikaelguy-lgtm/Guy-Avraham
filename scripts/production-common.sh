@@ -6,7 +6,9 @@ SYNCASH_ENV_FILE="${SYNCASH_ENV_FILE:-$SYNCASH_ROOT/shared/env/.env.production}"
 SYNCASH_PROJECT="syncash-prod"
 
 release_directory() {
-  cd "$(dirname "${BASH_SOURCE[1]}")/.." && pwd
+  # pwd -P: נתיב פיזי. הרצה דרך הקישור current החזירה פעם "current" עצמו,
+  # והפריסה יצרה current -> current (תקלה 27.11.2026)
+  cd "$(dirname "${BASH_SOURCE[1]}")/.." && pwd -P
 }
 
 load_production_environment() {
