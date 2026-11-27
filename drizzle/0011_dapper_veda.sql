@@ -1,0 +1,12 @@
+ALTER TABLE "employment_records" DROP CONSTRAINT "employment_income_check";--> statement-breakpoint
+ALTER TABLE "ai_analysis_logs" ADD CONSTRAINT "ai_analysis_metrics_check" CHECK ("ai_analysis_logs"."prompt_characters" >= 0 and ("ai_analysis_logs"."duration_ms" is null or "ai_analysis_logs"."duration_ms" >= 0));--> statement-breakpoint
+ALTER TABLE "case_version_documents" ADD CONSTRAINT "case_version_documents_size_check" CHECK ("case_version_documents"."size_bytes" >= 0);--> statement-breakpoint
+ALTER TABLE "case_versions" ADD CONSTRAINT "case_versions_numbers_check" CHECK ("case_versions"."version_number" >= 1 and ("case_versions"."pdf_renderer_version" is null or "case_versions"."pdf_renderer_version" >= 0));--> statement-breakpoint
+ALTER TABLE "documents" ADD CONSTRAINT "documents_size_check" CHECK ("documents"."size_bytes" >= 0);--> statement-breakpoint
+ALTER TABLE "email_configurations" ADD CONSTRAINT "email_configurations_port_check" CHECK ("email_configurations"."port" between 1 and 65535);--> statement-breakpoint
+ALTER TABLE "email_outbox" ADD CONSTRAINT "email_outbox_attempts_check" CHECK ("email_outbox"."attempts" >= 0);--> statement-breakpoint
+ALTER TABLE "employment_records" ADD CONSTRAINT "employment_income_check" CHECK ("employment_records"."monthly_net_income" >= 0 and "employment_records"."monthly_gross_income" >= 0 and "employment_records"."additional_income" >= 0 and "employment_records"."additional_income_amount" >= 0 and "employment_records"."employment_seniority_years" >= 0);--> statement-breakpoint
+ALTER TABLE "income_sources" ADD CONSTRAINT "income_sources_amount_check" CHECK ("income_sources"."monthly_amount" >= 0);--> statement-breakpoint
+ALTER TABLE "loan_offers" ADD CONSTRAINT "loan_offers_values_check" CHECK ("loan_offers"."amount" >= 0 and "loan_offers"."interest_rate" >= 0 and "loan_offers"."interest_rate" <= 100 and "loan_offers"."term_months" between 12 and 600 and ("loan_offers"."monthly_payment" is null or "loan_offers"."monthly_payment" >= 0));--> statement-breakpoint
+ALTER TABLE "otp_challenges" ADD CONSTRAINT "otp_challenges_attempts_check" CHECK ("otp_challenges"."attempts" >= 0 and "otp_challenges"."max_attempts" > 0 and "otp_challenges"."attempts" <= "otp_challenges"."max_attempts");--> statement-breakpoint
+ALTER TABLE "submission_contact_invitations" ADD CONSTRAINT "submission_contact_open_count_check" CHECK ("submission_contact_invitations"."open_count" >= 0);

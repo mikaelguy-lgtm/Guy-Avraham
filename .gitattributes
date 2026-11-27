@@ -1,0 +1,19 @@
+# Force a stable checkout/archive encoding for text/source files so a Production
+# release artifact is always byte-identical to the Git blob, regardless of a
+# local machine's core.autocrlf/core.eol setting (see docs/DECISIONS.md,
+# "Release artifacts must be byte-stable regardless of local autocrlf").
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.sql text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.conf text eol=lf
+Dockerfile* text eol=lf

@@ -1,0 +1,15 @@
+{
+  "name": "SynCash",
+  "short_name": "SynCash",
+  "description": "מערכת עבודה ליועצי משכנתאות וגופי מימון",
+  "lang": "he",
+  "dir": "rtl",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#061128",
+  "theme_color": "#061128",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

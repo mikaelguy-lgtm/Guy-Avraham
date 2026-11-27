@@ -1,0 +1,24 @@
+node_modules
+dist
+dist-server
+.git
+.env
+.env.*
+!.env.example
+!.env.production.example
+coverage
+playwright-report
+test-results
+codex-bridge
+
+marketing/dist
+
+# Local-only folders that must never reach a build context (QA output, scratch scripts, browser state).
+tmp
+output
+.playwright-cli
+# Service-account / credential material — defensive backstop.
+*-service-account*.json
+*serviceAccount*.json
+*credentials*.json
+credentials.env
