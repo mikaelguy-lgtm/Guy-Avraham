@@ -215,8 +215,14 @@ review, migration dry-runs). Two residual, genuinely minor items remain:
     advisor with little lender value; consider making them optional.
 26. ~~**SPA CSP: switch Report-Only → enforcing**~~ — DONE 2026-11-27: enforced
     after a real SUPER_ADMIN login, every admin screen and a blob: PDF iframe
-    showed zero violations. Advisor screens and /external/ share the same bundle
-    and code paths but were not walked logged-in under enforcement.
+    showed zero violations. FULLY VERIFIED the same day under enforcement:
+    advisor flow in production (login, dashboard, clients, case tabs, edit,
+    upload, image + PDF blob previews, download, send flow up to the
+    missing-documents gate, notifications/SSE, logout) and the lender flow
+    (invitation, masked review + PDF, interest, OTP, full portal, documents,
+    ZIP, session, idle/logout) via the full-flow + idle-timeout E2E against
+    the production bundle served with the identical policy (+ local emulator
+    origin and report-uri only). 0 violations everywhere.
 27. **Advisor notifications/SSE are process-local.** Events published by the
     worker reach no browser; expiry/delivery-failure notifications appear only
     after a reload. Use Postgres LISTEN/NOTIFY or Redis pub/sub.
