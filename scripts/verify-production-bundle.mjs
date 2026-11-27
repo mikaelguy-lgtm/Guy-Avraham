@@ -29,12 +29,22 @@ async function files(directory) {
   return nested.flat();
 }
 
+// מזהים בסגנון משתני סביבה נבדקים כמילה שלמה: שם פעולה כמו SMTP_PASSWORD_CLEARED (תווית ביומן)
+// אינו דליפה של משתנה הסביבה SMTP_PASSWORD. שאר הסמנים נבדקים כתת-מחרוזת כמו קודם.
+const identifierPattern = /^[A-Z][A-Z0-9_]+$/;
+const matches = (content, pattern) => identifierPattern.test(pattern)
+  ? new RegExp(`(?<![A-Za-z0-9_])${pattern}(?![A-Za-z0-9_])`, "i").test(content)
+  : content.toLowerCase().includes(pattern.toLowerCase());
+// קבצים בינאריים (פונטים, תמונות) אינם קוד — רצף בתים אקראי בהם אינו דליפה.
+const binaryExtensions = /\.(woff2?|ttf|otf|png|jpe?g|gif|webp|ico)$/i;
+
 const failures = [];
 for (const path of await files(root)) {
+  if (binaryExtensions.test(path)) continue;
   const content = await readFile(path, "utf8").catch(() => "");
   for (const pattern of prohibited) {
-    if (content.toLowerCase().includes(pattern.toLowerCase())) {
-      failures.push({pattern, file: relative(root.pathname, path)});
+    if (matches(content, pattern)) {
+      failures.push({pattern, file: relative(root, path)});
     }
   }
 }
